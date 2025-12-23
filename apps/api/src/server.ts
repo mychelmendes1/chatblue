@@ -18,7 +18,14 @@ import { contactRouter } from './routes/contact.routes.js';
 import { metricsRouter } from './routes/metrics.routes.js';
 import { settingsRouter } from './routes/settings.routes.js';
 import { webhookRouter } from './routes/webhook.routes.js';
+import { uploadRouter } from './routes/upload.routes.js';
 import { setupSocketHandlers } from './sockets/index.js';
+import { startWorkers, stopWorkers } from './jobs/index.js';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const app = express();
 const httpServer = createServer(app);
@@ -68,7 +75,12 @@ app.use('/api/messages', messageRouter);
 app.use('/api/contacts', contactRouter);
 app.use('/api/metrics', metricsRouter);
 app.use('/api/settings', settingsRouter);
+app.use('/api/upload', uploadRouter);
 app.use('/webhook', webhookRouter);
+
+// Serve uploaded files statically
+const uploadsDir = process.env.UPLOADS_DIR || path.join(__dirname, '..', 'uploads');
+app.use('/uploads', express.static(uploadsDir));
 
 // Error handler
 app.use(errorHandler);
@@ -79,14 +91,31 @@ setupSocketHandlers(io);
 // Start server
 const PORT = process.env.API_PORT || 3001;
 
-httpServer.listen(PORT, () => {
+httpServer.listen(PORT, async () => {
   logger.info(`Server running on port ${PORT}`);
   logger.info(`Environment: ${process.env.NODE_ENV || 'development'}`);
+
+  // Start background job workers
+  try {
+    await startWorkers();
+    logger.info('Background job workers started');
+  } catch (error) {
+    logger.error('Failed to start background workers:', error);
+  }
 });
 
 // Graceful shutdown
-process.on('SIGTERM', () => {
+process.on('SIGTERM', async () => {
   logger.info('SIGTERM received. Shutting down gracefully...');
+
+  // Stop background workers first
+  try {
+    await stopWorkers();
+    logger.info('Background workers stopped');
+  } catch (error) {
+    logger.error('Error stopping workers:', error);
+  }
+
   httpServer.close(() => {
     logger.info('Server closed');
     process.exit(0);
