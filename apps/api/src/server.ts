@@ -19,6 +19,7 @@ import { metricsRouter } from './routes/metrics.routes.js';
 import { settingsRouter } from './routes/settings.routes.js';
 import { webhookRouter } from './routes/webhook.routes.js';
 import { uploadRouter } from './routes/upload.routes.js';
+import { pushRouter } from './routes/push.routes.js';
 import { setupSocketHandlers } from './sockets/index.js';
 import { startWorkers, stopWorkers } from './jobs/index.js';
 import path from 'path';
@@ -76,6 +77,7 @@ app.use('/api/contacts', contactRouter);
 app.use('/api/metrics', metricsRouter);
 app.use('/api/settings', settingsRouter);
 app.use('/api/upload', uploadRouter);
+app.use('/api/push', pushRouter);
 app.use('/webhook', webhookRouter);
 
 // Serve uploaded files statically

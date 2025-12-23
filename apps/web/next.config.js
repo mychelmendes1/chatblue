@@ -1,8 +1,15 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
+  output: 'standalone',
   images: {
     domains: ['localhost'],
+    remotePatterns: [
+      {
+        protocol: 'https',
+        hostname: '**',
+      },
+    ],
   },
   async rewrites() {
     return [
@@ -12,6 +19,10 @@ const nextConfig = {
       },
     ];
   },
+  // Disable x-powered-by header for security
+  poweredByHeader: false,
+  // Enable compression
+  compress: true,
 };
 
 module.exports = nextConfig;
