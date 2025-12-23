@@ -1,0 +1,91 @@
+# ==========================================
+# Stage 1: Dependencies
+# ==========================================
+FROM node:20-alpine AS deps
+
+WORKDIR /app
+
+# Install pnpm
+RUN npm install -g pnpm@8
+
+# Copy package files
+COPY package.json pnpm-lock.yaml* pnpm-workspace.yaml ./
+COPY apps/api/package.json ./apps/api/
+COPY apps/api/prisma ./apps/api/prisma/
+
+# Install all dependencies (including devDependencies for build)
+RUN pnpm install --frozen-lockfile
+
+# ==========================================
+# Stage 2: Builder
+# ==========================================
+FROM node:20-alpine AS builder
+
+WORKDIR /app
+
+# Install pnpm
+RUN npm install -g pnpm@8
+
+# Copy dependencies from deps stage
+COPY --from=deps /app/node_modules ./node_modules
+COPY --from=deps /app/apps/api/node_modules ./apps/api/node_modules
+
+# Copy source code
+COPY package.json pnpm-lock.yaml* pnpm-workspace.yaml ./
+COPY apps/api ./apps/api
+COPY turbo.json ./
+
+# Generate Prisma Client
+RUN cd apps/api && npx prisma generate
+
+# Build the application
+RUN pnpm --filter api build
+
+# ==========================================
+# Stage 3: Production
+# ==========================================
+FROM node:20-alpine AS runner
+
+WORKDIR /app
+
+# Install pnpm
+RUN npm install -g pnpm@8
+
+# Create non-root user for security
+RUN addgroup --system --gid 1001 nodejs
+RUN adduser --system --uid 1001 api
+
+# Set environment variables
+ENV NODE_ENV=production
+ENV API_PORT=3001
+
+# Copy package files
+COPY package.json pnpm-lock.yaml* pnpm-workspace.yaml ./
+COPY apps/api/package.json ./apps/api/
+
+# Install production dependencies only
+RUN pnpm install --frozen-lockfile --prod
+
+# Copy Prisma schema and generated client
+COPY --from=builder /app/apps/api/prisma ./apps/api/prisma
+COPY --from=builder /app/apps/api/node_modules/.prisma ./apps/api/node_modules/.prisma
+COPY --from=builder /app/apps/api/node_modules/@prisma ./apps/api/node_modules/@prisma
+
+# Copy built application
+COPY --from=builder /app/apps/api/dist ./apps/api/dist
+
+# Create uploads directory
+RUN mkdir -p ./apps/api/uploads && chown -R api:nodejs ./apps/api/uploads
+
+# Switch to non-root user
+USER api
+
+# Expose port
+EXPOSE 3001
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+  CMD wget --no-verbose --tries=1 --spider http://localhost:3001/health || exit 1
+
+# Start the server
+CMD ["node", "apps/api/dist/server.js"]
