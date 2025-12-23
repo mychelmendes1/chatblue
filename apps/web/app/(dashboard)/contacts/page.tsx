@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import {
   Search,
   Filter,
@@ -15,6 +15,10 @@ import {
   Loader2,
   CheckCircle,
   XCircle,
+  Upload,
+  FileSpreadsheet,
+  AlertCircle,
+  Plus,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -43,6 +47,8 @@ import {
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
+import { Switch } from "@/components/ui/switch";
+import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/components/ui/use-toast";
 import { api } from "@/lib/api";
 import { formatPhone } from "@/lib/utils";
@@ -64,8 +70,16 @@ interface Contact {
   };
 }
 
+interface ImportResult {
+  message: string;
+  imported: number;
+  skipped: number;
+  errors: Array<{ phone: string; error: string }>;
+}
+
 export default function ContactsPage() {
   const { toast } = useToast();
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [search, setSearch] = useState("");
@@ -79,6 +93,18 @@ export default function ContactsPage() {
     total: 0,
     pages: 0,
   });
+
+  // Import states
+  const [showImportDialog, setShowImportDialog] = useState(false);
+  const [importText, setImportText] = useState("");
+  const [importPreview, setImportPreview] = useState<Array<{ phone: string; name?: string; email?: string }>>([]);
+  const [skipDuplicates, setSkipDuplicates] = useState(true);
+  const [isImporting, setIsImporting] = useState(false);
+  const [importResult, setImportResult] = useState<ImportResult | null>(null);
+
+  // New contact states
+  const [showNewContactDialog, setShowNewContactDialog] = useState(false);
+  const [newContactForm, setNewContactForm] = useState({ phone: "", name: "", email: "" });
 
   useEffect(() => {
     fetchContacts();
@@ -160,6 +186,116 @@ export default function ContactsPage() {
     fetchContacts();
   };
 
+  function parseImportText(text: string) {
+    const lines = text.trim().split("\n");
+    const contacts: Array<{ phone: string; name?: string; email?: string }> = [];
+
+    for (const line of lines) {
+      if (!line.trim()) continue;
+
+      // Try to parse as CSV (phone, name, email) or (phone; name; email) or (phone\tname\temail)
+      const parts = line.split(/[,;\t]/).map((p) => p.trim());
+
+      if (parts.length >= 1 && parts[0]) {
+        contacts.push({
+          phone: parts[0],
+          name: parts[1] || undefined,
+          email: parts[2] || undefined,
+        });
+      }
+    }
+
+    return contacts;
+  }
+
+  function handleImportTextChange(text: string) {
+    setImportText(text);
+    setImportPreview(parseImportText(text).slice(0, 5));
+  }
+
+  function handleFileUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const text = event.target?.result as string;
+      setImportText(text);
+      setImportPreview(parseImportText(text).slice(0, 5));
+    };
+    reader.readAsText(file);
+  }
+
+  async function handleImport() {
+    const contacts = parseImportText(importText);
+    if (contacts.length === 0) {
+      toast({
+        title: "Erro",
+        description: "Nenhum contato válido encontrado",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setIsImporting(true);
+    try {
+      const response = await api.post<ImportResult>("/contacts/import", {
+        contacts,
+        skipDuplicates,
+      });
+
+      setImportResult(response.data);
+      fetchContacts();
+    } catch (error) {
+      toast({
+        title: "Erro",
+        description: "Falha ao importar contatos",
+        variant: "destructive",
+      });
+    } finally {
+      setIsImporting(false);
+    }
+  }
+
+  function resetImportDialog() {
+    setImportText("");
+    setImportPreview([]);
+    setImportResult(null);
+    setShowImportDialog(false);
+  }
+
+  async function handleCreateContact() {
+    if (!newContactForm.phone) {
+      toast({
+        title: "Erro",
+        description: "Telefone é obrigatório",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setIsSaving(true);
+    try {
+      await api.post("/contacts", {
+        phone: newContactForm.phone,
+        name: newContactForm.name || undefined,
+        email: newContactForm.email || undefined,
+      });
+      toast({ title: "Contato criado com sucesso" });
+      setShowNewContactDialog(false);
+      setNewContactForm({ phone: "", name: "", email: "" });
+      fetchContacts();
+    } catch (error: any) {
+      toast({
+        title: "Erro",
+        description: error.message || "Falha ao criar contato",
+        variant: "destructive",
+      });
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
   return (
     <div className="p-6">
       <div className="flex items-center justify-between mb-6">
@@ -168,6 +304,19 @@ export default function ContactsPage() {
           <p className="text-muted-foreground">
             Gerencie seus contatos e clientes
           </p>
+        </div>
+        <div className="flex gap-2">
+          <Button
+            variant="outline"
+            onClick={() => setShowImportDialog(true)}
+          >
+            <Upload className="w-4 h-4 mr-2" />
+            Importar
+          </Button>
+          <Button onClick={() => setShowNewContactDialog(true)}>
+            <Plus className="w-4 h-4 mr-2" />
+            Novo Contato
+          </Button>
         </div>
       </div>
 
@@ -443,6 +592,208 @@ export default function ContactsPage() {
             <Button onClick={handleSave} disabled={isSaving}>
               {isSaving && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
               Salvar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Import Dialog */}
+      <Dialog open={showImportDialog} onOpenChange={(open) => !open && resetImportDialog()}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <FileSpreadsheet className="w-5 h-5" />
+              Importar Contatos
+            </DialogTitle>
+            <DialogDescription>
+              Cole ou carregue uma lista de contatos no formato: telefone, nome, email (um por linha)
+            </DialogDescription>
+          </DialogHeader>
+
+          {!importResult ? (
+            <>
+              <div className="space-y-4 py-4">
+                <div className="flex gap-2">
+                  <input
+                    type="file"
+                    ref={fileInputRef}
+                    accept=".csv,.txt"
+                    onChange={handleFileUpload}
+                    className="hidden"
+                  />
+                  <Button
+                    variant="outline"
+                    onClick={() => fileInputRef.current?.click()}
+                  >
+                    <Upload className="w-4 h-4 mr-2" />
+                    Carregar arquivo CSV
+                  </Button>
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Dados dos contatos</Label>
+                  <Textarea
+                    placeholder={"5511999999999, João Silva, joao@email.com\n5511888888888, Maria Santos\n5511777777777"}
+                    value={importText}
+                    onChange={(e) => handleImportTextChange(e.target.value)}
+                    rows={8}
+                    className="font-mono text-sm"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Formato: telefone, nome, email (separados por vírgula, ponto-e-vírgula ou tab)
+                  </p>
+                </div>
+
+                {importPreview.length > 0 && (
+                  <div className="space-y-2">
+                    <Label>Pré-visualização ({parseImportText(importText).length} contatos)</Label>
+                    <div className="border rounded-md p-3 bg-muted/50 space-y-1 text-sm">
+                      {importPreview.map((contact, i) => (
+                        <div key={i} className="flex items-center gap-2">
+                          <Phone className="w-3 h-3 text-muted-foreground" />
+                          <span className="font-mono">{contact.phone}</span>
+                          {contact.name && <span>• {contact.name}</span>}
+                          {contact.email && <span className="text-muted-foreground">• {contact.email}</span>}
+                        </div>
+                      ))}
+                      {parseImportText(importText).length > 5 && (
+                        <p className="text-muted-foreground">
+                          ... e mais {parseImportText(importText).length - 5} contatos
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                <div className="flex items-center space-x-2">
+                  <Switch
+                    id="skip-duplicates"
+                    checked={skipDuplicates}
+                    onCheckedChange={setSkipDuplicates}
+                  />
+                  <Label htmlFor="skip-duplicates">
+                    Pular contatos duplicados (manter existentes)
+                  </Label>
+                </div>
+              </div>
+
+              <DialogFooter>
+                <Button variant="outline" onClick={resetImportDialog}>
+                  Cancelar
+                </Button>
+                <Button
+                  onClick={handleImport}
+                  disabled={isImporting || parseImportText(importText).length === 0}
+                >
+                  {isImporting && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+                  Importar {parseImportText(importText).length} contatos
+                </Button>
+              </DialogFooter>
+            </>
+          ) : (
+            <>
+              <div className="py-4 space-y-4">
+                <div className="flex items-center gap-4 p-4 bg-green-50 rounded-lg">
+                  <CheckCircle className="w-8 h-8 text-green-600" />
+                  <div>
+                    <p className="font-semibold text-green-800">Importação concluída</p>
+                    <p className="text-sm text-green-700">{importResult.message}</p>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-3 gap-4">
+                  <div className="bg-card rounded-lg border p-4 text-center">
+                    <p className="text-2xl font-bold text-green-600">{importResult.imported}</p>
+                    <p className="text-sm text-muted-foreground">Importados</p>
+                  </div>
+                  <div className="bg-card rounded-lg border p-4 text-center">
+                    <p className="text-2xl font-bold text-yellow-600">{importResult.skipped}</p>
+                    <p className="text-sm text-muted-foreground">Ignorados</p>
+                  </div>
+                  <div className="bg-card rounded-lg border p-4 text-center">
+                    <p className="text-2xl font-bold text-red-600">{importResult.errors.length}</p>
+                    <p className="text-sm text-muted-foreground">Erros</p>
+                  </div>
+                </div>
+
+                {importResult.errors.length > 0 && (
+                  <div className="space-y-2">
+                    <Label className="flex items-center gap-2 text-red-600">
+                      <AlertCircle className="w-4 h-4" />
+                      Erros na importação
+                    </Label>
+                    <div className="border border-red-200 rounded-md p-3 bg-red-50 space-y-1 text-sm max-h-32 overflow-y-auto">
+                      {importResult.errors.map((error, i) => (
+                        <div key={i} className="flex items-center gap-2 text-red-700">
+                          <span className="font-mono">{error.phone}</span>
+                          <span>• {error.error}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <DialogFooter>
+                <Button onClick={resetImportDialog}>Fechar</Button>
+              </DialogFooter>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* New Contact Dialog */}
+      <Dialog open={showNewContactDialog} onOpenChange={setShowNewContactDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Novo Contato</DialogTitle>
+            <DialogDescription>
+              Adicione um novo contato à sua lista
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label htmlFor="new-phone">Telefone *</Label>
+              <Input
+                id="new-phone"
+                value={newContactForm.phone}
+                onChange={(e) =>
+                  setNewContactForm((prev) => ({ ...prev, phone: e.target.value }))
+                }
+                placeholder="5511999999999"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="new-name">Nome</Label>
+              <Input
+                id="new-name"
+                value={newContactForm.name}
+                onChange={(e) =>
+                  setNewContactForm((prev) => ({ ...prev, name: e.target.value }))
+                }
+                placeholder="Nome do contato"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="new-email">Email</Label>
+              <Input
+                id="new-email"
+                type="email"
+                value={newContactForm.email}
+                onChange={(e) =>
+                  setNewContactForm((prev) => ({ ...prev, email: e.target.value }))
+                }
+                placeholder="email@exemplo.com"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowNewContactDialog(false)}>
+              Cancelar
+            </Button>
+            <Button onClick={handleCreateContact} disabled={isSaving}>
+              {isSaving && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+              Criar Contato
             </Button>
           </DialogFooter>
         </DialogContent>

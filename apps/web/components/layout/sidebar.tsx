@@ -10,6 +10,7 @@ import {
   LogOut,
   Wifi,
   Bot,
+  Shield,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -20,6 +21,7 @@ const navigation = [
   { name: "Chat", href: "/chat", icon: MessageSquare },
   { name: "Contatos", href: "/contacts", icon: Users },
   { name: "Métricas", href: "/metrics", icon: BarChart3 },
+  { name: "Usuários", href: "/users", icon: Shield, adminOnly: true },
   { name: "Conexões", href: "/connections", icon: Wifi },
   { name: "Atendente IA", href: "/ai-agent", icon: Bot },
   { name: "Configurações", href: "/settings", icon: Settings },
@@ -45,24 +47,26 @@ export function Sidebar() {
 
       {/* Navigation */}
       <nav className="flex-1 flex flex-col items-center py-4 space-y-2">
-        {navigation.map((item) => {
-          const isActive = pathname.startsWith(item.href);
-          return (
-            <Link key={item.name} href={item.href}>
-              <Button
-                variant="ghost"
-                size="icon"
-                className={cn(
-                  "w-12 h-12 text-white/70 hover:text-white hover:bg-white/10",
-                  isActive && "bg-white/20 text-white"
-                )}
-                title={item.name}
-              >
-                <item.icon className="w-6 h-6" />
-              </Button>
-            </Link>
-          );
-        })}
+        {navigation
+          .filter((item) => !item.adminOnly || user?.role === "ADMIN" || user?.role === "SUPER_ADMIN")
+          .map((item) => {
+            const isActive = pathname.startsWith(item.href);
+            return (
+              <Link key={item.name} href={item.href}>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className={cn(
+                    "w-12 h-12 text-white/70 hover:text-white hover:bg-white/10",
+                    isActive && "bg-white/20 text-white"
+                  )}
+                  title={item.name}
+                >
+                  <item.icon className="w-6 h-6" />
+                </Button>
+              </Link>
+            );
+          })}
       </nav>
 
       {/* User */}

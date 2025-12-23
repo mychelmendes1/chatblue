@@ -1,16 +1,52 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Search, Filter, Bot, User, Clock } from "lucide-react";
+import { Search, Filter, Bot, User, Clock, Plus, Loader2, Phone, Users } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Label } from "@/components/ui/label";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { useToast } from "@/components/ui/use-toast";
 import { cn, formatDate, formatPhone, getStatusColor, formatSLATime } from "@/lib/utils";
 import { useChatStore } from "@/stores/chat.store";
 import { api } from "@/lib/api";
 
+interface Connection {
+  id: string;
+  name: string;
+  type: string;
+  phone?: string;
+  status: string;
+}
+
+interface ContactResult {
+  id: string;
+  phone: string;
+  name?: string;
+  email?: string;
+  avatar?: string;
+  isClient: boolean;
+}
+
 export function ChatSidebar() {
+  const { toast } = useToast();
   const {
     tickets,
     selectedTicket,
@@ -23,6 +59,19 @@ export function ChatSidebar() {
   } = useChatStore();
 
   const [search, setSearch] = useState("");
+
+  // New conversation states
+  const [showNewConversationDialog, setShowNewConversationDialog] = useState(false);
+  const [newConvoTab, setNewConvoTab] = useState<"contact" | "manual">("contact");
+  const [phoneInput, setPhoneInput] = useState("");
+  const [contactNameInput, setContactNameInput] = useState("");
+  const [contactSearch, setContactSearch] = useState("");
+  const [searchResults, setSearchResults] = useState<ContactResult[]>([]);
+  const [selectedContact, setSelectedContact] = useState<ContactResult | null>(null);
+  const [connections, setConnections] = useState<Connection[]>([]);
+  const [selectedConnectionId, setSelectedConnectionId] = useState("");
+  const [isCreating, setIsCreating] = useState(false);
+  const [isSearching, setIsSearching] = useState(false);
 
   useEffect(() => {
     fetchTickets();
@@ -50,11 +99,131 @@ export function ChatSidebar() {
     fetchTickets();
   };
 
+  async function fetchConnections() {
+    try {
+      const response = await api.get<Connection[]>("/connections");
+      const activeConnections = response.data.filter(
+        (c) => c.status === "CONNECTED"
+      );
+      setConnections(activeConnections);
+      if (activeConnections.length > 0 && !selectedConnectionId) {
+        setSelectedConnectionId(activeConnections[0].id);
+      }
+    } catch (error) {
+      console.error("Failed to fetch connections:", error);
+    }
+  }
+
+  async function searchContacts(query: string) {
+    if (query.length < 2) {
+      setSearchResults([]);
+      return;
+    }
+
+    setIsSearching(true);
+    try {
+      const response = await api.get<ContactResult[]>(
+        `/contacts/search?q=${encodeURIComponent(query)}`
+      );
+      setSearchResults(response.data);
+    } catch (error) {
+      console.error("Failed to search contacts:", error);
+    } finally {
+      setIsSearching(false);
+    }
+  }
+
+  function handleOpenNewConversation() {
+    setShowNewConversationDialog(true);
+    fetchConnections();
+  }
+
+  function resetNewConversationDialog() {
+    setPhoneInput("");
+    setContactNameInput("");
+    setContactSearch("");
+    setSearchResults([]);
+    setSelectedContact(null);
+    setNewConvoTab("contact");
+    setShowNewConversationDialog(false);
+  }
+
+  async function handleCreateConversation() {
+    if (!selectedConnectionId) {
+      toast({
+        title: "Erro",
+        description: "Selecione uma conexão WhatsApp",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    let phone = "";
+    let contactId: string | undefined;
+    let contactName: string | undefined;
+
+    if (newConvoTab === "contact" && selectedContact) {
+      phone = selectedContact.phone;
+      contactId = selectedContact.id;
+    } else if (newConvoTab === "manual" && phoneInput) {
+      phone = phoneInput.replace(/\D/g, "");
+      contactName = contactNameInput || undefined;
+    } else {
+      toast({
+        title: "Erro",
+        description: "Selecione um contato ou digite um telefone",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setIsCreating(true);
+    try {
+      const response = await api.post<{ ticket: any; isExisting: boolean }>("/tickets", {
+        phone,
+        contactId,
+        contactName,
+        connectionId: selectedConnectionId,
+      });
+
+      if (response.data.isExisting) {
+        toast({
+          title: "Conversa existente",
+          description: "Uma conversa já existe com este contato",
+        });
+      } else {
+        toast({ title: "Nova conversa iniciada" });
+      }
+
+      resetNewConversationDialog();
+      fetchTickets();
+      selectTicket(response.data.ticket);
+    } catch (error: any) {
+      toast({
+        title: "Erro",
+        description: error.message || "Falha ao criar conversa",
+        variant: "destructive",
+      });
+    } finally {
+      setIsCreating(false);
+    }
+  }
+
   return (
     <div className="w-80 border-r flex flex-col bg-card">
       {/* Header */}
       <div className="p-4 border-b">
-        <h2 className="text-lg font-semibold mb-3">Conversas</h2>
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-lg font-semibold">Conversas</h2>
+          <Button
+            size="icon"
+            variant="outline"
+            onClick={handleOpenNewConversation}
+            title="Nova conversa"
+          >
+            <Plus className="w-4 h-4" />
+          </Button>
+        </div>
 
         {/* Search */}
         <form onSubmit={handleSearch} className="flex gap-2">
@@ -121,6 +290,180 @@ export function ChatSidebar() {
           </div>
         )}
       </ScrollArea>
+
+      {/* New Conversation Dialog */}
+      <Dialog
+        open={showNewConversationDialog}
+        onOpenChange={(open) => !open && resetNewConversationDialog()}
+      >
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Plus className="w-5 h-5" />
+              Nova Conversa
+            </DialogTitle>
+            <DialogDescription>
+              Selecione um contato existente ou digite um número manualmente
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 py-4">
+            {/* Connection Selection */}
+            <div className="space-y-2">
+              <Label>Conexão WhatsApp</Label>
+              <Select
+                value={selectedConnectionId}
+                onValueChange={setSelectedConnectionId}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Selecione uma conexão" />
+                </SelectTrigger>
+                <SelectContent>
+                  {connections.map((conn) => (
+                    <SelectItem key={conn.id} value={conn.id}>
+                      {conn.name} {conn.phone && `(${formatPhone(conn.phone)})`}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {connections.length === 0 && (
+                <p className="text-xs text-muted-foreground">
+                  Nenhuma conexão ativa. Configure uma conexão WhatsApp primeiro.
+                </p>
+              )}
+            </div>
+
+            <Tabs value={newConvoTab} onValueChange={(v) => setNewConvoTab(v as "contact" | "manual")}>
+              <TabsList className="grid w-full grid-cols-2">
+                <TabsTrigger value="contact" className="flex items-center gap-2">
+                  <Users className="w-4 h-4" />
+                  Contato
+                </TabsTrigger>
+                <TabsTrigger value="manual" className="flex items-center gap-2">
+                  <Phone className="w-4 h-4" />
+                  Manual
+                </TabsTrigger>
+              </TabsList>
+
+              <TabsContent value="contact" className="space-y-3 mt-4">
+                <div className="space-y-2">
+                  <Label>Buscar contato</Label>
+                  <div className="relative">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                    <Input
+                      placeholder="Nome, telefone ou email..."
+                      value={contactSearch}
+                      onChange={(e) => {
+                        setContactSearch(e.target.value);
+                        searchContacts(e.target.value);
+                      }}
+                      className="pl-9"
+                    />
+                    {isSearching && (
+                      <Loader2 className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 animate-spin text-muted-foreground" />
+                    )}
+                  </div>
+                </div>
+
+                {searchResults.length > 0 && (
+                  <div className="border rounded-md max-h-48 overflow-y-auto">
+                    {searchResults.map((contact) => (
+                      <button
+                        key={contact.id}
+                        type="button"
+                        className={cn(
+                          "w-full p-3 flex items-center gap-3 text-left hover:bg-muted/50 transition-colors border-b last:border-b-0",
+                          selectedContact?.id === contact.id && "bg-muted"
+                        )}
+                        onClick={() => setSelectedContact(contact)}
+                      >
+                        <Avatar className="w-8 h-8">
+                          <AvatarImage src={contact.avatar} />
+                          <AvatarFallback>
+                            {(contact.name || contact.phone).slice(0, 2).toUpperCase()}
+                          </AvatarFallback>
+                        </Avatar>
+                        <div className="flex-1 min-w-0">
+                          <p className="font-medium truncate">
+                            {contact.name || formatPhone(contact.phone)}
+                          </p>
+                          <p className="text-xs text-muted-foreground truncate">
+                            {formatPhone(contact.phone)}
+                            {contact.email && ` • ${contact.email}`}
+                          </p>
+                        </div>
+                        {contact.isClient && (
+                          <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded">
+                            Cliente
+                          </span>
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                {selectedContact && (
+                  <div className="p-3 bg-muted rounded-md flex items-center gap-3">
+                    <Avatar className="w-10 h-10">
+                      <AvatarImage src={selectedContact.avatar} />
+                      <AvatarFallback>
+                        {(selectedContact.name || selectedContact.phone).slice(0, 2).toUpperCase()}
+                      </AvatarFallback>
+                    </Avatar>
+                    <div>
+                      <p className="font-medium">{selectedContact.name || "Sem nome"}</p>
+                      <p className="text-sm text-muted-foreground">
+                        {formatPhone(selectedContact.phone)}
+                      </p>
+                    </div>
+                  </div>
+                )}
+              </TabsContent>
+
+              <TabsContent value="manual" className="space-y-3 mt-4">
+                <div className="space-y-2">
+                  <Label>Telefone *</Label>
+                  <Input
+                    placeholder="5511999999999"
+                    value={phoneInput}
+                    onChange={(e) => setPhoneInput(e.target.value)}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Digite o número com código do país e DDD
+                  </p>
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Nome (opcional)</Label>
+                  <Input
+                    placeholder="Nome do contato"
+                    value={contactNameInput}
+                    onChange={(e) => setContactNameInput(e.target.value)}
+                  />
+                </div>
+              </TabsContent>
+            </Tabs>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={resetNewConversationDialog}>
+              Cancelar
+            </Button>
+            <Button
+              onClick={handleCreateConversation}
+              disabled={
+                isCreating ||
+                !selectedConnectionId ||
+                (newConvoTab === "contact" && !selectedContact) ||
+                (newConvoTab === "manual" && !phoneInput)
+              }
+            >
+              {isCreating && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+              Iniciar Conversa
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

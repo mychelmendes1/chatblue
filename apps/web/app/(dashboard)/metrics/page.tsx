@@ -12,6 +12,10 @@ import {
   ArrowUpRight,
   ArrowDownRight,
   Loader2,
+  Star,
+  Trophy,
+  Medal,
+  Target,
 } from "lucide-react";
 import {
   Card,
@@ -30,6 +34,7 @@ import {
 import { Progress } from "@/components/ui/progress";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/components/ui/use-toast";
 import { api } from "@/lib/api";
 import { cn, formatSLATime } from "@/lib/utils";
@@ -83,18 +88,56 @@ interface CriticalTicket {
   assignedTo?: { name: string };
 }
 
+interface UserRanking {
+  id: string;
+  name: string;
+  email: string;
+  avatar?: string;
+  role: string;
+  isOnline: boolean;
+  lastSeen?: string;
+  totalTickets: number;
+  resolvedTickets: number;
+  pendingTickets: number;
+  inProgressTickets: number;
+  messagesSent: number;
+  avgResponseTime: number;
+  avgResolutionTime: number;
+  slaBreached: number;
+  slaCompliance: number;
+  resolutionRate: number;
+  avgRating: number | null;
+  totalRatings: number;
+  ratingDistribution: {
+    1: number;
+    2: number;
+    3: number;
+    4: number;
+    5: number;
+  };
+}
+
 export default function MetricsPage() {
   const { toast } = useToast();
+  const [activeTab, setActiveTab] = useState("overview");
   const [period, setPeriod] = useState("7");
   const [isLoading, setIsLoading] = useState(true);
   const [dashboard, setDashboard] = useState<DashboardMetrics | null>(null);
   const [agents, setAgents] = useState<AgentMetrics[]>([]);
   const [departments, setDepartments] = useState<DepartmentMetrics[]>([]);
   const [criticalTickets, setCriticalTickets] = useState<CriticalTicket[]>([]);
+  const [userRanking, setUserRanking] = useState<UserRanking[]>([]);
+  const [sortBy, setSortBy] = useState("totalTickets");
 
   useEffect(() => {
     fetchData();
   }, [period]);
+
+  useEffect(() => {
+    if (activeTab === "ranking") {
+      fetchUserRanking();
+    }
+  }, [activeTab, period, sortBy]);
 
   async function fetchData() {
     setIsLoading(true);
@@ -121,6 +164,21 @@ export default function MetricsPage() {
     }
   }
 
+  async function fetchUserRanking() {
+    try {
+      const response = await api.get<UserRanking[]>(
+        `/metrics/users/ranking?period=${period}&sortBy=${sortBy}`
+      );
+      setUserRanking(response.data);
+    } catch (error) {
+      toast({
+        title: "Erro",
+        description: "Falha ao carregar ranking de usuários",
+        variant: "destructive",
+      });
+    }
+  }
+
   function formatTime(seconds: number): string {
     if (seconds < 60) return `${seconds}s`;
     if (seconds < 3600) return `${Math.floor(seconds / 60)}min`;
@@ -133,6 +191,33 @@ export default function MetricsPage() {
         <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
       </div>
     );
+  }
+
+  function renderStars(rating: number | null) {
+    if (rating === null) return <span className="text-muted-foreground text-sm">-</span>;
+    return (
+      <div className="flex items-center gap-1">
+        {[1, 2, 3, 4, 5].map((star) => (
+          <Star
+            key={star}
+            className={cn(
+              "w-4 h-4",
+              star <= Math.round(rating)
+                ? "fill-yellow-400 text-yellow-400"
+                : "text-gray-300"
+            )}
+          />
+        ))}
+        <span className="ml-1 text-sm font-medium">{rating.toFixed(1)}</span>
+      </div>
+    );
+  }
+
+  function getRankBadge(index: number) {
+    if (index === 0) return <Trophy className="w-5 h-5 text-yellow-500" />;
+    if (index === 1) return <Medal className="w-5 h-5 text-gray-400" />;
+    if (index === 2) return <Medal className="w-5 h-5 text-amber-600" />;
+    return <span className="w-5 text-center font-bold text-muted-foreground">{index + 1}</span>;
   }
 
   return (
@@ -158,6 +243,19 @@ export default function MetricsPage() {
         </Select>
       </div>
 
+      <Tabs value={activeTab} onValueChange={setActiveTab}>
+        <TabsList>
+          <TabsTrigger value="overview" className="flex items-center gap-2">
+            <BarChart3 className="w-4 h-4" />
+            Visão Geral
+          </TabsTrigger>
+          <TabsTrigger value="ranking" className="flex items-center gap-2">
+            <Trophy className="w-4 h-4" />
+            Ranking de Usuários
+          </TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="overview" className="space-y-6 mt-6">
       {/* Summary Cards */}
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         <Card>
@@ -424,6 +522,146 @@ export default function MetricsPage() {
           </div>
         </CardContent>
       </Card>
+        </TabsContent>
+
+        <TabsContent value="ranking" className="space-y-6 mt-6">
+          {/* Sort Controls */}
+          <div className="flex items-center gap-4">
+            <span className="text-sm text-muted-foreground">Ordenar por:</span>
+            <Select value={sortBy} onValueChange={setSortBy}>
+              <SelectTrigger className="w-[200px]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="totalTickets">Total de Tickets</SelectItem>
+                <SelectItem value="resolvedTickets">Tickets Resolvidos</SelectItem>
+                <SelectItem value="avgRating">Melhor Avaliação</SelectItem>
+                <SelectItem value="slaCompliance">Melhor SLA</SelectItem>
+                <SelectItem value="avgResponseTime">Menor Tempo Resposta</SelectItem>
+                <SelectItem value="messagesSent">Mais Mensagens</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          {/* User Ranking Cards */}
+          <div className="space-y-4">
+            {userRanking.map((user, index) => (
+              <Card key={user.id} className={cn(
+                index === 0 && "border-yellow-400 bg-yellow-50/50",
+                index === 1 && "border-gray-300",
+                index === 2 && "border-amber-600/50"
+              )}>
+                <CardContent className="p-6">
+                  <div className="flex items-center gap-6">
+                    {/* Rank Badge */}
+                    <div className="flex items-center justify-center w-10">
+                      {getRankBadge(index)}
+                    </div>
+
+                    {/* User Info */}
+                    <div className="flex items-center gap-4">
+                      <div className="relative">
+                        <Avatar className="w-12 h-12">
+                          <AvatarImage src={user.avatar} />
+                          <AvatarFallback>
+                            {user.name.slice(0, 2).toUpperCase()}
+                          </AvatarFallback>
+                        </Avatar>
+                        <div
+                          className={cn(
+                            "absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 rounded-full border-2 border-white",
+                            user.isOnline ? "bg-green-500" : "bg-gray-400"
+                          )}
+                        />
+                      </div>
+                      <div>
+                        <p className="font-semibold">{user.name}</p>
+                        <p className="text-sm text-muted-foreground">{user.email}</p>
+                      </div>
+                    </div>
+
+                    {/* Metrics */}
+                    <div className="flex-1 grid grid-cols-6 gap-4 ml-8">
+                      <div className="text-center">
+                        <p className="text-xl font-bold">{user.totalTickets}</p>
+                        <p className="text-xs text-muted-foreground">Tickets</p>
+                      </div>
+                      <div className="text-center">
+                        <p className="text-xl font-bold">{user.resolvedTickets}</p>
+                        <p className="text-xs text-muted-foreground">Resolvidos</p>
+                      </div>
+                      <div className="text-center">
+                        <p className={cn(
+                          "text-xl font-bold",
+                          user.resolutionRate >= 80 ? "text-green-600" :
+                          user.resolutionRate >= 60 ? "text-yellow-600" : "text-red-600"
+                        )}>
+                          {user.resolutionRate}%
+                        </p>
+                        <p className="text-xs text-muted-foreground">Taxa Resolução</p>
+                      </div>
+                      <div className="text-center">
+                        <p className="text-xl font-bold">{formatTime(user.avgResponseTime)}</p>
+                        <p className="text-xs text-muted-foreground">Tempo Resposta</p>
+                      </div>
+                      <div className="text-center">
+                        <p className={cn(
+                          "text-xl font-bold",
+                          user.slaCompliance >= 90 ? "text-green-600" :
+                          user.slaCompliance >= 70 ? "text-yellow-600" : "text-red-600"
+                        )}>
+                          {user.slaCompliance}%
+                        </p>
+                        <p className="text-xs text-muted-foreground">SLA</p>
+                      </div>
+                      <div className="text-center">
+                        {renderStars(user.avgRating)}
+                        <p className="text-xs text-muted-foreground mt-1">
+                          {user.totalRatings} avaliações
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Rating Distribution */}
+                  {user.totalRatings > 0 && (
+                    <div className="mt-4 pt-4 border-t">
+                      <p className="text-sm font-medium mb-2">Distribuição de Avaliações</p>
+                      <div className="flex items-center gap-4">
+                        {[5, 4, 3, 2, 1].map((star) => (
+                          <div key={star} className="flex items-center gap-2">
+                            <span className="text-sm w-3">{star}</span>
+                            <Star className="w-4 h-4 fill-yellow-400 text-yellow-400" />
+                            <div className="w-24 h-2 bg-gray-200 rounded-full overflow-hidden">
+                              <div
+                                className="h-full bg-yellow-400 rounded-full"
+                                style={{
+                                  width: `${(user.ratingDistribution[star as 1|2|3|4|5] / user.totalRatings) * 100}%`
+                                }}
+                              />
+                            </div>
+                            <span className="text-sm text-muted-foreground w-8">
+                              {user.ratingDistribution[star as 1|2|3|4|5]}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            ))}
+
+            {userRanking.length === 0 && (
+              <Card>
+                <CardContent className="p-8 text-center text-muted-foreground">
+                  Nenhum usuário encontrado para o período selecionado
+                </CardContent>
+              </Card>
+            )}
+          </div>
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }

@@ -1,9 +1,9 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { prisma } from '../config/database.js';
-import { authenticate } from '../middlewares/auth.middleware.js';
+import { authenticate, requireAdmin } from '../middlewares/auth.middleware.js';
 import { ensureTenant } from '../middlewares/tenant.middleware.js';
-import { NotFoundError } from '../middlewares/error.middleware.js';
+import { NotFoundError, ValidationError } from '../middlewares/error.middleware.js';
 import { NotionService } from '../services/notion/notion.service.js';
 
 const router = Router();
@@ -269,6 +269,170 @@ router.delete('/:id/tags/:tag', authenticate, ensureTenant, async (req, res, nex
     });
 
     res.json(updatedContact);
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Create contact
+router.post('/', authenticate, ensureTenant, async (req, res, next) => {
+  try {
+    const data = z.object({
+      phone: z.string().min(10),
+      name: z.string().optional(),
+      email: z.string().email().optional(),
+      tags: z.array(z.string()).optional(),
+      notes: z.string().optional(),
+    }).parse(req.body);
+
+    // Normalize phone number
+    const normalizedPhone = data.phone.replace(/\D/g, '');
+
+    // Check if contact already exists
+    const existingContact = await prisma.contact.findFirst({
+      where: {
+        phone: normalizedPhone,
+        companyId: req.user!.companyId,
+      },
+    });
+
+    if (existingContact) {
+      throw new ValidationError('Contact with this phone already exists');
+    }
+
+    const contact = await prisma.contact.create({
+      data: {
+        phone: normalizedPhone,
+        name: data.name,
+        email: data.email,
+        tags: data.tags || [],
+        notes: data.notes,
+        companyId: req.user!.companyId,
+      },
+    });
+
+    res.status(201).json(contact);
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Import contacts in batch
+router.post('/import', authenticate, requireAdmin, ensureTenant, async (req, res, next) => {
+  try {
+    const importSchema = z.object({
+      contacts: z.array(z.object({
+        phone: z.string().min(10),
+        name: z.string().optional(),
+        email: z.string().email().optional().nullable(),
+      })),
+      skipDuplicates: z.boolean().optional().default(true),
+    });
+
+    const { contacts, skipDuplicates } = importSchema.parse(req.body);
+
+    const results = {
+      imported: 0,
+      skipped: 0,
+      errors: [] as Array<{ phone: string; error: string }>,
+    };
+
+    for (const contact of contacts) {
+      try {
+        // Normalize phone number
+        const normalizedPhone = contact.phone.replace(/\D/g, '');
+
+        if (!normalizedPhone || normalizedPhone.length < 10) {
+          results.errors.push({ phone: contact.phone, error: 'Invalid phone number' });
+          continue;
+        }
+
+        // Check if contact already exists
+        const existingContact = await prisma.contact.findFirst({
+          where: {
+            phone: normalizedPhone,
+            companyId: req.user!.companyId,
+          },
+        });
+
+        if (existingContact) {
+          if (skipDuplicates) {
+            results.skipped++;
+            continue;
+          } else {
+            // Update existing contact
+            await prisma.contact.update({
+              where: { id: existingContact.id },
+              data: {
+                name: contact.name || existingContact.name,
+                email: contact.email || existingContact.email,
+              },
+            });
+            results.imported++;
+            continue;
+          }
+        }
+
+        // Create new contact
+        await prisma.contact.create({
+          data: {
+            phone: normalizedPhone,
+            name: contact.name,
+            email: contact.email || undefined,
+            companyId: req.user!.companyId,
+          },
+        });
+
+        results.imported++;
+      } catch (error: any) {
+        results.errors.push({
+          phone: contact.phone,
+          error: error.message || 'Unknown error',
+        });
+      }
+    }
+
+    res.json({
+      message: `Import completed: ${results.imported} imported, ${results.skipped} skipped, ${results.errors.length} errors`,
+      ...results,
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Search contacts for autocomplete
+router.get('/search', authenticate, ensureTenant, async (req, res, next) => {
+  try {
+    const { q, limit = '10' } = req.query;
+
+    if (!q || typeof q !== 'string' || q.length < 2) {
+      return res.json([]);
+    }
+
+    const contacts = await prisma.contact.findMany({
+      where: {
+        companyId: req.user!.companyId,
+        isActive: true,
+        OR: [
+          { name: { contains: q, mode: 'insensitive' } },
+          { phone: { contains: q } },
+          { email: { contains: q, mode: 'insensitive' } },
+        ],
+      },
+      select: {
+        id: true,
+        phone: true,
+        name: true,
+        email: true,
+        avatar: true,
+        isClient: true,
+      },
+      take: parseInt(limit as string),
+      orderBy: { updatedAt: 'desc' },
+    });
+
+    res.json(contacts);
   } catch (error) {
     next(error);
   }

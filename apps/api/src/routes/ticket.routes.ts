@@ -415,4 +415,207 @@ router.put('/:id/priority', authenticate, ensureTenant, async (req, res, next) =
   }
 });
 
+// Create new ticket (start new conversation)
+router.post('/', authenticate, ensureTenant, async (req, res, next) => {
+  try {
+    const createTicketSchema = z.object({
+      phone: z.string().min(10),
+      contactName: z.string().optional(),
+      contactId: z.string().cuid().optional(),
+      connectionId: z.string().cuid(),
+      departmentId: z.string().cuid().optional(),
+      subject: z.string().optional(),
+      priority: z.enum(['LOW', 'MEDIUM', 'HIGH', 'URGENT']).optional().default('MEDIUM'),
+    });
+
+    const data = createTicketSchema.parse(req.body);
+
+    // Normalize phone number
+    const normalizedPhone = data.phone.replace(/\D/g, '');
+
+    // Verify connection exists and belongs to company
+    const connection = await prisma.whatsAppConnection.findFirst({
+      where: {
+        id: data.connectionId,
+        companyId: req.user!.companyId,
+        isActive: true,
+      },
+    });
+
+    if (!connection) {
+      throw new NotFoundError('Connection not found');
+    }
+
+    // Find or create contact
+    let contact;
+    if (data.contactId) {
+      contact = await prisma.contact.findFirst({
+        where: {
+          id: data.contactId,
+          companyId: req.user!.companyId,
+        },
+      });
+
+      if (!contact) {
+        throw new NotFoundError('Contact not found');
+      }
+    } else {
+      // Try to find existing contact by phone
+      contact = await prisma.contact.findFirst({
+        where: {
+          phone: normalizedPhone,
+          companyId: req.user!.companyId,
+        },
+      });
+
+      // Create new contact if not found
+      if (!contact) {
+        contact = await prisma.contact.create({
+          data: {
+            phone: normalizedPhone,
+            name: data.contactName,
+            companyId: req.user!.companyId,
+          },
+        });
+      }
+    }
+
+    // Check if there's already an open ticket for this contact
+    const existingTicket = await prisma.ticket.findFirst({
+      where: {
+        contactId: contact.id,
+        companyId: req.user!.companyId,
+        status: { in: ['PENDING', 'IN_PROGRESS', 'WAITING'] },
+      },
+      include: {
+        contact: {
+          select: {
+            id: true,
+            name: true,
+            phone: true,
+            avatar: true,
+            isClient: true,
+          },
+        },
+        assignedTo: {
+          select: {
+            id: true,
+            name: true,
+            avatar: true,
+            isAI: true,
+          },
+        },
+        department: {
+          select: {
+            id: true,
+            name: true,
+            color: true,
+          },
+        },
+      },
+    });
+
+    if (existingTicket) {
+      // Return existing open ticket
+      return res.json({ ticket: existingTicket, isExisting: true });
+    }
+
+    // Generate protocol
+    const protocol = await generateProtocol();
+
+    // Create new ticket
+    const ticket = await prisma.ticket.create({
+      data: {
+        protocol,
+        status: 'IN_PROGRESS',
+        priority: data.priority,
+        subject: data.subject,
+        contactId: contact.id,
+        connectionId: connection.id,
+        departmentId: data.departmentId,
+        assignedToId: req.user!.userId,
+        companyId: req.user!.companyId,
+      },
+      include: {
+        contact: {
+          select: {
+            id: true,
+            name: true,
+            phone: true,
+            avatar: true,
+            isClient: true,
+          },
+        },
+        assignedTo: {
+          select: {
+            id: true,
+            name: true,
+            avatar: true,
+            isAI: true,
+          },
+        },
+        department: {
+          select: {
+            id: true,
+            name: true,
+            color: true,
+          },
+        },
+        connection: {
+          select: {
+            id: true,
+            name: true,
+            type: true,
+            phone: true,
+          },
+        },
+      },
+    });
+
+    // Create activity
+    await prisma.activity.create({
+      data: {
+        type: 'TICKET_CREATED',
+        description: 'New conversation started',
+        ticketId: ticket.id,
+        userId: req.user!.userId,
+      },
+    });
+
+    // Emit socket event
+    const io = req.app.get('io');
+    io.to(`company:${req.user!.companyId}`).emit('ticket:created', ticket);
+
+    res.status(201).json({ ticket, isExisting: false });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Rate ticket
+router.post('/:id/rate', authenticate, ensureTenant, async (req, res, next) => {
+  try {
+    const { rating, comment } = z.object({
+      rating: z.number().min(1).max(5),
+      comment: z.string().optional(),
+    }).parse(req.body);
+
+    const ticket = await prisma.ticket.update({
+      where: {
+        id: req.params.id,
+        companyId: req.user!.companyId,
+      },
+      data: {
+        rating,
+        ratingComment: comment,
+        ratedAt: new Date(),
+      },
+    });
+
+    res.json(ticket);
+  } catch (error) {
+    next(error);
+  }
+});
+
 export { router as ticketRouter };

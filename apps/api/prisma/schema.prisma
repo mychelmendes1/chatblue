@@ -100,6 +100,17 @@ enum ActivityType {
   NOTE_ADDED
 }
 
+enum UserCompanyStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum UserCompanyRole {
+  ADMIN
+  USER
+}
+
 // ============================================
 // MODELS
 // ============================================
@@ -115,13 +126,14 @@ model Company {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  users       User[]
-  departments Department[]
-  connections WhatsAppConnection[]
-  contacts    Contact[]
-  tickets     Ticket[]
-  settings    CompanySettings?
-  slaConfigs  SLAConfig[]
+  users        User[]
+  userAccess   UserCompany[]
+  departments  Department[]
+  connections  WhatsAppConnection[]
+  contacts     Contact[]
+  tickets      Ticket[]
+  settings     CompanySettings?
+  slaConfigs   SLAConfig[]
 
   @@map("companies")
 }
@@ -145,12 +157,36 @@ model User {
   companyId String  @map("company_id")
   company   Company @relation(fields: [companyId], references: [id])
 
-  departments UserDepartment[]
-  tickets     Ticket[]         @relation("AssignedTickets")
-  messages    Message[]
-  activities  Activity[]
+  departments      UserDepartment[]
+  companyAccess    UserCompany[]    @relation("UserAccess")
+  approvedAccess   UserCompany[]    @relation("ApprovedBy")
+  tickets          Ticket[]         @relation("AssignedTickets")
+  messages         Message[]
+  activities       Activity[]
 
   @@map("users")
+}
+
+/// Relacionamento Usuário-Empresa (Multi-empresa com aprovação)
+model UserCompany {
+  id        String            @id @default(cuid())
+  userId    String            @map("user_id")
+  user      User              @relation("UserAccess", fields: [userId], references: [id], onDelete: Cascade)
+  companyId String            @map("company_id")
+  company   Company           @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  role      UserCompanyRole   @default(USER)
+  status    UserCompanyStatus @default(PENDING)
+
+  approvedById String?   @map("approved_by_id")
+  approvedBy   User?     @relation("ApprovedBy", fields: [approvedById], references: [id])
+  approvedAt   DateTime? @map("approved_at")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@unique([userId, companyId])
+  @@map("user_companies")
 }
 
 /// Departamento/Setor
@@ -272,6 +308,11 @@ model Ticket {
   waitingTime    Int? @map("waiting_time")
   responseTime   Int? @map("response_time")
   resolutionTime Int? @map("resolution_time")
+
+  // Avaliação do atendimento
+  rating        Int?    @map("rating") // 1-5 estrelas
+  ratingComment String? @map("rating_comment")
+  ratedAt       DateTime? @map("rated_at")
 
   isAIHandled     Boolean   @default(false) @map("is_ai_handled")
   aiTakeoverAt    DateTime? @map("ai_takeover_at")

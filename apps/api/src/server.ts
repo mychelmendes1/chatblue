@@ -10,6 +10,7 @@ import { errorHandler } from './middlewares/error.middleware.js';
 import { authRouter } from './routes/auth.routes.js';
 import { companyRouter } from './routes/company.routes.js';
 import { userRouter } from './routes/user.routes.js';
+import { userAccessRouter } from './routes/user-access.routes.js';
 import { departmentRouter } from './routes/department.routes.js';
 import { connectionRouter } from './routes/connection.routes.js';
 import { ticketRouter } from './routes/ticket.routes.js';
@@ -69,6 +70,7 @@ app.get('/health', (_req, res) => {
 app.use('/api/auth', authRouter);
 app.use('/api/companies', companyRouter);
 app.use('/api/users', userRouter);
+app.use('/api/user-access', userAccessRouter);
 app.use('/api/departments', departmentRouter);
 app.use('/api/connections', connectionRouter);
 app.use('/api/tickets', ticketRouter);
