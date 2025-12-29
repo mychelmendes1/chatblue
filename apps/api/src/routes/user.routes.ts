@@ -239,15 +239,6 @@ router.post('/', authenticate, requireAdmin, ensureTenant, async (req, res, next
   try {
     const data = createUserSchema.parse(req.body);
 
-    // Check if email exists
-    const existingUser = await prisma.user.findUnique({
-      where: { email: data.email },
-    });
-
-    if (existingUser) {
-      throw new ValidationError('Email already exists');
-    }
-
     // Determine companyId: use provided companyId if SUPER_ADMIN, otherwise use current user's company
     let targetCompanyId = req.user!.companyId;
     if (data.companyId && req.user!.role === 'SUPER_ADMIN') {
@@ -259,6 +250,18 @@ router.post('/', authenticate, requireAdmin, ensureTenant, async (req, res, next
         throw new NotFoundError('Company not found');
       }
       targetCompanyId = data.companyId;
+    }
+
+    // Check if email exists in the target company (allow same email in different companies)
+    const existingUser = await prisma.user.findFirst({
+      where: { 
+        email: data.email,
+        companyId: targetCompanyId,
+      },
+    });
+
+    if (existingUser) {
+      throw new ValidationError('Email already exists in this company');
     }
 
     const hashedPassword = await bcrypt.hash(data.password, 10);
@@ -594,15 +597,6 @@ router.post('/ai-agent', authenticate, requireAdmin, ensureTenant, async (req, r
       password: req.body.password || 'ai-agent-default-password-' + Date.now(), // Generate default password for AI agents
     });
 
-    // Check if email exists
-    const existingUser = await prisma.user.findUnique({
-      where: { email: data.email },
-    });
-
-    if (existingUser) {
-      throw new ValidationError('Email already exists');
-    }
-
     // Determine companyId: use provided companyId if SUPER_ADMIN, otherwise use current user's company
     let targetCompanyId = req.user!.companyId;
     if (data.companyId && req.user!.role === 'SUPER_ADMIN') {
@@ -614,6 +608,18 @@ router.post('/ai-agent', authenticate, requireAdmin, ensureTenant, async (req, r
         throw new NotFoundError('Company not found');
       }
       targetCompanyId = data.companyId;
+    }
+
+    // Check if email exists in the target company (allow same email in different companies)
+    const existingUser = await prisma.user.findFirst({
+      where: { 
+        email: data.email,
+        companyId: targetCompanyId,
+      },
+    });
+
+    if (existingUser) {
+      throw new ValidationError('Email already exists in this company');
     }
 
     const hashedPassword = await bcrypt.hash(data.password, 10);
