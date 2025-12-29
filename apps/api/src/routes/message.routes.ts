@@ -222,18 +222,89 @@ router.post('/ticket/:ticketId', authenticate, ensureTenant, async (req, res, ne
         },
       });
 
-      // Update ticket
-      await prisma.ticket.update({
+      // Update ticket - auto-assign to agent if no one is assigned
+      const shouldAssign = !ticket.assignedToId;
+      const shouldChangeStatus = ticket.status === 'PENDING';
+      
+      const updatedTicket = await prisma.ticket.update({
         where: { id: ticket.id },
         data: {
           updatedAt: new Date(),
+          // Auto-assign ticket to the agent who sends the first message
+          ...(shouldAssign && {
+            assignedToId: req.user!.userId,
+          }),
+          // Change status to IN_PROGRESS if it was PENDING
+          ...(shouldChangeStatus && {
+            status: 'IN_PROGRESS',
+          }),
           // Set first response time if not set
           ...(ticket.firstResponse === null && {
             firstResponse: new Date(),
             responseTime: Math.floor((Date.now() - ticket.createdAt.getTime()) / 1000),
           }),
         },
+        include: {
+          contact: {
+            select: {
+              id: true,
+              name: true,
+              phone: true,
+              avatar: true,
+              isClient: true,
+            },
+          },
+          assignedTo: {
+            select: {
+              id: true,
+              name: true,
+              avatar: true,
+              isAI: true,
+            },
+          },
+          department: {
+            select: {
+              id: true,
+              name: true,
+              color: true,
+            },
+          },
+          messages: {
+            take: 1,
+            orderBy: { createdAt: 'desc' },
+            select: {
+              content: true,
+              type: true,
+              createdAt: true,
+              isFromMe: true,
+            },
+          },
+          _count: {
+            select: {
+              messages: {
+                where: {
+                  isFromMe: false,
+                  readAt: null,
+                },
+              },
+            },
+          },
+        },
       });
+
+      // Emit ticket update to update the ticket list for all users
+      if (shouldAssign || shouldChangeStatus) {
+        const io = req.app.get('io');
+        io.to(`company:${req.user!.companyId}`).emit('ticket:updated', updatedTicket);
+        
+        logger.info('Ticket auto-assigned', {
+          ticketId: ticket.id,
+          assignedToId: req.user!.userId,
+          assignedToName: sender?.name,
+          previousStatus: ticket.status,
+          newStatus: updatedTicket.status,
+        });
+      }
     }
 
     // Emit socket event with updated message (with SENT status)

@@ -27,6 +27,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/components/ui/use-toast";
 import { cn, formatDate, formatPhone, getStatusColor, formatSLATime } from "@/lib/utils";
 import { useChatStore } from "@/stores/chat.store";
+import { useAuthStore } from "@/stores/auth.store";
 import { api } from "@/lib/api";
 
 interface Connection {
@@ -48,6 +49,7 @@ interface ContactResult {
 
 export function ChatSidebar() {
   const { toast } = useToast();
+  const { user } = useAuthStore();
   const {
     tickets,
     selectedTicket,
@@ -106,6 +108,7 @@ export function ChatSidebar() {
       const params = new URLSearchParams();
       if (filters.status) params.set("status", filters.status);
       if (filters.departmentId) params.set("departmentId", filters.departmentId);
+      if (filters.assignedToId) params.set("assignedToId", filters.assignedToId);
       if (search) params.set("search", search);
       if (!showResolved) params.set("hideResolved", "true");
 
@@ -268,23 +271,23 @@ export function ChatSidebar() {
         {/* Quick Filters */}
         <div className="flex gap-2 mt-3">
           <Button
-            variant={filters.status === undefined ? "default" : "outline"}
+            variant={!filters.status && !filters.assignedToId ? "default" : "outline"}
             size="sm"
-            onClick={() => setFilters({ status: undefined })}
+            onClick={() => setFilters({ status: undefined, assignedToId: undefined })}
           >
             Todos
           </Button>
           <Button
-            variant={filters.status === "PENDING" ? "default" : "outline"}
+            variant={filters.status === "PENDING" && !filters.assignedToId ? "default" : "outline"}
             size="sm"
-            onClick={() => setFilters({ status: "PENDING" })}
+            onClick={() => setFilters({ status: "PENDING", assignedToId: undefined })}
           >
             Fila
           </Button>
           <Button
-            variant={filters.status === "IN_PROGRESS" ? "default" : "outline"}
+            variant={filters.assignedToId === user?.id ? "default" : "outline"}
             size="sm"
-            onClick={() => setFilters({ status: "IN_PROGRESS" })}
+            onClick={() => setFilters({ status: undefined, assignedToId: user?.id })}
           >
             Meus
           </Button>
@@ -566,10 +569,10 @@ function TicketItem({ ticket, isSelected, onSelect }: TicketItemProps) {
           </div>
         </div>
 
-        <div className="flex items-center gap-2 mb-1">
+        <div className="flex items-center gap-2 mb-1 flex-wrap">
           <span
             className={cn(
-              "w-2 h-2 rounded-full",
+              "w-2 h-2 rounded-full flex-shrink-0",
               getStatusColor(ticket.status)
             )}
           />
@@ -585,6 +588,12 @@ function TicketItem({ ticket, isSelected, onSelect }: TicketItemProps) {
               className="text-xs px-1.5 py-0.5 rounded bg-amber-100 text-amber-800"
             >
               Triagem
+            </span>
+          )}
+          {ticket.assignedTo && (
+            <span className="text-xs px-1.5 py-0.5 rounded bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400 flex items-center gap-1">
+              <User className="w-3 h-3" />
+              {ticket.assignedTo.name?.split(" ")[0]}
             </span>
           )}
         </div>
