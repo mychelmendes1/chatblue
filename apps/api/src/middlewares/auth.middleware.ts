@@ -58,10 +58,29 @@ export const authenticate = async (
       throw new UnauthorizedError('User not found or inactive');
     }
 
+    // Verify user has access to the company in the token
+    // Check if it's the primary company or an approved access
+    const hasAccess = decoded.companyId === user.companyId || 
+      await prisma.userCompany.findFirst({
+        where: {
+          userId: user.id,
+          companyId: decoded.companyId,
+          status: 'APPROVED',
+        },
+      });
+
+    if (!hasAccess) {
+      throw new UnauthorizedError('User no longer has access to this company. Please login again.');
+    }
+
+    // Use companyId and role from the JWT token, not from the database
+    // This is important for multi-tenant switching - when user switches companies,
+    // a new token is generated with the new companyId, but user.companyId in DB
+    // remains as the primary company
     req.user = {
       userId: user.id,
-      companyId: user.companyId,
-      role: user.role,
+      companyId: decoded.companyId, // Use from token, not from database
+      role: decoded.role, // Use from token, not from database (role can vary per company)
       name: user.name,
       email: user.email,
     };
