@@ -73,6 +73,7 @@ enum MessageType {
   CONTACT
   TEMPLATE
   INTERACTIVE
+  SYSTEM
   REACTION
 }
 
@@ -82,6 +83,7 @@ enum MessageStatus {
   DELIVERED
   READ
   FAILED
+  RECEIVED
 }
 
 enum ActivityType {
@@ -126,14 +128,16 @@ model Company {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  users        User[]
-  userAccess   UserCompany[]
-  departments  Department[]
-  connections  WhatsAppConnection[]
-  contacts     Contact[]
-  tickets      Ticket[]
-  settings     CompanySettings?
-  slaConfigs   SLAConfig[]
+  users          User[]
+  userAccess     UserCompany[]
+  departments    Department[]
+  connections    WhatsAppConnection[]
+  contacts       Contact[]
+  tickets        Ticket[]
+  settings       CompanySettings?
+  slaConfigs     SLAConfig[]
+  knowledgeBase  KnowledgeBase[]
+  faqs           FAQ[]
 
   @@map("companies")
 }
@@ -206,9 +210,11 @@ model Department {
   companyId String  @map("company_id")
   company   Company @relation(fields: [companyId], references: [id])
 
-  users     UserDepartment[]
-  tickets   Ticket[]
-  slaConfig SLAConfig?
+  users         UserDepartment[]
+  tickets       Ticket[]
+  slaConfig     SLAConfig?
+  knowledgeBase KnowledgeBase[]
+  faqs          FAQ[]
 
   @@map("departments")
 }
@@ -266,6 +272,10 @@ model Contact {
   name  String?
   email String?
   avatar String?
+  
+  // WhatsApp LID (Linked ID) - used when user has phone privacy enabled
+  // This allows us to associate LIDs with real phone numbers
+  lidId String? @map("lid_id")
 
   // Dados do Notion
   notionPageId String?   @map("notion_page_id")
@@ -280,6 +290,9 @@ model Contact {
   isActive  Boolean  @default(true) @map("is_active")
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
+
+  // Última mensagem recebida (para janela de 24h da API oficial)
+  lastMessageAt DateTime? @map("last_message_at")
 
   companyId String  @map("company_id")
   company   Company @relation(fields: [companyId], references: [id])
@@ -337,6 +350,11 @@ model Ticket {
   companyId String  @map("company_id")
   company   Company @relation(fields: [companyId], references: [id])
 
+  // Referência ao ticket anterior (para histórico visual)
+  previousTicketId String?  @map("previous_ticket_id")
+  previousTicket   Ticket?  @relation("TicketHistory", fields: [previousTicketId], references: [id])
+  nextTickets      Ticket[] @relation("TicketHistory")
+
   messages   Message[]
   transfers  TicketTransfer[]
   activities Activity[]
@@ -344,6 +362,7 @@ model Ticket {
   @@index([companyId, status])
   @@index([assignedToId, status])
   @@index([departmentId, status])
+  @@index([contactId, status])
   @@map("tickets")
 }
 
@@ -374,14 +393,30 @@ model Message {
   mediaUrl  String?     @map("media_url")
   mediaType String?     @map("media_type")
   caption   String?
+  transcription String? @db.Text // Transcrição de áudio/vídeo
 
   isFromMe      Boolean @default(false) @map("is_from_me")
   isAIGenerated Boolean @default(false) @map("is_ai_generated")
+  isInternal    Boolean @default(false) @map("is_internal")
+  mentionedUserIds String[] @map("mentioned_user_ids")
 
   status      MessageStatus @default(PENDING)
   sentAt      DateTime?     @map("sent_at")
   deliveredAt DateTime?     @map("delivered_at")
   readAt      DateTime?     @map("read_at")
+
+  // Reações - JSON array de {emoji: string, userId: string, userName: string}
+  reactions Json? @default("[]")
+
+  // Metadados extras (localização, contatos, respostas interativas, etc)
+  metadata Json? @default("{}")
+
+  // Razão de falha no envio
+  failedReason String? @map("failed_reason")
+
+  // Mensagem deletada
+  deletedAt DateTime? @map("deleted_at")
+  deletedBy String?   @map("deleted_by") // userId que deletou
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
@@ -395,7 +430,7 @@ model Message {
   connectionId String             @map("connection_id")
   connection   WhatsAppConnection @relation(fields: [connectionId], references: [id])
 
-  // Referência a mensagem citada
+  // Referência a mensagem citada (reply)
   quotedId String?   @map("quoted_id")
   quoted   Message?  @relation("QuotedMessage", fields: [quotedId], references: [id])
   replies  Message[] @relation("QuotedMessage")
@@ -464,11 +499,24 @@ model CompanySettings {
   aiDefaultModel String? @map("ai_default_model")
   aiSystemPrompt String? @map("ai_system_prompt")
 
+  // Whisper (Audio Transcription) - Uses OpenAI API
+  whisperApiKey  String? @map("whisper_api_key")
+
+  // AI Personality Settings
+  aiPersonalityTone     String? @map("ai_personality_tone") // friendly, formal, technical, empathetic
+  aiPersonalityStyle    String? @map("ai_personality_style") // concise, detailed, conversational
+  aiUseEmojis           Boolean @default(true) @map("ai_use_emojis")
+  aiUseClientName       Boolean @default(true) @map("ai_use_client_name")
+  aiGuardrailsEnabled   Boolean @default(true) @map("ai_guardrails_enabled")
+
   // Outras configurações
   autoAssign         Boolean @default(true) @map("auto_assign")
   maxTicketsPerAgent Int     @default(10) @map("max_tickets_per_agent")
   welcomeMessage     String? @map("welcome_message")
   awayMessage        String? @map("away_message")
+
+  // Default department for transfers when no specific department is found
+  defaultTransferDepartmentId String? @map("default_transfer_department_id")
 
   companyId String  @unique @map("company_id")
   company   Company @relation(fields: [companyId], references: [id])
@@ -477,4 +525,53 @@ model CompanySettings {
   updatedAt DateTime @updatedAt @map("updated_at")
 
   @@map("company_settings")
+}
+
+/// Base de Conhecimento
+model KnowledgeBase {
+  id       String  @id @default(cuid())
+  title    String
+  content  String  @db.Text
+  category String?
+  tags     String[]
+  order    Int     @default(0)
+
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  departmentId String?     @map("department_id")
+  department   Department? @relation(fields: [departmentId], references: [id])
+
+  companyId String  @map("company_id")
+  company   Company @relation(fields: [companyId], references: [id])
+
+  @@index([companyId, isActive])
+  @@index([departmentId, isActive])
+  @@map("knowledge_base")
+}
+
+/// Perguntas Frequentes (FAQ)
+model FAQ {
+  id       String   @id @default(cuid())
+  question String
+  answer   String   @db.Text
+  keywords String[]
+  category String?
+  order    Int      @default(0)
+
+  useCount  Int      @default(0) @map("use_count")
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  departmentId String?     @map("department_id")
+  department   Department? @relation(fields: [departmentId], references: [id])
+
+  companyId String  @map("company_id")
+  company   Company @relation(fields: [companyId], references: [id])
+
+  @@index([companyId, isActive])
+  @@index([departmentId, isActive])
+  @@map("faqs")
 }
