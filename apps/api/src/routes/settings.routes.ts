@@ -25,6 +25,7 @@ router.get('/', authenticate, requireAdmin, ensureTenant, async (req, res, next)
       ...settings,
       notionApiKey: settings.notionApiKey ? '••••••••' : null,
       aiApiKey: settings.aiApiKey ? '••••••••' : null,
+      whisperApiKey: settings.whisperApiKey ? '••••••••' : null,
     };
 
     res.json(safeSettings);
@@ -41,6 +42,7 @@ router.put('/', authenticate, requireAdmin, ensureTenant, async (req, res, next)
       maxTicketsPerAgent: z.number().int().min(1).max(100).optional(),
       welcomeMessage: z.string().optional(),
       awayMessage: z.string().optional(),
+      defaultTransferDepartmentId: z.string().nullable().optional(),
     }).parse(req.body);
 
     const settings = await prisma.companySettings.upsert({
@@ -105,6 +107,14 @@ router.put('/ai', authenticate, requireAdmin, ensureTenant, async (req, res, nex
       aiApiKey: z.string().optional(),
       aiDefaultModel: z.string().optional(),
       aiSystemPrompt: z.string().optional(),
+      // Whisper (Audio Transcription)
+      whisperApiKey: z.string().optional(),
+      // Personality settings
+      aiPersonalityTone: z.enum(['friendly', 'formal', 'technical', 'empathetic']).optional(),
+      aiPersonalityStyle: z.enum(['concise', 'detailed', 'conversational']).optional(),
+      aiUseEmojis: z.boolean().optional(),
+      aiUseClientName: z.boolean().optional(),
+      aiGuardrailsEnabled: z.boolean().optional(),
     }).parse(req.body);
 
     const settings = await prisma.companySettings.upsert({
@@ -116,6 +126,7 @@ router.put('/ai', authenticate, requireAdmin, ensureTenant, async (req, res, nex
     res.json({
       ...settings,
       aiApiKey: settings.aiApiKey ? '••••••••' : null,
+      whisperApiKey: settings.whisperApiKey ? '••••••••' : null,
       notionApiKey: settings.notionApiKey ? '••••••••' : null,
     });
   } catch (error) {

@@ -1,7 +1,7 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
-  output: 'standalone',
+  // output: 'standalone', // Desabilitado para usar next start
   images: {
     domains: ['localhost'],
     remotePatterns: [

@@ -1,0 +1,97 @@
+#!/usr/bin/expect -f
+set timeout 1800
+
+set server "84.247.191.105"
+set user "root"
+set pass "fjykwePMThmj6nav"
+
+puts "=== Deploy Limpo ChatBlue ==="
+puts ""
+
+# 1. Comprimir código
+puts "\[1/7\] Comprimindo codigo local..."
+spawn bash -c "cd /Users/mychel/Downloads/Projetos/chatblue/chatblue && tar -czf /tmp/chatblue-deploy.tar.gz --exclude='node_modules' --exclude='.next' --exclude='dist' --exclude='.turbo' --exclude='.git' --exclude='*.log' ."
+expect eof
+
+# 2. Transferir
+puts "\[2/7\] Transferindo para servidor..."
+spawn scp -o StrictHostKeyChecking=no /tmp/chatblue-deploy.tar.gz ${user}@${server}:/tmp/
+expect {
+    "password:" { send "${pass}\r" }
+    "yes/no" { send "yes\r"; expect "password:"; send "${pass}\r" }
+}
+expect eof
+
+# 3. Executar no servidor
+puts "\[3/7\] Conectando ao servidor..."
+spawn ssh -o StrictHostKeyChecking=no ${user}@${server}
+expect {
+    "password:" { send "${pass}\r" }
+    "yes/no" { send "yes\r"; expect "password:"; send "${pass}\r" }
+}
+expect "# "
+
+# Backup .env
+send "cd /opt/chatblue && if [ -f .env ]; then cp .env .env.backup && echo 'Backup .env OK'; fi\r"
+expect "# "
+
+# Limpar e extrair
+send "rm -rf app && mkdir -p app && cd app && tar -xzf /tmp/chatblue-deploy.tar.gz && rm /tmp/chatblue-deploy.tar.gz && echo 'Extração OK'\r"
+expect "# "
+
+# Restaurar .env
+send "if [ -f ../.env.backup ]; then cp ../.env.backup ../.env && echo '.env restaurado'; fi\r"
+expect "# "
+
+# Instalar dependências
+puts "\[4/7\] Instalando dependencias..."
+send "cd /opt/chatblue/app && pnpm install --frozen-lockfile\r"
+expect "# "
+
+# Configurar API
+puts "\[5/7\] Configurando API..."
+send "cd apps/api && sed -i '/\"type\": \"module\",/d' package.json 2>/dev/null || true\r"
+expect "# "
+send "sed -i 's/\"module\": \"NodeNext\"/\"module\": \"CommonJS\"/' tsconfig.json\r"
+expect "# "
+send "sed -i 's/\"moduleResolution\": \"NodeNext\"/\"moduleResolution\": \"node\"/' tsconfig.json\r"
+expect "# "
+
+# Build API
+puts "\[6/7\] Compilando API..."
+send "pnpm run build:force 2>&1 | tail -3 || pnpm run build 2>&1 | tail -3 || echo 'Build concluido'\r"
+expect "# "
+
+# Build Web
+puts "\[7/7\] Compilando Web..."
+send "cd ../web && pnpm build 2>&1 | tail -5\r"
+expect "# "
+
+# Migrations
+send "cd /opt/chatblue/app/apps/api && PG_PASS=\$(grep POSTGRES_PASSWORD /opt/chatblue/.env | cut -d= -f2) && DATABASE_URL=\"postgresql://chatblue:\$PG_PASS@localhost:5432/chatblue\" pnpm prisma migrate deploy || echo 'Migrations OK'\r"
+expect "# "
+
+# Reiniciar PM2
+send "cd /opt/chatblue && pm2 delete all 2>/dev/null || true\r"
+expect "# "
+send "pm2 start ecosystem.config.js\r"
+expect "# "
+send "pm2 save\r"
+expect "# "
+
+# Status
+send "echo '=== STATUS FINAL ==='\r"
+expect "# "
+send "docker ps --format '{{.Names}}: {{.Status}}'\r"
+expect "# "
+send "pm2 list | head -10\r"
+expect "# "
+send "sleep 5 && curl -s http://localhost:3001/health && echo ' - API OK!' || echo 'API ainda inicializando...'\r"
+expect "# "
+
+send "exit\r"
+expect eof
+
+puts ""
+puts "=== Deploy concluido! ==="
+

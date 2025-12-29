@@ -11,6 +11,8 @@ import {
   Wifi,
   Bot,
   Shield,
+  Book,
+  HelpCircle,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -24,6 +26,8 @@ const navigation = [
   { name: "Usuários", href: "/users", icon: Shield, adminOnly: true },
   { name: "Conexões", href: "/connections", icon: Wifi },
   { name: "Atendente IA", href: "/ai-agent", icon: Bot },
+  { name: "Knowledge Base", href: "/knowledge-base", icon: Book, adminOnly: true },
+  { name: "FAQ", href: "/faq", icon: HelpCircle, adminOnly: true },
   { name: "Configurações", href: "/settings", icon: Settings },
 ];
 

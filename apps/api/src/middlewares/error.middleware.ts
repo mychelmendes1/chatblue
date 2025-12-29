@@ -86,10 +86,17 @@ export const errorHandler = (
     }
   }
 
-  // Unknown errors
+  // Unknown errors - Log full error details
+  logger.error({
+    message: 'Unhandled error',
+    error: err.message,
+    stack: err.stack,
+    name: err.name,
+  });
+
   return res.status(500).json({
-    error: process.env.NODE_ENV === 'production'
-      ? 'Internal server error'
-      : err.message,
+    error: 'Internal server error',
+    message: err.message, // Temporarily show error message even in production for debugging
+    ...(process.env.NODE_ENV !== 'production' && { stack: err.stack }),
   });
 };

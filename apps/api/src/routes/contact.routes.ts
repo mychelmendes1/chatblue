@@ -438,4 +438,67 @@ router.get('/search', authenticate, ensureTenant, async (req, res, next) => {
   }
 });
 
+// Temporary route to fix contact phone numbers (remove after running)
+router.post('/fix-phones', authenticate, requireAdmin, ensureTenant, async (req, res, next) => {
+  try {
+    function normalizePhoneNumber(phone: string): string {
+      if (!phone) return phone;
+      let normalized = phone.replace(/@[^@]*$/g, '');
+      normalized = normalized.replace(/\D/g, '');
+      return normalized;
+    }
+
+    const contacts = await prisma.contact.findMany({
+      where: {
+        companyId: req.user!.companyId,
+        phone: { contains: '@' },
+      },
+    });
+
+    let fixed = 0;
+    let errors = 0;
+
+    for (const contact of contacts) {
+      try {
+        const normalized = normalizePhoneNumber(contact.phone);
+        if (!normalized || normalized.length === 0) {
+          errors++;
+          continue;
+        }
+
+        const existing = await prisma.contact.findFirst({
+          where: {
+            companyId: req.user!.companyId,
+            phone: normalized,
+            id: { not: contact.id },
+          },
+        });
+
+        if (existing) {
+          errors++;
+          continue;
+        }
+
+        await prisma.contact.update({
+          where: { id: contact.id },
+          data: { phone: normalized },
+        });
+
+        fixed++;
+      } catch (error) {
+        errors++;
+      }
+    }
+
+    res.json({ 
+      message: `Fixed ${fixed} contacts, ${errors} errors`,
+      fixed,
+      errors,
+      total: contacts.length,
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
 export { router as contactRouter };

@@ -1,11 +1,12 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Search, Filter, Bot, User, Clock, Plus, Loader2, Phone, Users } from "lucide-react";
+import { Search, Filter, Bot, User, Clock, Plus, Loader2, Phone, Users, CheckSquare } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Switch } from "@/components/ui/switch";
 import {
   Dialog,
   DialogContent,
@@ -56,6 +57,9 @@ export function ChatSidebar() {
     setFilters,
     isLoadingTickets,
     setLoadingTickets,
+    showResolved,
+    setShowResolved,
+    clearData,
   } = useChatStore();
 
   const [search, setSearch] = useState("");
@@ -75,7 +79,26 @@ export function ChatSidebar() {
 
   useEffect(() => {
     fetchTickets();
-  }, [filters]);
+  }, [filters, showResolved]);
+
+  // Listen for company switch events to reload data
+  useEffect(() => {
+    const handleCompanySwitch = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      console.log("Company switched event received!", detail);
+      clearData();
+      // Small delay to ensure new token is saved before fetching
+      setTimeout(() => {
+        console.log("Fetching tickets for new company...");
+        fetchTickets();
+      }, 300);
+    };
+
+    window.addEventListener('company-switched', handleCompanySwitch);
+    return () => {
+      window.removeEventListener('company-switched', handleCompanySwitch);
+    };
+  }, [clearData]);
 
   async function fetchTickets() {
     setLoadingTickets(true);
@@ -84,6 +107,7 @@ export function ChatSidebar() {
       if (filters.status) params.set("status", filters.status);
       if (filters.departmentId) params.set("departmentId", filters.departmentId);
       if (search) params.set("search", search);
+      if (!showResolved) params.set("hideResolved", "true");
 
       const response = await api.get<{ tickets: any[] }>(`/tickets?${params}`);
       setTickets(response.data.tickets);
@@ -264,6 +288,22 @@ export function ChatSidebar() {
           >
             Meus
           </Button>
+        </div>
+
+        {/* Show Resolved Toggle */}
+        <div className="flex items-center justify-between mt-3 pt-3 border-t">
+          <label
+            htmlFor="showResolved"
+            className="text-sm text-muted-foreground cursor-pointer select-none flex items-center gap-2"
+          >
+            <CheckSquare className="w-4 h-4" />
+            Mostrar resolvidas
+          </label>
+          <Switch
+            id="showResolved"
+            checked={showResolved}
+            onCheckedChange={setShowResolved}
+          />
         </div>
       </div>
 
@@ -485,17 +525,20 @@ function TicketItem({ ticket, isSelected, onSelect }: TicketItemProps) {
 
   const lastMessage = ticket.messages?.[0];
   const sla = ticket.slaDeadline ? formatSLATime(ticket.slaDeadline) : null;
+  const unreadCount = ticket._count?.messages || 0;
+  const hasUnread = unreadCount > 0;
 
   return (
     <button
       className={cn(
         "w-full p-3 flex items-start gap-3 text-left hover:bg-muted/50 transition-colors",
-        isSelected && "bg-muted"
+        isSelected && "bg-muted",
+        hasUnread && !isSelected && "bg-primary/5 border-l-2 border-l-primary"
       )}
       onClick={onSelect}
     >
       <div className="relative">
-        <Avatar>
+        <Avatar className={cn(hasUnread && "ring-2 ring-primary ring-offset-2")}>
           <AvatarImage src={ticket.contact?.avatar} />
           <AvatarFallback>{initials}</AvatarFallback>
         </Avatar>
@@ -508,10 +551,19 @@ function TicketItem({ ticket, isSelected, onSelect }: TicketItemProps) {
 
       <div className="flex-1 min-w-0">
         <div className="flex items-center justify-between mb-1">
-          <span className="font-medium truncate">{contactName}</span>
-          <span className="text-xs text-muted-foreground">
-            {formatDate(ticket.updatedAt)}
+          <span className={cn("truncate", hasUnread ? "font-bold" : "font-medium")}>
+            {contactName}
           </span>
+          <div className="flex items-center gap-2">
+            {hasUnread && (
+              <span className="flex items-center justify-center min-w-5 h-5 px-1.5 text-xs font-bold text-white bg-primary rounded-full">
+                {unreadCount > 99 ? "99+" : unreadCount}
+              </span>
+            )}
+            <span className="text-xs text-muted-foreground">
+              {formatDate(ticket.updatedAt)}
+            </span>
+          </div>
         </div>
 
         <div className="flex items-center gap-2 mb-1">
@@ -521,18 +573,27 @@ function TicketItem({ ticket, isSelected, onSelect }: TicketItemProps) {
               getStatusColor(ticket.status)
             )}
           />
-          {ticket.department && (
+          {ticket.department ? (
             <span
               className="text-xs px-1.5 py-0.5 rounded"
               style={{ backgroundColor: ticket.department.color + "20" }}
             >
               {ticket.department.name}
             </span>
+          ) : (
+            <span
+              className="text-xs px-1.5 py-0.5 rounded bg-amber-100 text-amber-800"
+            >
+              Triagem
+            </span>
           )}
         </div>
 
         {lastMessage && (
-          <p className="text-sm text-muted-foreground truncate">
+          <p className={cn(
+            "text-sm truncate",
+            hasUnread ? "text-foreground font-medium" : "text-muted-foreground"
+          )}>
             {lastMessage.isFromMe && "Você: "}
             {lastMessage.content || `[${lastMessage.type}]`}
           </p>

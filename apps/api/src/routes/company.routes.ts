@@ -1,16 +1,16 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { prisma } from '../config/database.js';
-import { authenticate, requireSuperAdmin } from '../middlewares/auth.middleware.js';
-import { NotFoundError } from '../middlewares/error.middleware.js';
+import { authenticate, requireSuperAdmin, requireAdmin } from '../middlewares/auth.middleware.js';
+import { NotFoundError, ValidationError } from '../middlewares/error.middleware.js';
 
 const router = Router();
 
 const createCompanySchema = z.object({
-  name: z.string().min(2),
-  slug: z.string().min(2).regex(/^[a-z0-9-]+$/),
-  logo: z.string().url().optional(),
-  plan: z.enum(['BASIC', 'PRO', 'ENTERPRISE']).optional(),
+  name: z.string().min(2, 'Nome deve ter pelo menos 2 caracteres'),
+  slug: z.string().min(2, 'Slug deve ter pelo menos 2 caracteres').regex(/^[a-z0-9-]+$/, 'Slug deve conter apenas letras minúsculas, números e hífens'),
+  logo: z.union([z.string().url('URL do logo inválida'), z.literal('')]).optional(),
+  plan: z.enum(['BASIC', 'PRO', 'ENTERPRISE']).optional().default('BASIC'),
 });
 
 const updateCompanySchema = createCompanySchema.partial();
@@ -29,6 +29,31 @@ router.get('/', authenticate, requireSuperAdmin, async (_req, res, next) => {
         },
       },
       orderBy: { createdAt: 'desc' },
+    });
+
+    res.json(companies);
+  } catch (error) {
+    next(error);
+  }
+});
+
+// List all active companies (for admin to assign user access)
+// Get all active companies (Admin only)
+// Note: No ensureTenant here because we want to list ALL companies for admin to assign access
+router.get('/all/active', authenticate, requireAdmin, async (_req, res, next) => {
+  try {
+    const companies = await prisma.company.findMany({
+      where: {
+        isActive: true,
+      },
+      select: {
+        id: true,
+        name: true,
+        slug: true,
+        logo: true,
+        plan: true,
+      },
+      orderBy: { name: 'asc' },
     });
 
     res.json(companies);
@@ -72,19 +97,49 @@ router.get('/:id', authenticate, async (req, res, next) => {
 });
 
 // Create company (Super Admin only)
+// Note: No ensureTenant here because we're creating a NEW company, not accessing an existing one
 router.post('/', authenticate, requireSuperAdmin, async (req, res, next) => {
   try {
-    const data = createCompanySchema.parse(req.body);
+    // Validate request body
+    const validationResult = createCompanySchema.safeParse(req.body);
+    
+    if (!validationResult.success) {
+      const errors = validationResult.error.errors.map(err => 
+        `${err.path.join('.')}: ${err.message}`
+      ).join(', ');
+      throw new ValidationError(`Validation error: ${errors}`);
+    }
+
+    const data = validationResult.data;
+
+    // Check if slug already exists
+    const existingCompany = await prisma.company.findUnique({
+      where: { slug: data.slug },
+    });
+
+    if (existingCompany) {
+      throw new ValidationError('Uma empresa com este slug já existe');
+    }
 
     const company = await prisma.company.create({
       data: {
-        ...data,
+        name: data.name,
+        slug: data.slug,
+        plan: data.plan || 'BASIC',
+        ...(data.logo && data.logo.trim() ? { logo: data.logo } : {}),
         settings: {
           create: {}, // Create default settings
         },
       },
       include: {
         settings: true,
+        _count: {
+          select: {
+            users: true,
+            connections: true,
+            tickets: true,
+          },
+        },
       },
     });
 

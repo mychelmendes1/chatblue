@@ -24,7 +24,11 @@ const registerSchema = z.object({
 // Login
 router.post('/login', async (req, res, next) => {
   try {
-    const { email, password } = loginSchema.parse(req.body);
+    const { email, password, companyId: requestedCompanyId } = z.object({
+      email: z.string().email(),
+      password: z.string().min(6),
+      companyId: z.string().cuid().optional(), // Optional: login directly to specific company
+    }).parse(req.body);
 
     const user = await prisma.user.findUnique({
       where: { email },
@@ -34,6 +38,7 @@ router.post('/login', async (req, res, next) => {
             id: true,
             name: true,
             slug: true,
+            logo: true,
             isActive: true,
           },
         },
@@ -48,13 +53,77 @@ router.post('/login', async (req, res, next) => {
       throw new UnauthorizedError('User is inactive');
     }
 
-    if (!user.company.isActive) {
-      throw new UnauthorizedError('Company is inactive');
+    if (!user.company) {
+      throw new UnauthorizedError('User company not found');
     }
 
     const validPassword = await bcrypt.compare(password, user.password);
     if (!validPassword) {
       throw new UnauthorizedError('Invalid credentials');
+    }
+
+    // Get all companies user has access to (approved)
+    const additionalCompanies = await prisma.userCompany.findMany({
+      where: {
+        userId: user.id,
+        status: 'APPROVED',
+      },
+      include: {
+        company: {
+          select: {
+            id: true,
+            name: true,
+            slug: true,
+            logo: true,
+            isActive: true,
+          },
+        },
+      },
+    });
+
+    // Build list of all available companies
+    const allCompanies = [
+      {
+        id: user.company.id,
+        name: user.company.name,
+        slug: user.company.slug,
+        logo: user.company.logo,
+        isActive: user.company.isActive,
+        role: user.role, // Main company uses user's main role
+        isPrimary: true,
+      },
+      ...additionalCompanies
+        .filter(ac => ac.company.isActive && ac.company.id !== user.companyId)
+        .map(ac => ({
+          id: ac.company.id,
+          name: ac.company.name,
+          slug: ac.company.slug,
+          logo: ac.company.logo,
+          isActive: ac.company.isActive,
+          role: ac.role,
+          isPrimary: false,
+        })),
+    ];
+
+    // Determine which company to use for this session
+    let activeCompanyId = user.companyId;
+    let activeRole = user.role;
+
+    if (requestedCompanyId && requestedCompanyId !== user.companyId) {
+      // Check if user has access to requested company
+      const requestedAccess = additionalCompanies.find(
+        ac => ac.companyId === requestedCompanyId && ac.company.isActive
+      );
+      if (requestedAccess) {
+        activeCompanyId = requestedCompanyId;
+        activeRole = requestedAccess.role;
+      }
+    }
+
+    // Check if active company is active
+    const activeCompany = allCompanies.find(c => c.id === activeCompanyId);
+    if (!activeCompany || !activeCompany.isActive) {
+      throw new UnauthorizedError('Company is inactive');
     }
 
     // Update online status
@@ -63,11 +132,11 @@ router.post('/login', async (req, res, next) => {
       data: { isOnline: true, lastSeen: new Date() },
     });
 
-    // Generate tokens
+    // Generate tokens with active company
     const payload = {
       userId: user.id,
-      companyId: user.companyId,
-      role: user.role,
+      companyId: activeCompanyId,
+      role: activeRole,
     };
 
     const accessToken = jwt.sign(
@@ -82,9 +151,9 @@ router.post('/login', async (req, res, next) => {
       { expiresIn: process.env.JWT_REFRESH_EXPIRES_IN || '7d' }
     );
 
-    // Store refresh token in Redis
+    // Store refresh token in Redis (keyed by user + company for multi-company support)
     await redis.setex(
-      `refresh:${user.id}`,
+      `refresh:${user.id}:${activeCompanyId}`,
       7 * 24 * 60 * 60, // 7 days
       refreshToken
     );
@@ -95,10 +164,11 @@ router.post('/login', async (req, res, next) => {
         email: user.email,
         name: user.name,
         avatar: user.avatar,
-        role: user.role,
+        role: activeRole,
         isAI: user.isAI,
-        company: user.company,
+        company: activeCompany,
       },
+      companies: allCompanies.filter(c => c.isActive), // All available companies
       accessToken,
       refreshToken,
     });
@@ -121,8 +191,13 @@ router.post('/refresh', async (req, res, next) => {
       process.env.JWT_REFRESH_SECRET!
     ) as { userId: string; companyId: string; role: string };
 
-    // Verify token in Redis
-    const storedToken = await redis.get(`refresh:${decoded.userId}`);
+    // Verify token in Redis (check both old format and new format for backwards compatibility)
+    let storedToken = await redis.get(`refresh:${decoded.userId}:${decoded.companyId}`);
+    if (!storedToken) {
+      // Try old format for backwards compatibility
+      storedToken = await redis.get(`refresh:${decoded.userId}`);
+    }
+    
     if (storedToken !== refreshToken) {
       throw new UnauthorizedError('Invalid refresh token');
     }
@@ -175,6 +250,7 @@ router.get('/me', authenticate, async (req, res, next) => {
         name: true,
         avatar: true,
         role: true,
+        companyId: true,
         isAI: true,
         company: {
           select: {
@@ -198,7 +274,61 @@ router.get('/me', authenticate, async (req, res, next) => {
       },
     });
 
-    res.json(user);
+    if (!user) {
+      throw new UnauthorizedError('User not found');
+    }
+
+    // Get all companies user has access to
+    const additionalCompanies = await prisma.userCompany.findMany({
+      where: {
+        userId: user.id,
+        status: 'APPROVED',
+      },
+      include: {
+        company: {
+          select: {
+            id: true,
+            name: true,
+            slug: true,
+            logo: true,
+            isActive: true,
+          },
+        },
+      },
+    });
+
+    // Build list of all available companies
+    const companies = [
+      {
+        id: user.company.id,
+        name: user.company.name,
+        slug: user.company.slug,
+        logo: user.company.logo,
+        role: user.role,
+        isPrimary: true,
+      },
+      ...additionalCompanies
+        .filter(ac => ac.company.isActive && ac.company.id !== user.companyId)
+        .map(ac => ({
+          id: ac.company.id,
+          name: ac.company.name,
+          slug: ac.company.slug,
+          logo: ac.company.logo,
+          role: ac.role,
+          isPrimary: false,
+        })),
+    ];
+
+    // Get current active company from token
+    const activeCompanyId = req.user!.companyId;
+    const activeCompany = companies.find(c => c.id === activeCompanyId) || companies[0];
+
+    res.json({
+      ...user,
+      role: req.user!.role, // Role from token (may be different per company)
+      activeCompany,
+      companies,
+    });
   } catch (error) {
     next(error);
   }

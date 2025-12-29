@@ -14,6 +14,8 @@ import {
   CheckCircle,
   XCircle,
   Loader2,
+  Building2,
+  Edit,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -41,9 +43,18 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { useToast } from "@/components/ui/use-toast";
 import { api } from "@/lib/api";
 import { cn, formatPhone } from "@/lib/utils";
+import { useAuthStore } from "@/stores/auth.store";
 
 interface Connection {
   id: string;
@@ -54,6 +65,12 @@ interface Connection {
   isDefault: boolean;
   isActive: boolean;
   lastConnected?: string;
+  companyId?: string;
+  company?: {
+    id: string;
+    name: string;
+    logo?: string;
+  };
   _count?: {
     tickets: number;
     messages: number;
@@ -69,9 +86,28 @@ export default function ConnectionsPage() {
   const [selectedConnection, setSelectedConnection] = useState<Connection | null>(null);
   const [qrCode, setQRCode] = useState<string | null>(null);
   const [isLoadingQR, setIsLoadingQR] = useState(false);
+  const [showCompanyDialog, setShowCompanyDialog] = useState(false);
+  const [selectedConnectionForCompany, setSelectedConnectionForCompany] = useState<Connection | null>(null);
+  const [availableCompanies, setAvailableCompanies] = useState<Array<{ id: string; name: string; logo?: string }>>([]);
+  const [selectedCompanyId, setSelectedCompanyId] = useState<string>("");
+  const { user } = useAuthStore();
 
   useEffect(() => {
     fetchConnections();
+  }, []);
+
+  // Listen for company switch events to reload data
+  useEffect(() => {
+    const handleCompanySwitch = () => {
+      console.log("Company switched, reloading connections...");
+      setConnections([]);
+      fetchConnections();
+    };
+
+    window.addEventListener('company-switched', handleCompanySwitch);
+    return () => {
+      window.removeEventListener('company-switched', handleCompanySwitch);
+    };
   }, []);
 
   // Poll for connection status when QR dialog is open
@@ -99,13 +135,16 @@ export default function ConnectionsPage() {
   }, [showQRDialog, selectedConnection]);
 
   async function fetchConnections() {
+    console.log("Fetching connections...");
     try {
       const response = await api.get<Connection[]>("/connections");
-      setConnections(response.data);
-    } catch (error) {
+      console.log("Connections fetched:", response.data?.length, "connections", response.data);
+      setConnections(response.data || []);
+    } catch (error: any) {
+      console.error("Error fetching connections:", error);
       toast({
         title: "Erro",
-        description: "Falha ao carregar conexões",
+        description: error.response?.data?.error || error.message || "Falha ao carregar conexões",
         variant: "destructive",
       });
     } finally {
@@ -178,16 +217,60 @@ export default function ConnectionsPage() {
   }
 
   async function handleDelete(connectionId: string) {
-    if (!confirm("Tem certeza que deseja remover esta conexão?")) return;
+    if (!confirm("Tem certeza que deseja remover esta conexão? Todas as mensagens e conversas serão preservadas.")) return;
 
     try {
-      await api.delete(`/connections/${connectionId}`);
-      toast({ title: "Conexão removida" });
+      const response = await api.delete(`/connections/${connectionId}`);
+      toast({ 
+        title: "Conexão removida",
+        description: (response.data as any)?.message || "A conexão foi desativada e todas as mensagens foram preservadas."
+      });
       fetchConnections();
-    } catch (error) {
+    } catch (error: any) {
+      console.error("Error deleting connection:", error);
       toast({
         title: "Erro",
-        description: "Falha ao remover",
+        description: error.response?.data?.error || error.message || "Falha ao remover conexão",
+        variant: "destructive",
+      });
+    }
+  }
+
+  async function fetchAvailableCompanies() {
+    try {
+      const response = await api.get<Array<{ id: string; name: string; logo?: string }>>("/companies/all/active");
+      setAvailableCompanies(response.data || []);
+    } catch (error: any) {
+      console.error("Error fetching available companies:", error);
+      toast({
+        title: "Erro",
+        description: error.response?.data?.error || error.message || "Falha ao carregar empresas",
+        variant: "destructive",
+      });
+    }
+  }
+
+  function handleChangeCompany(connection: Connection) {
+    setSelectedConnectionForCompany(connection);
+    setSelectedCompanyId(connection.companyId || "");
+    fetchAvailableCompanies();
+    setShowCompanyDialog(true);
+  }
+
+  async function handleUpdateCompany() {
+    if (!selectedConnectionForCompany || !selectedCompanyId) return;
+
+    try {
+      await api.put(`/connections/${selectedConnectionForCompany.id}/company`, {
+        companyId: selectedCompanyId,
+      });
+      toast({ title: "Empresa da conexão atualizada" });
+      setShowCompanyDialog(false);
+      fetchConnections();
+    } catch (error: any) {
+      toast({
+        title: "Erro",
+        description: error.response?.data?.error || "Falha ao atualizar empresa",
         variant: "destructive",
       });
     }
@@ -245,8 +328,12 @@ export default function ConnectionsPage() {
           <DialogContent>
             <NewConnectionDialog
               onSuccess={() => {
+                console.log("onSuccess called, closing dialog and refreshing connections...");
                 setShowNewDialog(false);
-                fetchConnections();
+                // Small delay to ensure dialog closes before fetching
+                setTimeout(() => {
+                  fetchConnections();
+                }, 100);
               }}
             />
           </DialogContent>
@@ -302,6 +389,12 @@ export default function ConnectionsPage() {
                     </Button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end">
+                    {user?.role === "SUPER_ADMIN" && (
+                      <DropdownMenuItem onClick={() => handleChangeCompany(connection)}>
+                        <Edit className="w-4 h-4 mr-2" />
+                        Alterar Empresa
+                      </DropdownMenuItem>
+                    )}
                     {!connection.isDefault && (
                       <DropdownMenuItem onClick={() => handleSetDefault(connection.id)}>
                         Definir como padrão
@@ -325,6 +418,21 @@ export default function ConnectionsPage() {
                       <span className="text-sm">{getStatusLabel(connection.status)}</span>
                     </div>
                   </div>
+
+                  {connection.company && (
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm text-muted-foreground">Empresa</span>
+                      <div className="flex items-center gap-2">
+                        <Avatar className="h-4 w-4">
+                          <AvatarImage src={connection.company.logo} />
+                          <AvatarFallback className="text-[8px]">
+                            <Building2 className="w-2 h-2" />
+                          </AvatarFallback>
+                        </Avatar>
+                        <span className="text-sm">{connection.company.name}</span>
+                      </div>
+                    </div>
+                  )}
 
                   {connection.phone && (
                     <div className="flex items-center justify-between">
@@ -420,15 +528,66 @@ export default function ConnectionsPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Change Company Dialog */}
+      <Dialog open={showCompanyDialog} onOpenChange={setShowCompanyDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Alterar Empresa da Conexão</DialogTitle>
+            <DialogDescription>
+              Selecione a empresa para a conexão {selectedConnectionForCompany?.name}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label>Empresa</Label>
+              <Select
+                value={selectedCompanyId}
+                onValueChange={setSelectedCompanyId}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Selecione uma empresa" />
+                </SelectTrigger>
+                <SelectContent>
+                  {availableCompanies.map((company) => (
+                    <SelectItem key={company.id} value={company.id}>
+                      <div className="flex items-center gap-2">
+                        <Avatar className="h-5 w-5">
+                          <AvatarImage src={company.logo} />
+                          <AvatarFallback>
+                            <Building2 className="w-3 h-3" />
+                          </AvatarFallback>
+                        </Avatar>
+                        {company.name}
+                      </div>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowCompanyDialog(false)}>
+              Cancelar
+            </Button>
+            <Button onClick={handleUpdateCompany} disabled={!selectedCompanyId}>
+              Atualizar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
 
 function NewConnectionDialog({ onSuccess }: { onSuccess: () => void }) {
   const { toast } = useToast();
+  const { user } = useAuthStore();
   const [type, setType] = useState<"BAILEYS" | "META_CLOUD">("BAILEYS");
   const [name, setName] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [availableCompanies, setAvailableCompanies] = useState<Array<{ id: string; name: string; logo?: string }>>([]);
+  const [selectedCompanyId, setSelectedCompanyId] = useState<string>("");
 
   // Meta Cloud fields
   const [accessToken, setAccessToken] = useState("");
@@ -436,32 +595,149 @@ function NewConnectionDialog({ onSuccess }: { onSuccess: () => void }) {
   const [businessId, setBusinessId] = useState("");
   const [webhookToken, setWebhookToken] = useState("");
 
+  useEffect(() => {
+    if (user?.role === "SUPER_ADMIN") {
+      fetchAvailableCompanies();
+    }
+  }, [user]);
+
+  async function fetchAvailableCompanies() {
+    try {
+      const response = await api.get<Array<{ id: string; name: string; logo?: string }>>("/companies/all/active");
+      setAvailableCompanies(response.data || []);
+      // Set default to current company if available
+      if (user?.company?.id) {
+        setSelectedCompanyId(user.company.id);
+      }
+    } catch (error: any) {
+      console.error("Error fetching available companies:", error);
+      // Don't show toast here as it's called on mount and might be annoying
+      // The error will be visible in console for debugging
+    }
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    setIsLoading(true);
-
-    try {
-      if (type === "BAILEYS") {
-        await api.post("/connections/baileys", { name, type: "BAILEYS" });
-      } else {
-        await api.post("/connections/meta-cloud", {
-          name,
-          type: "META_CLOUD",
-          accessToken,
-          phoneNumberId,
-          businessId,
-          webhookToken,
-        });
-      }
-      toast({ title: "Conexão criada com sucesso" });
-      onSuccess();
-    } catch (error: any) {
+    e.stopPropagation();
+    
+    console.log("Form submitted, type:", type, "name:", name);
+    
+    if (!name.trim()) {
+      console.warn("Validation failed: name is empty");
       toast({
         title: "Erro",
-        description: error.message || "Falha ao criar conexão",
+        description: "O nome da conexão é obrigatório",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (type === "META_CLOUD") {
+      if (!accessToken.trim() || !phoneNumberId.trim() || !businessId.trim() || !webhookToken.trim()) {
+        console.warn("Validation failed: META_CLOUD fields incomplete");
+        toast({
+          title: "Erro",
+          description: "Todos os campos da API Oficial são obrigatórios",
+          variant: "destructive",
+        });
+        return;
+      }
+    }
+
+    if (isLoading) {
+      console.warn("Already loading, ignoring submit");
+      return;
+    }
+
+    setIsLoading(true);
+    console.log("Starting connection creation...");
+
+    try {
+      const payload: any = {
+        name: name.trim(),
+        type,
+      };
+
+      // Add companyId if super admin and selected
+      if (user?.role === "SUPER_ADMIN" && selectedCompanyId) {
+        payload.companyId = selectedCompanyId;
+        console.log("Adding companyId to payload:", selectedCompanyId);
+      }
+
+      console.log("Creating connection with payload:", JSON.stringify(payload, null, 2));
+      
+      let response;
+      if (type === "BAILEYS") {
+        console.log("Creating BAILEYS connection...");
+        response = await api.post("/connections/baileys", payload);
+        console.log("BAILEYS connection created successfully:", response.data);
+      } else {
+        console.log("Creating META_CLOUD connection...");
+        const metaPayload = {
+          ...payload,
+          accessToken: accessToken.trim(),
+          phoneNumberId: phoneNumberId.trim(),
+          businessId: businessId.trim(),
+          webhookToken: webhookToken.trim(),
+        };
+        console.log("META_CLOUD payload (without token):", { ...metaPayload, accessToken: "***" });
+        response = await api.post("/connections/meta-cloud", metaPayload);
+        console.log("META_CLOUD connection created successfully:", response.data);
+      }
+      
+      console.log("Connection created successfully, showing toast...");
+      toast({ 
+        title: "Conexão criada com sucesso",
+        description: `A conexão "${name.trim()}" foi criada.`
+      });
+      
+      console.log("Resetting form...");
+      // Reset form
+      setName("");
+      setAccessToken("");
+      setPhoneNumberId("");
+      setBusinessId("");
+      setWebhookToken("");
+      setSelectedCompanyId("");
+      setType("BAILEYS"); // Reset to default type
+      
+      console.log("Form reset, calling onSuccess callback...");
+      // Call onSuccess after a small delay to ensure toast is shown
+      setTimeout(() => {
+        onSuccess();
+        console.log("onSuccess callback completed");
+      }, 500);
+    } catch (error: any) {
+      console.error("Error creating connection:", {
+        error,
+        message: error.message,
+        response: error.response,
+        status: error.response?.status,
+        data: error.response?.data,
+      });
+      
+      let errorMessage = "Falha ao criar conexão";
+      
+      if (error.response?.data?.details) {
+        // Zod validation errors
+        const details = error.response.data.details;
+        errorMessage = details.map((d: any) => `${d.field}: ${d.message}`).join(", ");
+        console.error("Validation errors:", details);
+      } else if (error.response?.data?.error) {
+        errorMessage = error.response.data.error;
+      } else if (error.response?.data?.message) {
+        errorMessage = error.response.data.message;
+      } else if (error.message) {
+        errorMessage = error.message;
+      }
+      
+      toast({
+        title: "Erro ao criar conexão",
+        description: errorMessage,
         variant: "destructive",
       });
     } finally {
+      console.log("Setting isLoading to false");
       setIsLoading(false);
     }
   }
@@ -499,6 +775,34 @@ function NewConnectionDialog({ onSuccess }: { onSuccess: () => void }) {
                 required
               />
             </div>
+            {user?.role === "SUPER_ADMIN" && (
+              <div className="space-y-2">
+                <Label>Empresa</Label>
+                <Select
+                  value={selectedCompanyId}
+                  onValueChange={setSelectedCompanyId}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Selecione uma empresa" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {availableCompanies.map((company) => (
+                      <SelectItem key={company.id} value={company.id}>
+                        <div className="flex items-center gap-2">
+                          <Avatar className="h-5 w-5">
+                            <AvatarImage src={company.logo} />
+                            <AvatarFallback>
+                              <Building2 className="w-3 h-3" />
+                            </AvatarFallback>
+                          </Avatar>
+                          {company.name}
+                        </div>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
             <p className="text-sm text-muted-foreground">
               Conexão via WhatsApp. Você precisará escanear um QR Code.
             </p>
@@ -515,6 +819,34 @@ function NewConnectionDialog({ onSuccess }: { onSuccess: () => void }) {
                 required
               />
             </div>
+            {user?.role === "SUPER_ADMIN" && (
+              <div className="space-y-2">
+                <Label>Empresa</Label>
+                <Select
+                  value={selectedCompanyId}
+                  onValueChange={setSelectedCompanyId}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Selecione uma empresa" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {availableCompanies.map((company) => (
+                      <SelectItem key={company.id} value={company.id}>
+                        <div className="flex items-center gap-2">
+                          <Avatar className="h-5 w-5">
+                            <AvatarImage src={company.logo} />
+                            <AvatarFallback>
+                              <Building2 className="w-3 h-3" />
+                            </AvatarFallback>
+                          </Avatar>
+                          {company.name}
+                        </div>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
             <div className="space-y-2">
               <Label htmlFor="accessToken">Access Token</Label>
               <Input

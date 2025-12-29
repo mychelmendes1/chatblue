@@ -71,8 +71,8 @@ router.get('/dashboard', authenticate, ensureTenant, async (req, res, next) => {
 
     // Tickets per day
     const ticketsPerDay = await prisma.$queryRaw`
-      SELECT DATE(created_at) as date, COUNT(*) as count
-      FROM "Ticket"
+      SELECT DATE(created_at) as date, COUNT(*)::int as count
+      FROM "tickets"
       WHERE company_id = ${companyId}
         AND created_at >= ${startDate}
       GROUP BY DATE(created_at)
@@ -99,7 +99,7 @@ router.get('/dashboard', authenticate, ensureTenant, async (req, res, next) => {
 });
 
 // SLA metrics
-router.get('/sla', authenticate, requireSupervisor, ensureTenant, async (req, res, next) => {
+router.get('/sla', authenticate, ensureTenant, async (req, res, next) => {
   try {
     const { period = '7' } = req.query;
     const days = parseInt(period as string);
@@ -178,7 +178,7 @@ router.get('/sla', authenticate, requireSupervisor, ensureTenant, async (req, re
 });
 
 // Agent performance
-router.get('/agents', authenticate, requireSupervisor, ensureTenant, async (req, res, next) => {
+router.get('/agents', authenticate, ensureTenant, async (req, res, next) => {
   try {
     const { period = '7' } = req.query;
     const days = parseInt(period as string);
@@ -253,7 +253,7 @@ router.get('/agents', authenticate, requireSupervisor, ensureTenant, async (req,
 });
 
 // Detailed user performance ranking
-router.get('/users/ranking', authenticate, requireSupervisor, ensureTenant, async (req, res, next) => {
+router.get('/users/ranking', authenticate, ensureTenant, async (req, res, next) => {
   try {
     const { period = '30', sortBy = 'totalTickets' } = req.query;
     const days = parseInt(period as string);
@@ -377,7 +377,7 @@ router.get('/users/ranking', authenticate, requireSupervisor, ensureTenant, asyn
 });
 
 // Get specific user detailed metrics
-router.get('/users/:userId', authenticate, requireSupervisor, ensureTenant, async (req, res, next) => {
+router.get('/users/:userId', authenticate, ensureTenant, async (req, res, next) => {
   try {
     const { period = '30' } = req.query;
     const days = parseInt(period as string);
@@ -498,7 +498,7 @@ router.get('/users/:userId', authenticate, requireSupervisor, ensureTenant, asyn
 });
 
 // Department metrics
-router.get('/departments', authenticate, requireSupervisor, ensureTenant, async (req, res, next) => {
+router.get('/departments', authenticate, ensureTenant, async (req, res, next) => {
   try {
     const { period = '7' } = req.query;
     const days = parseInt(period as string);

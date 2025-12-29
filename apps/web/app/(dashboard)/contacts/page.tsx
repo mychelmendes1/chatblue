@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useRef } from "react";
+import { useRouter } from "next/navigation";
 import {
   Search,
   Filter,
@@ -19,6 +20,7 @@ import {
   FileSpreadsheet,
   AlertCircle,
   Plus,
+  Send,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -79,6 +81,7 @@ interface ImportResult {
 
 export default function ContactsPage() {
   const { toast } = useToast();
+  const router = useRouter();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -87,6 +90,7 @@ export default function ContactsPage() {
   const [showEditDialog, setShowEditDialog] = useState(false);
   const [editForm, setEditForm] = useState({ name: "", email: "" });
   const [isSaving, setIsSaving] = useState(false);
+  const [isStartingConversation, setIsStartingConversation] = useState<string | null>(null);
   const [pagination, setPagination] = useState({
     page: 1,
     limit: 20,
@@ -109,6 +113,21 @@ export default function ContactsPage() {
   useEffect(() => {
     fetchContacts();
   }, [pagination.page, search]);
+
+  // Listen for company switch events to reload data
+  useEffect(() => {
+    const handleCompanySwitch = () => {
+      console.log("Company switched, reloading contacts...");
+      setContacts([]);
+      setPagination(p => ({ ...p, page: 1 }));
+      fetchContacts();
+    };
+
+    window.addEventListener('company-switched', handleCompanySwitch);
+    return () => {
+      window.removeEventListener('company-switched', handleCompanySwitch);
+    };
+  }, []);
 
   async function fetchContacts() {
     setIsLoading(true);
@@ -296,6 +315,31 @@ export default function ContactsPage() {
     }
   }
 
+  async function handleStartConversation(contact: Contact) {
+    setIsStartingConversation(contact.id);
+    try {
+      // Create or get existing ticket for this contact
+      const response = await api.post<{ id: string; isNew: boolean }>("/tickets/start-conversation", {
+        contactId: contact.id,
+      });
+
+      if (response.data.isNew) {
+        toast({ title: "Nova conversa iniciada" });
+      }
+
+      // Navigate to chat with the ticket selected
+      router.push(`/chat?ticket=${response.data.id}`);
+    } catch (error: any) {
+      toast({
+        title: "Erro",
+        description: error.message || "Falha ao iniciar conversa. Verifique se há uma conexão WhatsApp ativa.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsStartingConversation(null);
+    }
+  }
+
   return (
     <div className="p-6">
       <div className="flex items-center justify-between mb-6">
@@ -424,7 +468,11 @@ export default function ContactsPage() {
               </TableRow>
             ) : (
               contacts.map((contact) => (
-                <TableRow key={contact.id}>
+                <TableRow 
+                  key={contact.id} 
+                  className="cursor-pointer hover:bg-muted/50 transition-colors"
+                  onClick={() => handleStartConversation(contact)}
+                >
                   <TableCell>
                     <div className="flex items-center gap-3">
                       <Avatar>
@@ -435,9 +483,17 @@ export default function ContactsPage() {
                             .toUpperCase()}
                         </AvatarFallback>
                       </Avatar>
-                      <span className="font-medium">
-                        {contact.name || "Sem nome"}
-                      </span>
+                      <div className="flex flex-col">
+                        <span className="font-medium">
+                          {contact.name || "Sem nome"}
+                        </span>
+                        {isStartingConversation === contact.id && (
+                          <span className="text-xs text-muted-foreground flex items-center gap-1">
+                            <Loader2 className="w-3 h-3 animate-spin" />
+                            Iniciando conversa...
+                          </span>
+                        )}
+                      </div>
                     </div>
                   </TableCell>
                   <TableCell className="font-mono">
@@ -477,29 +533,48 @@ export default function ContactsPage() {
                       <XCircle className="w-4 h-4 text-gray-300" />
                     )}
                   </TableCell>
-                  <TableCell>
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
-                        <Button variant="ghost" size="icon">
-                          <MoreVertical className="w-4 h-4" />
-                        </Button>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end">
-                        <DropdownMenuItem onClick={() => handleEdit(contact)}>
-                          Editar
-                        </DropdownMenuItem>
-                        <DropdownMenuItem
-                          onClick={() => handleSyncNotion(contact.id)}
-                        >
-                          <RefreshCw className="w-4 h-4 mr-2" />
-                          Sincronizar Notion
-                        </DropdownMenuItem>
-                        <DropdownMenuItem>
-                          <MessageSquare className="w-4 h-4 mr-2" />
-                          Ver Tickets
-                        </DropdownMenuItem>
-                      </DropdownMenuContent>
-                    </DropdownMenu>
+                  <TableCell onClick={(e) => e.stopPropagation()}>
+                    <div className="flex items-center gap-1">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => handleStartConversation(contact)}
+                        disabled={isStartingConversation === contact.id}
+                        title="Iniciar conversa"
+                      >
+                        {isStartingConversation === contact.id ? (
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                        ) : (
+                          <Send className="w-4 h-4" />
+                        )}
+                      </Button>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button variant="ghost" size="icon">
+                            <MoreVertical className="w-4 h-4" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          <DropdownMenuItem onClick={() => handleStartConversation(contact)}>
+                            <Send className="w-4 h-4 mr-2" />
+                            Iniciar Conversa
+                          </DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => handleEdit(contact)}>
+                            Editar
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            onClick={() => handleSyncNotion(contact.id)}
+                          >
+                            <RefreshCw className="w-4 h-4 mr-2" />
+                            Sincronizar Notion
+                          </DropdownMenuItem>
+                          <DropdownMenuItem>
+                            <MessageSquare className="w-4 h-4 mr-2" />
+                            Ver Tickets
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </div>
                   </TableCell>
                 </TableRow>
               ))

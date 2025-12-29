@@ -1,0 +1,67 @@
+#!/usr/bin/expect -f
+
+set timeout 1800
+set server "84.247.191.105"
+set user "root"
+set pass "fjykwePMThmj6nav"
+set script_file "deploy/install.sh"
+
+# Ler o script de instalação
+set fp [open $script_file r]
+set script_content [read $fp]
+close $fp
+
+spawn ssh -o StrictHostKeyChecking=no ${user}@${server}
+
+expect {
+    "password:" {
+        send "${pass}\r"
+    }
+    "yes/no" {
+        send "yes\r"
+        expect "password:"
+        send "${pass}\r"
+    }
+    timeout {
+        puts "Timeout conectando ao servidor"
+        exit 1
+    }
+}
+
+expect "# "
+
+# Enviar o script usando heredoc
+puts "Enviando script de instalação..."
+send "cat > /tmp/chatblue-install.sh << 'INSTALL_EOF'\r"
+expect "# "
+
+# Dividir o conteúdo em linhas e enviar
+set lines [split $script_content "\n"]
+foreach line $lines {
+    send "${line}\r"
+    expect "# "
+}
+
+send "INSTALL_EOF\r"
+expect "# "
+
+puts "Executando instalação (isso pode levar alguns minutos)..."
+send "chmod +x /tmp/chatblue-install.sh && /tmp/chatblue-install.sh\r"
+
+# Esperar pela conclusão
+expect {
+    "PRÓXIMOS PASSOS:" {
+        puts "\n✅ Instalação concluída com sucesso!"
+        expect "# "
+    }
+    timeout {
+        puts "\n⚠️  Timeout durante instalação, mas pode ter funcionado. Verifique manualmente."
+        expect "# "
+    }
+}
+
+send "exit\r"
+expect eof
+
+
+

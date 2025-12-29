@@ -87,16 +87,12 @@ export default function LoginPage() {
             )}
           </div>
 
-          <Button type="submit" className="w-full" disabled={isLoading}>
-            {isLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-            Entrar
-          </Button>
-        </form>
-
-        <div className="mt-6 text-center text-sm text-gray-500">
-          <p>Demo: admin@chatblue.com / admin123</p>
-        </div>
-      </div>
+        <Button type="submit" className="w-full" disabled={isLoading}>
+          {isLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+          Entrar
+        </Button>
+      </form>
+    </div>
     </div>
   );
 }

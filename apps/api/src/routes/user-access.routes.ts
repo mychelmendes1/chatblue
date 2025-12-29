@@ -1,6 +1,8 @@
 import { Router } from 'express';
 import { z } from 'zod';
+import jwt from 'jsonwebtoken';
 import { prisma } from '../config/database.js';
+import { redis } from '../config/redis.js';
 import { authenticate, requireAdmin } from '../middlewares/auth.middleware.js';
 import { ensureTenant } from '../middlewares/tenant.middleware.js';
 import { NotFoundError, ValidationError, ForbiddenError } from '../middlewares/error.middleware.js';
@@ -244,12 +246,40 @@ router.delete('/:id', authenticate, requireAdmin, ensureTenant, async (req, res,
   }
 });
 
-// Get my company access list
+// Get my company access list with unread message counts
 router.get('/my-companies', authenticate, async (req, res, next) => {
   try {
-    const myAccess = await prisma.userCompany.findMany({
+    const userId = req.user!.userId;
+    
+    // Get user's primary company
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        companyId: true,
+        role: true,
+        company: {
+          select: {
+            id: true,
+            name: true,
+            slug: true,
+            logo: true,
+            plan: true,
+            isActive: true,
+          },
+        },
+      },
+    });
+
+    if (!user) {
+      throw new NotFoundError('User not found');
+    }
+
+    // Get all companies user has access to
+    const additionalCompanies = await prisma.userCompany.findMany({
       where: {
-        userId: req.user!.userId,
+        userId,
+        status: 'APPROVED',
       },
       include: {
         company: {
@@ -259,51 +289,199 @@ router.get('/my-companies', authenticate, async (req, res, next) => {
             slug: true,
             logo: true,
             plan: true,
+            isActive: true,
           },
         },
       },
-      orderBy: { createdAt: 'desc' },
     });
 
-    res.json(myAccess);
+    // Build list of all companies
+    const allCompanies = [
+      {
+        id: user.company.id,
+        name: user.company.name,
+        slug: user.company.slug,
+        logo: user.company.logo,
+        plan: user.company.plan,
+        isActive: user.company.isActive,
+        role: user.role,
+        isPrimary: true,
+      },
+      ...additionalCompanies
+        .filter(ac => ac.company.isActive && ac.company.id !== user.companyId)
+        .map(ac => ({
+          id: ac.company.id,
+          name: ac.company.name,
+          slug: ac.company.slug,
+          logo: ac.company.logo,
+          plan: ac.company.plan,
+          isActive: ac.company.isActive,
+          role: ac.role,
+          isPrimary: false,
+        })),
+    ];
+
+    // Get unread message counts for each company
+    const companiesWithUnread = await Promise.all(
+      allCompanies.map(async (company) => {
+        // Get user's role for this specific company
+        let userRoleInCompany: string = user.role;
+        if (company.id !== user.companyId) {
+          const access = await prisma.userCompany.findFirst({
+            where: {
+              userId,
+              companyId: company.id,
+              status: 'APPROVED',
+            },
+          });
+          // Map UserCompanyRole to UserRole
+          if (access?.role === 'ADMIN') {
+            userRoleInCompany = 'ADMIN';
+          } else {
+            userRoleInCompany = 'AGENT';
+          }
+        }
+
+        // Count unread messages for this company
+        // For admins, count all unread messages in open tickets
+        // For others, count only in tickets assigned to them
+        const whereClause: any = {
+          ticket: {
+            companyId: company.id,
+            status: { in: ['PENDING', 'IN_PROGRESS', 'WAITING'] },
+          },
+          isFromMe: false,
+          readAt: null,
+        };
+
+        if (userRoleInCompany !== 'ADMIN' && userRoleInCompany !== 'SUPER_ADMIN') {
+          whereClause.ticket.assignedToId = userId;
+        }
+
+        const unreadCount = await prisma.message.count({
+          where: whereClause,
+        });
+
+        return {
+          ...company,
+          unreadCount,
+        };
+      })
+    );
+
+    res.json(companiesWithUnread);
   } catch (error) {
     next(error);
   }
 });
 
-// Switch active company
+// Switch active company - generates new tokens for the selected company
 router.post('/switch-company', authenticate, async (req, res, next) => {
   try {
     const { companyId } = z.object({
       companyId: z.string().cuid(),
     }).parse(req.body);
 
-    // Check if user has approved access to this company
-    const access = await prisma.userCompany.findFirst({
-      where: {
-        userId: req.user!.userId,
-        companyId,
-        status: 'APPROVED',
-      },
-    });
+    const userId = req.user!.userId;
 
-    if (!access) {
-      throw new ForbiddenError('You do not have access to this company');
-    }
-
-    // Return company info for client to update context
-    const company = await prisma.company.findUnique({
-      where: { id: companyId },
+    // Get user's primary company
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
       select: {
         id: true,
-        name: true,
-        slug: true,
-        logo: true,
-        plan: true,
+        companyId: true,
+        role: true,
+        company: {
+          select: {
+            id: true,
+            name: true,
+            slug: true,
+            logo: true,
+            isActive: true,
+          },
+        },
       },
     });
 
-    res.json({ company, role: access.role });
+    if (!user) {
+      throw new NotFoundError('User not found');
+    }
+
+    let targetCompany;
+    let targetRole;
+
+    // Check if switching to primary company
+    if (companyId === user.companyId) {
+      if (!user.company.isActive) {
+        throw new ForbiddenError('Company is inactive');
+      }
+      targetCompany = user.company;
+      targetRole = user.role;
+    } else {
+      // Check if user has approved access to this company
+      const access = await prisma.userCompany.findFirst({
+        where: {
+          userId,
+          companyId,
+          status: 'APPROVED',
+        },
+        include: {
+          company: {
+            select: {
+              id: true,
+              name: true,
+              slug: true,
+              logo: true,
+              isActive: true,
+            },
+          },
+        },
+      });
+
+      if (!access) {
+        throw new ForbiddenError('You do not have access to this company');
+      }
+
+      if (!access.company.isActive) {
+        throw new ForbiddenError('Company is inactive');
+      }
+
+      targetCompany = access.company;
+      targetRole = access.role;
+    }
+
+    // Generate new tokens for the target company
+    const payload = {
+      userId,
+      companyId: targetCompany.id,
+      role: targetRole,
+    };
+
+    const accessToken = jwt.sign(
+      payload,
+      process.env.JWT_SECRET!,
+      { expiresIn: process.env.JWT_EXPIRES_IN || '15m' }
+    );
+
+    const refreshToken = jwt.sign(
+      payload,
+      process.env.JWT_REFRESH_SECRET!,
+      { expiresIn: process.env.JWT_REFRESH_EXPIRES_IN || '7d' }
+    );
+
+    // Store new refresh token in Redis
+    await redis.setex(
+      `refresh:${userId}:${targetCompany.id}`,
+      7 * 24 * 60 * 60, // 7 days
+      refreshToken
+    );
+
+    res.json({
+      company: targetCompany,
+      role: targetRole,
+      accessToken,
+      refreshToken,
+    });
   } catch (error) {
     next(error);
   }

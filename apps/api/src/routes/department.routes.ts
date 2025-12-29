@@ -12,7 +12,7 @@ const departmentSchema = z.object({
   description: z.string().optional(),
   color: z.string().regex(/^#[0-9A-Fa-f]{6}$/).optional(),
   order: z.number().int().optional(),
-  parentId: z.string().cuid().nullable().optional(),
+  parentId: z.union([z.string().min(1), z.null()]).optional(),
 });
 
 // List departments
@@ -139,7 +139,10 @@ router.get('/:id', authenticate, ensureTenant, async (req, res, next) => {
 // Create department
 router.post('/', authenticate, requireAdmin, ensureTenant, async (req, res, next) => {
   try {
+    console.log('Creating department with body:', JSON.stringify(req.body));
+    
     const data = departmentSchema.parse(req.body);
+    console.log('Parsed data:', JSON.stringify(data));
 
     const department = await prisma.department.create({
       data: {
@@ -149,7 +152,11 @@ router.post('/', authenticate, requireAdmin, ensureTenant, async (req, res, next
     });
 
     res.status(201).json(department);
-  } catch (error) {
+  } catch (error: any) {
+    console.error('Error creating department:', error?.message || error);
+    if (error?.errors) {
+      console.error('Validation errors:', JSON.stringify(error.errors));
+    }
     next(error);
   }
 });

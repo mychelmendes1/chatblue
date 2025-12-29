@@ -90,7 +90,7 @@ export class MetaCloudService {
       }
     );
 
-    const data = await response.json();
+    const data: any = await response.json() as any;
 
     if (!response.ok) {
       logger.error('Meta Cloud send message failed:', data);
@@ -138,7 +138,7 @@ export class MetaCloudService {
       }
     );
 
-    const data = await response.json();
+    const data: any = await response.json() as any;
 
     if (!response.ok) {
       logger.error('Meta Cloud send media failed:', data);
@@ -176,7 +176,7 @@ export class MetaCloudService {
       }
     );
 
-    const data = await response.json();
+    const data: any = await response.json() as any;
 
     if (!response.ok) {
       logger.error('Meta Cloud send template failed:', data);
@@ -196,7 +196,7 @@ export class MetaCloudService {
       },
     });
 
-    const data = await response.json();
+    const data: any = await response.json() as any;
 
     if (!response.ok) {
       throw new Error('Failed to get media URL');
@@ -311,7 +311,7 @@ export class MetaCloudService {
       }
     );
 
-    const data = await response.json();
+    const data = await response.json() as any;
 
     if (!response.ok) {
       logger.error('Meta Cloud send reaction failed:', data);
@@ -351,7 +351,7 @@ export class MetaCloudService {
       }
     );
 
-    const data = await response.json();
+    const data = await response.json() as any;
 
     if (!response.ok) {
       logger.error('Meta Cloud mark as read failed:', data);
@@ -419,7 +419,7 @@ export class MetaCloudService {
       }
     );
 
-    const data = await response.json();
+    const data = await response.json() as any;
 
     if (!response.ok) {
       logger.error('Meta Cloud send button message failed:', data);
@@ -493,7 +493,7 @@ export class MetaCloudService {
       }
     );
 
-    const data = await response.json();
+    const data = await response.json() as any;
 
     if (!response.ok) {
       logger.error('Meta Cloud send list message failed:', data);
@@ -548,7 +548,7 @@ export class MetaCloudService {
       }
     );
 
-    const data = await response.json();
+    const data = await response.json() as any;
 
     if (!response.ok) {
       logger.error('Meta Cloud send location failed:', data);
@@ -594,7 +594,7 @@ export class MetaCloudService {
       }
     );
 
-    const data = await response.json();
+    const data = await response.json() as any;
 
     if (!response.ok) {
       logger.error('Meta Cloud send contact failed:', data);
@@ -631,7 +631,7 @@ export class MetaCloudService {
       }
     );
 
-    const data = await response.json();
+    const data = await response.json() as any;
 
     if (!response.ok) {
       logger.error('Meta Cloud upload media failed:', data);
@@ -696,7 +696,7 @@ export class MetaCloudService {
       }
     );
 
-    const data = await response.json();
+    const data = await response.json() as any;
 
     if (!response.ok) {
       logger.error('Meta Cloud send media by ID failed:', data);
@@ -742,7 +742,7 @@ export class MetaCloudService {
       }
     );
 
-    const data = await response.json();
+    const data = await response.json() as any;
 
     if (!response.ok) {
       logger.error('Failed to get templates:', data);
@@ -766,7 +766,7 @@ export class MetaCloudService {
         }
       );
 
-      const data = await response.json();
+      const data = await response.json() as any;
       
       // The WABA ID might need to be retrieved differently depending on account setup
       // For now, we'll try to extract it from the account info

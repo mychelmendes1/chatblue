@@ -5,37 +5,75 @@ import helmet from 'helmet';
 import { createServer } from 'http';
 import { Server as SocketServer } from 'socket.io';
 import { rateLimit } from 'express-rate-limit';
-import { logger } from './config/logger.js';
-import { errorHandler } from './middlewares/error.middleware.js';
-import { authRouter } from './routes/auth.routes.js';
-import { companyRouter } from './routes/company.routes.js';
-import { userRouter } from './routes/user.routes.js';
-import { userAccessRouter } from './routes/user-access.routes.js';
-import { departmentRouter } from './routes/department.routes.js';
-import { connectionRouter } from './routes/connection.routes.js';
-import { ticketRouter } from './routes/ticket.routes.js';
-import { messageRouter } from './routes/message.routes.js';
-import { contactRouter } from './routes/contact.routes.js';
-import { metricsRouter } from './routes/metrics.routes.js';
-import { settingsRouter } from './routes/settings.routes.js';
-import { webhookRouter } from './routes/webhook.routes.js';
-import { uploadRouter } from './routes/upload.routes.js';
-import { pushRouter } from './routes/push.routes.js';
-import { setupSocketHandlers } from './sockets/index.js';
-import { startWorkers, stopWorkers } from './jobs/index.js';
+import { logger } from './config/logger';
+import { errorHandler } from './middlewares/error.middleware';
+import { authRouter } from './routes/auth.routes';
+import { companyRouter } from './routes/company.routes';
+import { userRouter } from './routes/user.routes';
+import { userAccessRouter } from './routes/user-access.routes';
+import { departmentRouter } from './routes/department.routes';
+import { connectionRouter } from './routes/connection.routes';
+import { ticketRouter } from './routes/ticket.routes';
+import { messageRouter } from './routes/message.routes';
+import { contactRouter } from './routes/contact.routes';
+import { metricsRouter } from './routes/metrics.routes';
+import { settingsRouter } from './routes/settings.routes';
+import { webhookRouter } from './routes/webhook.routes';
+import { uploadRouter } from './routes/upload.routes';
+import { pushRouter } from './routes/push.routes';
+import { knowledgeRouter } from './routes/knowledge.routes';
+import { faqRouter } from './routes/faq.routes';
+import { setupSocketHandlers } from './sockets/index';
+import { startWorkers, stopWorkers } from './jobs/index';
+import { prisma } from './config/database';
+import { BaileysService } from './services/whatsapp/baileys.service';
 import path from 'path';
-import { fileURLToPath } from 'url';
+import fs from 'fs';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+// =========================================
+// Global Error Handlers - Prevent Server Crashes
+// =========================================
+
+// Handle uncaught exceptions - log and continue (don't exit)
+process.on('uncaughtException', (error: Error) => {
+  logger.error('Uncaught Exception (server will continue):', {
+    message: error.message,
+    stack: error.stack,
+    name: error.name,
+  });
+  // Don't exit - let the server continue running
+  // Critical errors should be handled where they occur
+});
+
+// Handle unhandled promise rejections - log and continue
+process.on('unhandledRejection', (reason: any, promise: Promise<any>) => {
+  logger.error('Unhandled Promise Rejection (server will continue):', {
+    reason: reason?.message || reason,
+    stack: reason?.stack,
+  });
+  // Don't exit - let the server continue running
+});
+
+// Handle warnings
+process.on('warning', (warning: Error) => {
+  logger.warn('Node.js Warning:', {
+    name: warning.name,
+    message: warning.message,
+    stack: warning.stack,
+  });
+});
 
 const app = express();
 const httpServer = createServer(app);
 
 // Socket.io setup
+const allowedOrigins = process.env.FRONTEND_URL 
+  ? process.env.FRONTEND_URL.split(',').map(url => url.trim())
+  : ['http://localhost:3000', 'http://84.247.191.105:3000', 'https://chat.grupoblue.com.br'];
+
 const io = new SocketServer(httpServer, {
   cors: {
-    origin: process.env.FRONTEND_URL || 'http://localhost:3000',
+    origin: allowedOrigins,
     methods: ['GET', 'POST'],
     credentials: true,
   },
@@ -45,9 +83,22 @@ const io = new SocketServer(httpServer, {
 app.set('io', io);
 
 // Middlewares
-app.use(helmet());
+app.use(helmet({
+  crossOriginResourcePolicy: { policy: 'cross-origin' },
+  crossOriginEmbedderPolicy: false,
+}));
+
 app.use(cors({
-  origin: process.env.FRONTEND_URL || 'http://localhost:3000',
+  origin: (origin, callback) => {
+    // Allow requests with no origin (like mobile apps or curl requests)
+    if (!origin) return callback(null, true);
+    
+    if (allowedOrigins.indexOf(origin) !== -1) {
+      callback(null, true);
+    } else {
+      callback(null, true); // Allow all origins for now, adjust if needed
+    }
+  },
   credentials: true,
 }));
 app.use(express.json({ limit: '10mb' }));
@@ -80,10 +131,15 @@ app.use('/api/metrics', metricsRouter);
 app.use('/api/settings', settingsRouter);
 app.use('/api/upload', uploadRouter);
 app.use('/api/push', pushRouter);
+app.use('/api/knowledge', knowledgeRouter);
+app.use('/api/faq', faqRouter);
 app.use('/webhook', webhookRouter);
 
 // Serve uploaded files statically
-const uploadsDir = process.env.UPLOADS_DIR || path.join(__dirname, '..', 'uploads');
+const uploadsDir = process.env.UPLOADS_DIR || path.join(process.cwd(), 'apps', 'api', 'uploads');
+if (!fs.existsSync(uploadsDir)) {
+  fs.mkdirSync(uploadsDir, { recursive: true });
+}
 app.use('/uploads', express.static(uploadsDir));
 
 // Error handler
@@ -91,6 +147,83 @@ app.use(errorHandler);
 
 // Socket handlers
 setupSocketHandlers(io);
+
+// Reconnect all active Baileys connections on startup
+async function reconnectBaileysConnections() {
+  try {
+    const connections = await prisma.whatsAppConnection.findMany({
+      where: {
+        type: 'BAILEYS',
+        isActive: true,
+      },
+    });
+
+    logger.info(`Found ${connections.length} Baileys connections to reconnect`);
+
+    for (const connection of connections) {
+      try {
+        logger.info(`Reconnecting Baileys connection: ${connection.id} (${connection.name})`);
+        const baileysService = BaileysService.getInstance(connection.id);
+        
+        // Start connection in background (don't await to avoid blocking startup)
+        baileysService.connect().catch((err) => {
+          logger.error(`Failed to reconnect ${connection.id}:`, err);
+        });
+        
+        // Small delay between connections to avoid overwhelming
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      } catch (error) {
+        logger.error(`Error reconnecting ${connection.id}:`, error);
+      }
+    }
+  } catch (error) {
+    logger.error('Failed to reconnect Baileys connections:', error);
+  }
+}
+
+// Health check and auto-reconnect for Baileys connections (runs every 30 seconds)
+async function healthCheckBaileysConnections() {
+  try {
+    const connections = await prisma.whatsAppConnection.findMany({
+      where: {
+        type: 'BAILEYS',
+        isActive: true,
+      },
+      select: {
+        id: true,
+        name: true,
+        status: true,
+      },
+    });
+
+    for (const connection of connections) {
+      try {
+        const baileysService = BaileysService.getInstance(connection.id);
+        
+        // Check if connected, if not try to reconnect
+        // Only try to reconnect if the connection status is not already CONNECTING
+        if (!baileysService.isSocketConnected() && connection.status !== 'CONNECTING') {
+          logger.debug(`Connection ${connection.id} (${connection.name}) is not connected, status: ${connection.status}`);
+          
+          // Only attempt reconnect if status indicates it should be connected
+          if (connection.status === 'CONNECTED' || connection.status === 'DISCONNECTED') {
+            baileysService.connect().catch((err) => {
+              // Silently log - don't spam console
+              logger.debug(`Health check reconnect attempt for ${connection.id}: ${err?.message || err}`);
+            });
+          }
+        }
+      } catch (error: any) {
+        // Don't log P2025 errors (record not found) - connection may have been deleted
+        if (error?.code !== 'P2025') {
+          logger.error(`Health check error for ${connection.id}:`, error);
+        }
+      }
+    }
+  } catch (error) {
+    logger.error('Health check failed:', error);
+  }
+}
 
 // Start server
 const PORT = process.env.API_PORT || 3001;
@@ -106,6 +239,16 @@ httpServer.listen(PORT, async () => {
   } catch (error) {
     logger.error('Failed to start background workers:', error);
   }
+
+  // Reconnect Baileys connections after a short delay
+  setTimeout(() => {
+    reconnectBaileysConnections();
+  }, 3000);
+
+  // Start health check interval (every 30 seconds)
+  setInterval(() => {
+    healthCheckBaileysConnections();
+  }, 30000);
 });
 
 // Graceful shutdown

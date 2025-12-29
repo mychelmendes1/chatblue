@@ -22,5 +22,6 @@ prisma.$connect()
   })
   .catch((error) => {
     logger.error('Database connection failed:', error);
-    process.exit(1);
+    // Don't exit - let the server continue and retry connection
+    // The connection will be retried on next query
   });

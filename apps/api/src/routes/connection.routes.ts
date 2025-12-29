@@ -12,6 +12,7 @@ const router = Router();
 const createBaileysSchema = z.object({
   name: z.string().min(2),
   type: z.literal('BAILEYS'),
+  companyId: z.string().cuid().optional(), // Allow admin to specify company
 });
 
 const createMetaCloudSchema = z.object({
@@ -21,15 +22,38 @@ const createMetaCloudSchema = z.object({
   phoneNumberId: z.string(),
   businessId: z.string(),
   webhookToken: z.string(),
+  companyId: z.string().cuid().optional(), // Allow admin to specify company
 });
 
 // List connections
 router.get('/', authenticate, ensureTenant, async (req, res, next) => {
   try {
+    // Build where clause based on user role
+    const whereClause: any = {
+      isActive: true, // Only show active connections
+    };
+    
+    console.log('[GET /connections] User role:', req.user!.role, 'companyId:', req.user!.companyId);
+    
+    if (req.user!.role === 'SUPER_ADMIN') {
+      // Super admin can see all connections or filter by company
+      if (req.query.companyId) {
+        whereClause.companyId = req.query.companyId;
+        console.log('[GET /connections] SUPER_ADMIN filtering by companyId:', req.query.companyId);
+      } else {
+        console.log('[GET /connections] SUPER_ADMIN - showing ALL connections');
+      }
+      // If no companyId specified, show ALL connections for super admin
+    } else {
+      // Regular users see only their company's connections
+      whereClause.companyId = req.user!.companyId;
+      console.log('[GET /connections] Non-admin - filtering by user company:', req.user!.companyId);
+    }
+
+    console.log('[GET /connections] Where clause:', JSON.stringify(whereClause));
+    
     const connections = await prisma.whatsAppConnection.findMany({
-      where: {
-        companyId: req.user!.companyId,
-      },
+      where: whereClause,
       select: {
         id: true,
         name: true,
@@ -40,6 +64,14 @@ router.get('/', authenticate, ensureTenant, async (req, res, next) => {
         isActive: true,
         lastConnected: true,
         createdAt: true,
+        companyId: true,
+        company: {
+          select: {
+            id: true,
+            name: true,
+            logo: true,
+          },
+        },
         _count: {
           select: {
             tickets: true,
@@ -59,11 +91,17 @@ router.get('/', authenticate, ensureTenant, async (req, res, next) => {
 // Get connection
 router.get('/:id', authenticate, ensureTenant, async (req, res, next) => {
   try {
+    // Build where clause - super admin can see any connection
+    const whereClause: any = {
+      id: req.params.id,
+    };
+    
+    if (req.user!.role !== 'SUPER_ADMIN') {
+      whereClause.companyId = req.user!.companyId;
+    }
+    
     const connection = await prisma.whatsAppConnection.findFirst({
-      where: {
-        id: req.params.id,
-        companyId: req.user!.companyId,
-      },
+      where: whereClause,
     });
 
     if (!connection) {
@@ -84,12 +122,25 @@ router.post('/baileys', authenticate, requireAdmin, ensureTenant, async (req, re
   try {
     const data = createBaileysSchema.parse(req.body);
 
+    // Determine company ID: use provided one if super admin, otherwise use user's company
+    let targetCompanyId = req.user!.companyId;
+    if (data.companyId && req.user!.role === 'SUPER_ADMIN') {
+      // Verify company exists
+      const company = await prisma.company.findUnique({
+        where: { id: data.companyId },
+      });
+      if (!company) {
+        throw new NotFoundError('Company not found');
+      }
+      targetCompanyId = data.companyId;
+    }
+
     const connection = await prisma.whatsAppConnection.create({
       data: {
         name: data.name,
         type: 'BAILEYS',
         status: 'DISCONNECTED',
-        companyId: req.user!.companyId,
+        companyId: targetCompanyId,
       },
     });
 
@@ -104,6 +155,19 @@ router.post('/meta-cloud', authenticate, requireAdmin, ensureTenant, async (req,
   try {
     const data = createMetaCloudSchema.parse(req.body);
 
+    // Determine company ID: use provided one if super admin, otherwise use user's company
+    let targetCompanyId = req.user!.companyId;
+    if (data.companyId && req.user!.role === 'SUPER_ADMIN') {
+      // Verify company exists
+      const company = await prisma.company.findUnique({
+        where: { id: data.companyId },
+      });
+      if (!company) {
+        throw new NotFoundError('Company not found');
+      }
+      targetCompanyId = data.companyId;
+    }
+
     const connection = await prisma.whatsAppConnection.create({
       data: {
         name: data.name,
@@ -113,7 +177,7 @@ router.post('/meta-cloud', authenticate, requireAdmin, ensureTenant, async (req,
         businessId: data.businessId,
         webhookToken: data.webhookToken,
         status: 'DISCONNECTED',
-        companyId: req.user!.companyId,
+        companyId: targetCompanyId,
       },
     });
 
@@ -140,12 +204,18 @@ router.post('/meta-cloud', authenticate, requireAdmin, ensureTenant, async (req,
 // Get QR Code for Baileys connection
 router.get('/:id/qr', authenticate, ensureTenant, async (req, res, next) => {
   try {
+    // Build where clause - super admin can access any connection
+    const whereClause: any = {
+      id: req.params.id,
+      type: 'BAILEYS',
+    };
+    
+    if (req.user!.role !== 'SUPER_ADMIN') {
+      whereClause.companyId = req.user!.companyId;
+    }
+    
     const connection = await prisma.whatsAppConnection.findFirst({
-      where: {
-        id: req.params.id,
-        companyId: req.user!.companyId,
-        type: 'BAILEYS',
-      },
+      where: whereClause,
     });
 
     if (!connection) {
@@ -175,11 +245,17 @@ router.get('/:id/qr', authenticate, ensureTenant, async (req, res, next) => {
 // Connect
 router.post('/:id/connect', authenticate, requireAdmin, ensureTenant, async (req, res, next) => {
   try {
+    // Build where clause - super admin can connect any connection
+    const whereClause: any = {
+      id: req.params.id,
+    };
+    
+    if (req.user!.role !== 'SUPER_ADMIN') {
+      whereClause.companyId = req.user!.companyId;
+    }
+    
     const connection = await prisma.whatsAppConnection.findFirst({
-      where: {
-        id: req.params.id,
-        companyId: req.user!.companyId,
-      },
+      where: whereClause,
     });
 
     if (!connection) {
@@ -208,11 +284,17 @@ router.post('/:id/connect', authenticate, requireAdmin, ensureTenant, async (req
 // Disconnect
 router.post('/:id/disconnect', authenticate, requireAdmin, ensureTenant, async (req, res, next) => {
   try {
+    // Build where clause - super admin can disconnect any connection
+    const whereClause: any = {
+      id: req.params.id,
+    };
+    
+    if (req.user!.role !== 'SUPER_ADMIN') {
+      whereClause.companyId = req.user!.companyId;
+    }
+    
     const connection = await prisma.whatsAppConnection.findFirst({
-      where: {
-        id: req.params.id,
-        companyId: req.user!.companyId,
-      },
+      where: whereClause,
     });
 
     if (!connection) {
@@ -259,49 +341,116 @@ router.post('/:id/default', authenticate, requireAdmin, ensureTenant, async (req
   }
 });
 
-// Delete connection
-router.delete('/:id', authenticate, requireAdmin, ensureTenant, async (req, res, next) => {
+// Update connection company (Super Admin only)
+router.put('/:id/company', authenticate, requireAdmin, ensureTenant, async (req, res, next) => {
   try {
-    const connection = await prisma.whatsAppConnection.findFirst({
-      where: {
-        id: req.params.id,
-        companyId: req.user!.companyId,
-      },
+    const { companyId } = z.object({
+      companyId: z.string().cuid(),
+    }).parse(req.body);
+
+    // Only super admin can change company
+    if (req.user!.role !== 'SUPER_ADMIN') {
+      throw new NotFoundError('Connection not found');
+    }
+
+    // Verify company exists
+    const company = await prisma.company.findUnique({
+      where: { id: companyId },
+    });
+
+    if (!company) {
+      throw new NotFoundError('Company not found');
+    }
+
+    // Find connection (super admin can access any connection)
+    const connection = await prisma.whatsAppConnection.findUnique({
+      where: { id: req.params.id },
     });
 
     if (!connection) {
       throw new NotFoundError('Connection not found');
     }
 
-    // Disconnect first if Baileys
+    // Update company
+    const updated = await prisma.whatsAppConnection.update({
+      where: { id: connection.id },
+      data: { companyId },
+      include: {
+        company: {
+          select: {
+            id: true,
+            name: true,
+            logo: true,
+          },
+        },
+      },
+    });
+
+    res.json(updated);
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Delete/Deactivate connection
+// IMPORTANT: We do NOT delete messages and tickets - they are historical data that must be preserved
+router.delete('/:id', authenticate, requireAdmin, ensureTenant, async (req, res, next) => {
+  try {
+    // Build where clause - super admin can delete any connection
+    const whereClause: any = {
+      id: req.params.id,
+    };
+    
+    // Non-super admins can only delete their own company's connections
+    if (req.user!.role !== 'SUPER_ADMIN') {
+      whereClause.companyId = req.user!.companyId;
+    }
+    
+    const connection = await prisma.whatsAppConnection.findFirst({
+      where: whereClause,
+    });
+
+    if (!connection) {
+      throw new NotFoundError('Connection not found');
+    }
+
+    // Disconnect first if Baileys and mark as deleted to prevent further updates
     if (connection.type === 'BAILEYS') {
       const baileysService = BaileysService.getInstance(connection.id);
+      // Mark as deleted FIRST to prevent any further database operations
+      baileysService.markAsDeleted();
       await baileysService.disconnect();
       
-      // Remove session files
+      // Remove session files (only session files, NOT messages/tickets)
       const fs = await import('fs');
       const path = await import('path');
-      const sessionPath = path.resolve(__dirname, '..', '..', 'sessions', connection.id);
-      if (fs.existsSync(sessionPath)) {
-        fs.rmSync(sessionPath, { recursive: true, force: true });
+      
+      // Try multiple possible session paths
+      const possiblePaths = [
+        path.join(process.cwd(), 'apps', 'api', 'sessions', connection.id),
+        path.join(process.cwd(), 'sessions', connection.id),
+      ];
+      
+      for (const sessionPath of possiblePaths) {
+        if (fs.existsSync(sessionPath)) {
+          fs.rmSync(sessionPath, { recursive: true, force: true });
+        }
       }
     }
 
-    // Delete related records first (messages and tickets)
-    await prisma.message.deleteMany({
-      where: { connectionId: connection.id },
-    });
-
-    await prisma.ticket.deleteMany({
-      where: { connectionId: connection.id },
-    });
-
-    // Actually delete the connection
-    await prisma.whatsAppConnection.delete({
+    // SOFT DELETE: Mark connection as inactive instead of deleting
+    // This preserves all messages and tickets for historical reference
+    await prisma.whatsAppConnection.update({
       where: { id: connection.id },
+      data: { 
+        isActive: false,
+        status: 'DISCONNECTED',
+        qrCode: null,
+        sessionData: null,
+      },
     });
 
-    res.json({ message: 'Connection deleted' });
+    res.json({ message: 'Connection deactivated. All messages and conversations have been preserved.' });
   } catch (error) {
     next(error);
   }

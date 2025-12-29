@@ -133,6 +133,24 @@ export default function MetricsPage() {
     fetchData();
   }, [period]);
 
+  // Listen for company switch events to reload data
+  useEffect(() => {
+    const handleCompanySwitch = () => {
+      console.log("Company switched, reloading metrics...");
+      setDashboard(null);
+      setAgents([]);
+      setDepartments([]);
+      setCriticalTickets([]);
+      setUserRanking([]);
+      fetchData();
+    };
+
+    window.addEventListener('company-switched', handleCompanySwitch);
+    return () => {
+      window.removeEventListener('company-switched', handleCompanySwitch);
+    };
+  }, []);
+
   useEffect(() => {
     if (activeTab === "ranking") {
       fetchUserRanking();

@@ -107,7 +107,13 @@ export const avatarUpload = multer({
 // Helper class for file operations
 export class UploadService {
   static getFileUrl(filename: string, type: "media" | "documents" | "avatars"): string {
-    const baseUrl = process.env.API_URL || "http://localhost:3001";
+    // Use API_URL from env, or construct from PORT and HOST if available
+    let baseUrl = process.env.API_URL;
+    if (!baseUrl) {
+      const port = process.env.PORT || process.env.API_PORT || 3001;
+      const host = process.env.HOST || 'localhost';
+      baseUrl = `http://${host}:${port}`;
+    }
     return `${baseUrl}/uploads/${type}/${filename}`;
   }
 

@@ -58,13 +58,16 @@ export function setupSocketHandlers(io: Server): void {
     // Join ticket room
     socket.on('ticket:join', (ticketId: string) => {
       socket.join(`ticket:${ticketId}`);
-      logger.debug(`User ${socket.userId} joined ticket ${ticketId}`);
+      logger.info(`[Socket] User ${socket.userId} joined ticket room: ticket:${ticketId}`);
+      // Verify room membership
+      const rooms = Array.from(socket.rooms);
+      logger.info(`[Socket] User ${socket.userId} is now in rooms: ${rooms.join(', ')}`);
     });
 
     // Leave ticket room
     socket.on('ticket:leave', (ticketId: string) => {
       socket.leave(`ticket:${ticketId}`);
-      logger.debug(`User ${socket.userId} left ticket ${ticketId}`);
+      logger.info(`[Socket] User ${socket.userId} left ticket room: ticket:${ticketId}`);
     });
 
     // Typing indicator

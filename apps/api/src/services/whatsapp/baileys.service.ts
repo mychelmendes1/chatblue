@@ -360,8 +360,12 @@ export class BaileysService extends EventEmitter {
       });
 
       // Handle message deletions
-      this.socket.ev.on('messages.delete', async (deletions) => {
-        for (const deletion of deletions) {
+      this.socket.ev.on('messages.delete', async (deletions: any) => {
+        // Handle different deletion formats
+        const deletionList = Array.isArray(deletions) ? deletions : 
+          (deletions.keys ? deletions.keys : [deletions]);
+        
+        for (const deletion of deletionList) {
           try {
             await this.handleMessageDelete(deletion);
           } catch (error: any) {
@@ -700,7 +704,7 @@ export class BaileysService extends EventEmitter {
     mediaUrl: string,
     mediaType: string,
     caption?: string
-  ): Promise<{ messageId: string }> {
+  ): Promise<{ messageId: string; finalMediaUrl?: string }> {
     // Normalize media URL to HTTPS - Baileys needs to download the file
     // Always log original URL for debugging
     logger.info(`Original media URL: ${mediaUrl}`);
@@ -1269,8 +1273,9 @@ export class BaileysService extends EventEmitter {
         try {
           // For LIDs, we can try to get the business profile which sometimes has the number
           const businessProfile = await this.socket.getBusinessProfile?.(lid + '@lid');
-          if (businessProfile?.wid) {
-            const businessPhone = businessProfile.wid.replace(/@[^@]*$/g, '').replace(/\D/g, '');
+          if (businessProfile && typeof businessProfile === 'object' && 'wid' in businessProfile) {
+            const wid = (businessProfile as any).wid;
+            const businessPhone = String(wid).replace(/@[^@]*$/g, '').replace(/\D/g, '');
             if (businessPhone && this.isValidPhoneNumber(businessPhone)) {
               logger.debug(`Found real phone from business profile: ${businessPhone}`);
               return businessPhone;
@@ -1283,7 +1288,8 @@ export class BaileysService extends EventEmitter {
 
         // Method 4b: Try to fetch contact info directly
         try {
-          const contact = await this.socket.contactsStore?.contacts?.[lid + '@lid'];
+          const socketAny = this.socket as any;
+          const contact = socketAny.contactsStore?.contacts?.[lid + '@lid'];
           if (contact) {
             logger.debug(`Contact info from store: ${JSON.stringify(contact)}`);
             // Check for any field that might have the real number
