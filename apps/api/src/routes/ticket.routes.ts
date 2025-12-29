@@ -11,6 +11,14 @@ const router = Router();
 // List tickets
 router.get('/', authenticate, ensureTenant, async (req, res, next) => {
   try {
+    const logger = (await import('../config/logger.js')).logger;
+    logger.info('GET /tickets', { 
+      userId: req.user?.userId, 
+      companyId: req.user?.companyId, 
+      role: req.user?.role,
+      query: req.query 
+    });
+    
     const {
       status,
       departmentId,
@@ -18,6 +26,7 @@ router.get('/', authenticate, ensureTenant, async (req, res, next) => {
       priority,
       isAIHandled,
       search,
+      hideResolved,
       page = '1',
       limit = '20',
     } = req.query;
@@ -42,84 +51,183 @@ router.get('/', authenticate, ensureTenant, async (req, res, next) => {
       }
     }
 
-    const where: any = {
+    const baseWhere: any = {
       companyId: req.user!.companyId,
       ...(status && { status: status as string }),
       ...(departmentId && { departmentId: departmentId as string }),
       ...(assignedToId && { assignedToId: assignedToId as string }),
       ...(priority && { priority: priority as string }),
       ...(isAIHandled !== undefined && { isAIHandled: isAIHandled === 'true' }),
-      ...(search && {
-        OR: [
-          { protocol: { contains: search as string } },
-          { contact: { name: { contains: search as string, mode: 'insensitive' } } },
-          { contact: { phone: { contains: search as string } } },
-        ],
+      // Hide resolved/closed tickets by default (unless specific status is requested)
+      ...(hideResolved === 'true' && !status && {
+        status: { notIn: ['RESOLVED', 'CLOSED'] },
       }),
     };
 
+    // Build search filter
+    const searchConditions: any[] = [];
+    if (search) {
+      searchConditions.push(
+        { protocol: { contains: search as string } },
+        { contact: { name: { contains: search as string, mode: 'insensitive' } } },
+        { contact: { phone: { contains: search as string } } }
+      );
+    }
+
     // Non-admins can only see tickets from their departments or assigned to them
+    const where: any = { ...baseWhere };
+    
     if (!['SUPER_ADMIN', 'ADMIN'].includes(req.user!.role)) {
-      where.OR = [
+      const visibilityConditions: any[] = [
         { assignedToId: req.user!.userId },
-        { departmentId: { in: Array.from(visibleDeptIds) } },
+      ];
+
+      // Add department visibility if user has departments
+      if (visibleDeptIds.size > 0) {
+        visibilityConditions.push({ departmentId: { in: Array.from(visibleDeptIds) } });
+      } else {
+        // If user has no departments, they can see unassigned tickets from their company
+        // This allows agents without departments to see and pick up tickets
+        visibilityConditions.push({ assignedToId: null });
+      }
+
+      // If there's a search, combine with visibility conditions using AND
+      if (searchConditions.length > 0) {
+        where.AND = [
+          {
+            OR: visibilityConditions,
+          },
+          {
+            OR: searchConditions,
+          },
+        ];
+      } else {
+        // No search - just visibility conditions
+        where.OR = visibilityConditions;
+      }
+    } else if (searchConditions.length > 0) {
+      // Admin with search - combine base filters with search using AND
+      where.AND = [
+        baseWhere,
+        {
+          OR: searchConditions,
+        },
       ];
     }
 
-    const [tickets, total] = await Promise.all([
-      prisma.ticket.findMany({
-        where,
-        include: {
-          contact: {
-            select: {
-              id: true,
-              name: true,
-              phone: true,
-              avatar: true,
-              isClient: true,
-            },
+    // Fetch tickets without pagination first for proper sorting
+    const allTickets = await prisma.ticket.findMany({
+      where,
+      include: {
+        contact: {
+          select: {
+            id: true,
+            name: true,
+            phone: true,
+            avatar: true,
+            isClient: true,
           },
-          assignedTo: {
-            select: {
-              id: true,
-              name: true,
-              avatar: true,
-              isAI: true,
-            },
+        },
+        assignedTo: {
+          select: {
+            id: true,
+            name: true,
+            avatar: true,
+            isAI: true,
           },
-          department: {
-            select: {
-              id: true,
-              name: true,
-              color: true,
-            },
+        },
+        department: {
+          select: {
+            id: true,
+            name: true,
+            color: true,
           },
-          messages: {
-            take: 1,
-            orderBy: { createdAt: 'desc' },
-            select: {
-              content: true,
-              type: true,
-              createdAt: true,
-              isFromMe: true,
-            },
+        },
+        messages: {
+          take: 1,
+          orderBy: { createdAt: 'desc' },
+          select: {
+            content: true,
+            type: true,
+            createdAt: true,
+            isFromMe: true,
           },
-          _count: {
-            select: {
-              messages: true,
+        },
+        _count: {
+          select: {
+            messages: {
+              where: {
+                isFromMe: false,
+                readAt: null,
+              },
             },
           },
         },
-        orderBy: [
-          { status: 'asc' },
-          { priority: 'desc' },
-          { updatedAt: 'desc' },
-        ],
-        skip: (parseInt(page as string) - 1) * parseInt(limit as string),
-        take: parseInt(limit as string),
-      }),
-      prisma.ticket.count({ where }),
-    ]);
+      },
+    });
+
+    // Custom sorting:
+    // 1. Unread messages OR transferred from AI (needs human attention) - highest priority
+    // 2. AI handled tickets (being processed by AI)
+    // 3. Responded but still open
+    // Within each group, sort by updatedAt desc
+    const sortedTickets = allTickets.sort((a, b) => {
+      const aUnread = a._count?.messages || 0;
+      const bUnread = b._count?.messages || 0;
+      const aIsAI = a.isAIHandled;
+      const bIsAI = b.isAIHandled;
+      const aLastMessageFromMe = a.messages[0]?.isFromMe ?? false;
+      const bLastMessageFromMe = b.messages[0]?.isFromMe ?? false;
+      
+      // Check if ticket was recently transferred from AI (PENDING status, not AI handled, has humanTakeoverAt)
+      const aTransferredFromAI = !aIsAI && a.status === 'PENDING' && a.humanTakeoverAt !== null;
+      const bTransferredFromAI = !bIsAI && b.status === 'PENDING' && b.humanTakeoverAt !== null;
+
+      // Priority 1: Has unread client messages OR was transferred from AI (needs human attention)
+      const aNeedsAttention = aUnread > 0 || aTransferredFromAI;
+      const bNeedsAttention = bUnread > 0 || bTransferredFromAI;
+      
+      if (aNeedsAttention && !bNeedsAttention) return -1;
+      if (bNeedsAttention && !aNeedsAttention) return 1;
+
+      // If both need attention, sort by: transferred first, then unread count, then updatedAt
+      if (aNeedsAttention && bNeedsAttention) {
+        // Transferred from AI takes priority over just unread
+        if (aTransferredFromAI && !bTransferredFromAI) return -1;
+        if (bTransferredFromAI && !aTransferredFromAI) return 1;
+        
+        // Both transferred or both have unread - sort by unread count then updatedAt
+        if (aUnread !== bUnread) return bUnread - aUnread;
+        return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
+      }
+
+      // Priority 2: AI handled tickets (waiting for AI response or being processed)
+      if (aIsAI && !bIsAI) return -1;
+      if (bIsAI && !aIsAI) return 1;
+
+      // Priority 3: Last message is from client (waiting for response)
+      if (!aLastMessageFromMe && bLastMessageFromMe) return -1;
+      if (!bLastMessageFromMe && aLastMessageFromMe) return 1;
+
+      // Finally, sort by updatedAt desc
+      return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
+    });
+
+    // Apply pagination
+    const pageNum = parseInt(page as string);
+    const limitNum = parseInt(limit as string);
+    const total = sortedTickets.length;
+    const tickets = sortedTickets.slice((pageNum - 1) * limitNum, pageNum * limitNum);
+
+    const logger = (await import('../config/logger.js')).logger;
+    logger.info('Tickets found', { 
+      companyId: req.user!.companyId,
+      userId: req.user!.userId,
+      role: req.user!.role,
+      total,
+      returned: tickets.length,
+      ticketIds: tickets.map(t => t.id)
+    });
 
     res.json({
       tickets,
@@ -130,6 +238,181 @@ router.get('/', authenticate, ensureTenant, async (req, res, next) => {
         pages: Math.ceil(total / parseInt(limit as string)),
       },
     });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Start conversation with existing contact - MUST be before /:id routes
+router.post('/start-conversation', authenticate, ensureTenant, async (req, res, next) => {
+  try {
+    const { contactId } = z.object({
+      contactId: z.string().cuid(),
+    }).parse(req.body);
+
+    // Verify contact exists and belongs to company
+    const contact = await prisma.contact.findFirst({
+      where: {
+        id: contactId,
+        companyId: req.user!.companyId,
+      },
+    });
+
+    if (!contact) {
+      throw new NotFoundError('Contact not found');
+    }
+
+    // Check if there's already an open ticket for this contact
+    const existingTicket = await prisma.ticket.findFirst({
+      where: {
+        contactId: contact.id,
+        companyId: req.user!.companyId,
+        status: { in: ['PENDING', 'IN_PROGRESS', 'WAITING'] },
+      },
+      include: {
+        contact: {
+          select: {
+            id: true,
+            name: true,
+            phone: true,
+            avatar: true,
+            isClient: true,
+          },
+        },
+        assignedTo: {
+          select: {
+            id: true,
+            name: true,
+            avatar: true,
+            isAI: true,
+          },
+        },
+        department: {
+          select: {
+            id: true,
+            name: true,
+            color: true,
+          },
+        },
+      },
+    });
+
+    if (existingTicket) {
+      // Return existing open ticket
+      return res.json({ id: existingTicket.id, isNew: false });
+    }
+
+    // Find an active connection to use
+    const connection = await prisma.whatsAppConnection.findFirst({
+      where: {
+        companyId: req.user!.companyId,
+        isActive: true,
+        status: 'CONNECTED',
+      },
+    });
+
+    if (!connection) {
+      // Try to find any active connection even if not connected
+      const anyConnection = await prisma.whatsAppConnection.findFirst({
+        where: {
+          companyId: req.user!.companyId,
+          isActive: true,
+        },
+      });
+
+      if (!anyConnection) {
+        throw new NotFoundError('Nenhuma conexão WhatsApp ativa encontrada. Configure uma conexão primeiro.');
+      }
+    }
+
+    const connectionToUse = connection || await prisma.whatsAppConnection.findFirst({
+      where: {
+        companyId: req.user!.companyId,
+        isActive: true,
+      },
+    });
+
+    if (!connectionToUse) {
+      throw new NotFoundError('Nenhuma conexão WhatsApp disponível.');
+    }
+
+    // Generate protocol
+    const protocol = await generateProtocol();
+
+    // Create new ticket
+    const ticket = await prisma.ticket.create({
+      data: {
+        protocol,
+        status: 'IN_PROGRESS',
+        priority: 'MEDIUM',
+        contactId: contact.id,
+        connectionId: connectionToUse.id,
+        assignedToId: req.user!.userId,
+        companyId: req.user!.companyId,
+      },
+      include: {
+        contact: {
+          select: {
+            id: true,
+            name: true,
+            phone: true,
+            avatar: true,
+            isClient: true,
+          },
+        },
+        assignedTo: {
+          select: {
+            id: true,
+            name: true,
+            avatar: true,
+            isAI: true,
+          },
+        },
+        department: {
+          select: {
+            id: true,
+            name: true,
+            color: true,
+          },
+        },
+        connection: {
+          select: {
+            id: true,
+            name: true,
+            type: true,
+            phone: true,
+          },
+        },
+      },
+    });
+
+    // Create activity
+    await prisma.activity.create({
+      data: {
+        type: 'TICKET_CREATED',
+        description: 'Conversation started from contacts page',
+        ticketId: ticket.id,
+        userId: req.user!.userId,
+      },
+    });
+
+    // Create system message
+    await prisma.message.create({
+      data: {
+        type: 'SYSTEM',
+        content: `Atendimento iniciado por ${req.user!.name}`,
+        isFromMe: true,
+        status: 'DELIVERED',
+        ticketId: ticket.id,
+        connectionId: connectionToUse.id,
+      },
+    });
+
+    // Emit socket event
+    const io = req.app.get('io');
+    io.to(`company:${req.user!.companyId}`).emit('ticket:created', ticket);
+
+    res.status(201).json({ id: ticket.id, isNew: true });
   } catch (error) {
     next(error);
   }
@@ -272,9 +555,22 @@ router.post('/:id/takeover', authenticate, ensureTenant, async (req, res, next) 
       },
     });
 
+    // Create system message
+    const systemMessage = await prisma.message.create({
+      data: {
+        type: 'SYSTEM',
+        content: `Atendimento assumido por ${req.user!.name}`,
+        isFromMe: true,
+        status: 'DELIVERED',
+        ticketId: ticket.id,
+        connectionId: ticket.connectionId,
+      },
+    });
+
     // Emit socket event
     const io = req.app.get('io');
     io.to(`company:${req.user!.companyId}`).emit('ticket:updated', updatedTicket);
+    io.to(`ticket:${ticket.id}`).emit('message:received', { message: systemMessage });
 
     res.json(updatedTicket);
   } catch (error) {
@@ -340,6 +636,28 @@ router.post('/:id/transfer', authenticate, ensureTenant, async (req, res, next) 
       },
     });
 
+    // Get names for system message
+    let toName = '';
+    if (toUserId) {
+      const toUser = await prisma.user.findUnique({ where: { id: toUserId }, select: { name: true } });
+      toName = toUser?.name || 'outro atendente';
+    } else if (toDepartmentId) {
+      const toDept = await prisma.department.findUnique({ where: { id: toDepartmentId }, select: { name: true } });
+      toName = `departamento ${toDept?.name || ''}`;
+    }
+
+    // Create system message
+    const systemMessage = await prisma.message.create({
+      data: {
+        type: 'SYSTEM',
+        content: `Atendimento transferido por ${req.user!.name} para ${toName}`,
+        isFromMe: true,
+        status: 'DELIVERED',
+        ticketId: ticket.id,
+        connectionId: ticket.connectionId,
+      },
+    });
+
     // Emit socket event
     const io = req.app.get('io');
     io.to(`company:${req.user!.companyId}`).emit('ticket:transferred', {
@@ -348,6 +666,7 @@ router.post('/:id/transfer', authenticate, ensureTenant, async (req, res, next) 
       toUserId,
       toDepartmentId,
     });
+    io.to(`ticket:${ticket.id}`).emit('message:received', { message: systemMessage });
 
     res.json(updatedTicket);
   } catch (error) {
@@ -384,6 +703,25 @@ router.put('/:id/status', authenticate, ensureTenant, async (req, res, next) => 
       },
     });
 
+    // Create system message for resolved/closed
+    if (status === 'RESOLVED' || status === 'CLOSED') {
+      const statusText = status === 'RESOLVED' ? 'Atendimento resolvido' : 'Atendimento finalizado';
+      const systemMessage = await prisma.message.create({
+        data: {
+          type: 'SYSTEM',
+          content: `${statusText} por ${req.user!.name}`,
+          isFromMe: true,
+          status: 'DELIVERED',
+          ticketId: ticket.id,
+          connectionId: ticket.connectionId,
+        },
+      });
+
+      // Emit message event
+      const io = req.app.get('io');
+      io.to(`ticket:${ticket.id}`).emit('message:received', { message: systemMessage });
+    }
+
     // Emit socket event
     const io = req.app.get('io');
     io.to(`company:${req.user!.companyId}`).emit('ticket:updated', ticket);
@@ -410,6 +748,266 @@ router.put('/:id/priority', authenticate, ensureTenant, async (req, res, next) =
     });
 
     res.json(ticket);
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Resolve ticket with AI summary
+router.post('/:id/resolve', authenticate, ensureTenant, async (req, res, next) => {
+  try {
+    const ticket = await prisma.ticket.findFirst({
+      where: {
+        id: req.params.id,
+        companyId: req.user!.companyId,
+      },
+      include: {
+        messages: {
+          orderBy: { createdAt: 'asc' },
+          take: 50,
+        },
+        contact: true,
+      },
+    });
+
+    if (!ticket) {
+      throw new NotFoundError('Ticket not found');
+    }
+
+    // Generate AI summary
+    let summary = '';
+    try {
+      const settings = await prisma.companySettings.findUnique({
+        where: { companyId: req.user!.companyId },
+      });
+
+      if (settings?.aiEnabled && settings?.aiApiKey) {
+        const { AIService } = await import('../services/ai/ai.service.js');
+        const aiService = new AIService(settings.aiProvider || 'openai', settings.aiApiKey);
+        
+        // Prepare conversation for summary
+        const conversationText = ticket.messages
+          .filter(m => m.type === 'TEXT' && !m.isInternal)
+          .map(m => `${m.isFromMe ? 'Atendente' : 'Cliente'}: ${m.content}`)
+          .join('\n');
+
+        summary = await aiService.generateResponse(
+          'Você é um assistente que resume atendimentos de suporte. Crie um resumo conciso de um parágrafo, indicando: 1) O motivo do contato do cliente, 2) Como foi resolvido o problema. Seja direto e objetivo.',
+          `Resuma o seguinte atendimento:\n\n${conversationText}`,
+          { contactName: ticket.contact?.name || 'Cliente' },
+          { maxTokens: 200, temperature: 0.3 }
+        );
+      }
+    } catch (aiError) {
+      console.error('AI summary error:', aiError);
+      summary = 'Atendimento resolvido.';
+    }
+
+    // Update ticket
+    const updatedTicket = await prisma.ticket.update({
+      where: { id: ticket.id },
+      data: {
+        status: 'RESOLVED',
+        resolvedAt: new Date(),
+      },
+    });
+
+    // Create system message with summary
+    const systemMessage = await prisma.message.create({
+      data: {
+        type: 'SYSTEM',
+        content: `✅ Atendimento resolvido por ${req.user!.name}\n\n📋 Resumo: ${summary}`,
+        isFromMe: true,
+        isInternal: true,
+        status: 'DELIVERED',
+        ticketId: ticket.id,
+        connectionId: ticket.connectionId,
+      },
+    });
+
+    // Create activity
+    await prisma.activity.create({
+      data: {
+        type: 'TICKET_RESOLVED',
+        description: `Ticket resolved by ${req.user!.name}`,
+        ticketId: ticket.id,
+        userId: req.user!.userId,
+        metadata: { summary },
+      },
+    });
+
+    // Emit socket events
+    const io = req.app.get('io');
+    io.to(`company:${req.user!.companyId}`).emit('ticket:updated', updatedTicket);
+    io.to(`ticket:${ticket.id}`).emit('message:received', { message: systemMessage });
+
+    res.json(updatedTicket);
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Close ticket with AI summary
+router.post('/:id/close', authenticate, ensureTenant, async (req, res, next) => {
+  try {
+    const ticket = await prisma.ticket.findFirst({
+      where: {
+        id: req.params.id,
+        companyId: req.user!.companyId,
+      },
+      include: {
+        messages: {
+          orderBy: { createdAt: 'asc' },
+          take: 50,
+        },
+        contact: true,
+      },
+    });
+
+    if (!ticket) {
+      throw new NotFoundError('Ticket not found');
+    }
+
+    // Generate AI summary
+    let summary = '';
+    try {
+      const settings = await prisma.companySettings.findUnique({
+        where: { companyId: req.user!.companyId },
+      });
+
+      if (settings?.aiEnabled && settings?.aiApiKey) {
+        const { AIService } = await import('../services/ai/ai.service.js');
+        const aiService = new AIService(settings.aiProvider || 'openai', settings.aiApiKey);
+        
+        // Prepare conversation for summary
+        const conversationText = ticket.messages
+          .filter(m => m.type === 'TEXT' && !m.isInternal)
+          .map(m => `${m.isFromMe ? 'Atendente' : 'Cliente'}: ${m.content}`)
+          .join('\n');
+
+        summary = await aiService.generateResponse(
+          'Você é um assistente que resume atendimentos de suporte. Crie um resumo conciso de um parágrafo, indicando: 1) O motivo do contato do cliente, 2) O que aconteceu no atendimento, 3) Por que foi encerrado. Seja direto e objetivo.',
+          `Resuma o seguinte atendimento que foi encerrado:\n\n${conversationText}`,
+          { contactName: ticket.contact?.name || 'Cliente' },
+          { maxTokens: 200, temperature: 0.3 }
+        );
+      }
+    } catch (aiError) {
+      console.error('AI summary error:', aiError);
+      summary = 'Atendimento encerrado.';
+    }
+
+    // Update ticket
+    const updatedTicket = await prisma.ticket.update({
+      where: { id: ticket.id },
+      data: {
+        status: 'CLOSED',
+        closedAt: new Date(),
+      },
+    });
+
+    // Create system message with summary
+    const systemMessage = await prisma.message.create({
+      data: {
+        type: 'SYSTEM',
+        content: `🔒 Atendimento encerrado por ${req.user!.name}\n\n📋 Resumo: ${summary}`,
+        isFromMe: true,
+        isInternal: true,
+        status: 'DELIVERED',
+        ticketId: ticket.id,
+        connectionId: ticket.connectionId,
+      },
+    });
+
+    // Create activity
+    await prisma.activity.create({
+      data: {
+        type: 'TICKET_CLOSED',
+        description: `Ticket closed by ${req.user!.name}`,
+        ticketId: ticket.id,
+        userId: req.user!.userId,
+        metadata: { summary },
+      },
+    });
+
+    // Emit socket events
+    const io = req.app.get('io');
+    io.to(`company:${req.user!.companyId}`).emit('ticket:updated', updatedTicket);
+    io.to(`ticket:${ticket.id}`).emit('message:received', { message: systemMessage });
+
+    res.json(updatedTicket);
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Reopen ticket
+router.post('/:id/reopen', authenticate, ensureTenant, async (req, res, next) => {
+  try {
+    const ticket = await prisma.ticket.findFirst({
+      where: {
+        id: req.params.id,
+        companyId: req.user!.companyId,
+        status: { in: ['RESOLVED', 'CLOSED'] },
+      },
+    });
+
+    if (!ticket) {
+      throw new NotFoundError('Ticket not found or not closed/resolved');
+    }
+
+    // Update ticket to reopen
+    const updatedTicket = await prisma.ticket.update({
+      where: { id: ticket.id },
+      data: {
+        status: 'IN_PROGRESS',
+        resolvedAt: null,
+        closedAt: null,
+        assignedToId: ticket.assignedToId || req.user!.userId,
+      },
+      include: {
+        contact: true,
+        assignedTo: {
+          select: { id: true, name: true, avatar: true },
+        },
+        department: {
+          select: { id: true, name: true },
+        },
+        connection: {
+          select: { id: true, name: true, phone: true },
+        },
+      },
+    });
+
+    // Create system message
+    const systemMessage = await prisma.message.create({
+      data: {
+        type: 'SYSTEM',
+        content: `🔄 Atendimento reaberto por ${req.user!.name}`,
+        isFromMe: true,
+        isInternal: true,
+        status: 'DELIVERED',
+        ticketId: ticket.id,
+        connectionId: ticket.connectionId,
+      },
+    });
+
+    // Create activity
+    await prisma.activity.create({
+      data: {
+        type: 'TICKET_REOPENED',
+        description: `Ticket reopened by ${req.user!.name}`,
+        ticketId: ticket.id,
+        userId: req.user!.userId,
+      },
+    });
+
+    // Emit socket events
+    const io = req.app.get('io');
+    io.to(`company:${req.user!.companyId}`).emit('ticket:updated', updatedTicket);
+    io.to(`ticket:${ticket.id}`).emit('message:received', { message: systemMessage });
+
+    res.json(updatedTicket);
   } catch (error) {
     next(error);
   }
