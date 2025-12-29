@@ -5,13 +5,13 @@ import { authenticate } from '../middlewares/auth.middleware.js';
 import { ensureTenant } from '../middlewares/tenant.middleware.js';
 import { NotFoundError, ForbiddenError } from '../middlewares/error.middleware.js';
 import { generateProtocol } from '../utils/protocol.js';
+import { logger } from '../config/logger.js';
 
 const router = Router();
 
 // List tickets
 router.get('/', authenticate, ensureTenant, async (req, res, next) => {
   try {
-    const logger = (await import('../config/logger.js')).logger;
     logger.info('GET /tickets', { 
       userId: req.user?.userId, 
       companyId: req.user?.companyId, 
@@ -219,7 +219,6 @@ router.get('/', authenticate, ensureTenant, async (req, res, next) => {
     const total = sortedTickets.length;
     const tickets = sortedTickets.slice((pageNum - 1) * limitNum, pageNum * limitNum);
 
-    const logger = (await import('../config/logger.js')).logger;
     logger.info('Tickets found', { 
       companyId: req.user!.companyId,
       userId: req.user!.userId,
