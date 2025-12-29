@@ -52,6 +52,15 @@ router.get('/', authenticate, ensureTenant, async (req, res, next) => {
   try {
     const { departmentId, isAI, isActive } = req.query;
 
+    logger.info('Listing users', { 
+      companyId: req.user!.companyId,
+      userId: req.user!.userId,
+      email: req.user!.email,
+      departmentId,
+      isAI,
+      isActive 
+    });
+
     const users = await prisma.user.findMany({
       where: {
         companyId: req.user!.companyId,
@@ -98,8 +107,15 @@ router.get('/', authenticate, ensureTenant, async (req, res, next) => {
       orderBy: { name: 'asc' },
     });
 
+    logger.info('Users found', { 
+      companyId: req.user!.companyId,
+      count: users.length,
+      userEmails: users.map(u => u.email)
+    });
+
     res.json(users);
   } catch (error) {
+    logger.error('Error listing users', { error, companyId: req.user!.companyId });
     next(error);
   }
 });
