@@ -217,7 +217,7 @@ export class MetaCloudService {
       },
     });
 
-    const mediaInfo = await mediaInfoResponse.json();
+    const mediaInfo: any = await mediaInfoResponse.json();
 
     if (!mediaInfoResponse.ok) {
       logger.error('Failed to get media info:', mediaInfo);
@@ -720,7 +720,7 @@ export class MetaCloudService {
       }
     );
 
-    const phoneData = await phoneResponse.json();
+    const phoneData: any = await phoneResponse.json();
     if (!phoneResponse.ok) {
       throw new Error('Failed to get phone number info');
     }
@@ -781,7 +781,7 @@ export class MetaCloudService {
           }
         );
         
-        const wabaData = await wabaResponse.json();
+        const wabaData: any = await wabaResponse.json();
         return wabaData.whatsapp_business_account?.id || null;
       }
 

@@ -1169,8 +1169,6 @@ export class BaileysService extends EventEmitter {
         message: error?.message,
         stack: error?.stack,
         error: error?.toString ? error.toString() : error,
-        from,
-        type,
         connectionId: this.connectionId,
       });
       logger.error('Full error object:', error);
