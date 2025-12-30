@@ -710,31 +710,18 @@ export class MetaCloudService {
    * Get list of message templates
    */
   async getTemplates(): Promise<any[]> {
-    // Get business account ID first
-    const phoneResponse = await fetch(
-      `${META_API_URL}/${this.connection.phoneNumberId}`,
-      {
-        headers: {
-          Authorization: `Bearer ${this.connection.accessToken}`,
-        },
-      }
-    );
-
-    const phoneData: any = await phoneResponse.json();
-    if (!phoneResponse.ok) {
-      throw new Error('Failed to get phone number info');
-    }
-
-    const wabaId = phoneData.verified_name ? 
-      await this.getWABAId() : null;
+    // Use businessId directly - it's the WABA ID
+    const wabaId = this.connection.businessId;
 
     if (!wabaId) {
-      logger.warn('Could not determine WABA ID for template listing');
+      logger.warn('No WABA ID (businessId) configured for this connection');
       return [];
     }
 
+    logger.info(`Fetching templates for WABA ID: ${wabaId}`);
+
     const response = await fetch(
-      `${META_API_URL}/${wabaId}/message_templates`,
+      `${META_API_URL}/${wabaId}/message_templates?fields=name,status,category,language,components`,
       {
         headers: {
           Authorization: `Bearer ${this.connection.accessToken}`,
@@ -749,6 +736,7 @@ export class MetaCloudService {
       return [];
     }
 
+    logger.info(`Found ${data.data?.length || 0} templates`);
     return data.data || [];
   }
 
