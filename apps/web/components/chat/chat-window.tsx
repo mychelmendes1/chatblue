@@ -32,6 +32,7 @@ import {
   ThumbsUp,
   Mic,
   Square,
+  FileText,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -1378,6 +1379,23 @@ function MessageBubble({ message, onReply }: { message: any; onReply: () => void
         {!isDeleted && messageType === "DOCUMENT" && !message.mediaUrl && (
           <div className="flex items-center gap-2 text-muted-foreground p-3 bg-muted/50 rounded-md">
             📄 Documento (não disponível)
+          </div>
+        )}
+
+        {/* Template messages */}
+        {!isDeleted && messageType === "TEMPLATE" && (
+          <div className="space-y-2">
+            <div className="flex items-center gap-2 text-xs text-muted-foreground mb-1">
+              <FileText className="w-3 h-3" />
+              <span>Mensagem de template</span>
+            </div>
+            <p className="whitespace-pre-wrap">{message.content || "[Template enviado]"}</p>
+            {message.status === "FAILED" && message.failedReason && (
+              <div className="flex items-center gap-2 text-xs text-destructive mt-2 p-2 bg-destructive/10 rounded">
+                <AlertCircle className="w-3 h-3" />
+                <span>{message.failedReason}</span>
+              </div>
+            )}
           </div>
         )}
 
