@@ -219,11 +219,27 @@ export function ChatSidebar() {
       const ticket = ticketResponse.data.ticket;
 
       // Build components array for the API
-      const templateVars = Object.keys(variables).sort((a, b) => parseInt(a) - parseInt(b));
-      const bodyParameters = templateVars.map(v => ({
-        type: "text" as const,
-        text: variables[v],
-      }));
+      const templateVars = Object.keys(variables);
+      
+      // Check if template uses named parameters (non-numeric variable names)
+      const isNamedParams = templateVars.length > 0 && templateVars.some(v => isNaN(parseInt(v)));
+      
+      let bodyParameters;
+      if (isNamedParams) {
+        // Named parameters format for Meta API
+        bodyParameters = templateVars.map(v => ({
+          type: "text" as const,
+          parameter_name: v,
+          text: variables[v],
+        }));
+      } else {
+        // Positional parameters format (sorted by number)
+        const sortedVars = templateVars.sort((a, b) => parseInt(a) - parseInt(b));
+        bodyParameters = sortedVars.map(v => ({
+          type: "text" as const,
+          text: variables[v],
+        }));
+      }
 
       const components = bodyParameters.length > 0 ? [{
         type: "body" as const,

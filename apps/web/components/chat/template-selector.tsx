@@ -17,6 +17,10 @@ interface TemplateComponent {
   example?: {
     header_text?: string[];
     body_text?: string[][];
+    body_text_named_params?: Array<{
+      param_name: string;
+      example: string;
+    }>;
   };
   buttons?: Array<{
     type: string;
@@ -32,6 +36,7 @@ interface Template {
   language: string;
   category: string;
   status: string;
+  parameter_format?: 'NAMED' | 'POSITIONAL';
   components: TemplateComponent[];
 }
 
@@ -67,15 +72,46 @@ export function TemplateSelector({ connectionId, onSelect, onCancel }: TemplateS
     }
   }
 
-  // Extract variables from template text ({{1}}, {{2}}, etc.)
+  // Extract variables from template text ({{1}}, {{2}} OR {{name}}, {{client}}, etc.)
   function extractVariables(template: Template): string[] {
     const vars: string[] = [];
-    const regex = /\{\{(\d+)\}\}/g;
     
+    // First check if template uses NAMED parameters from example.body_text_named_params
+    for (const component of template.components) {
+      if (component.example?.body_text_named_params) {
+        for (const param of component.example.body_text_named_params) {
+          if (param.param_name && !vars.includes(param.param_name)) {
+            vars.push(param.param_name);
+          }
+        }
+      }
+    }
+    
+    // If we found named params, return them
+    if (vars.length > 0) return vars;
+    
+    // Otherwise check for numbered variables {{1}}, {{2}} in text
+    const numberedRegex = /\{\{(\d+)\}\}/g;
     for (const component of template.components) {
       if (component.text) {
         let match;
-        while ((match = regex.exec(component.text)) !== null) {
+        while ((match = numberedRegex.exec(component.text)) !== null) {
+          if (!vars.includes(match[1])) {
+            vars.push(match[1]);
+          }
+        }
+      }
+    }
+    if (vars.length > 0) {
+      return vars.sort((a, b) => parseInt(a) - parseInt(b));
+    }
+    
+    // Last resort: extract named variables {{varName}} from text
+    const namedRegex = /\{\{([a-zA-Z_][a-zA-Z0-9_]*)\}\}/g;
+    for (const component of template.components) {
+      if (component.text) {
+        let match;
+        while ((match = namedRegex.exec(component.text)) !== null) {
           if (!vars.includes(match[1])) {
             vars.push(match[1]);
           }
@@ -83,7 +119,7 @@ export function TemplateSelector({ connectionId, onSelect, onCancel }: TemplateS
       }
     }
     
-    return vars.sort((a, b) => parseInt(a) - parseInt(b));
+    return vars;
   }
 
   // Get preview text with variables replaced
@@ -96,7 +132,9 @@ export function TemplateSelector({ connectionId, onSelect, onCancel }: TemplateS
     
     for (const v of templateVars) {
       const value = variables[v] || `{{${v}}}`;
-      text = text.replace(new RegExp(`\\{\\{${v}\\}\\}`, 'g'), value);
+      // Escape special regex chars in variable name
+      const escapedVar = v.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      text = text.replace(new RegExp(`\\{\\{${escapedVar}\\}\\}`, 'g'), value || `{{${v}}}`);
     }
     
     return text;

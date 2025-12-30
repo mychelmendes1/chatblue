@@ -463,6 +463,7 @@ router.post('/template', authenticate, ensureTenant, async (req, res, next) => {
         parameters: z.array(z.object({
           type: z.enum(['text', 'currency', 'date_time', 'image', 'document', 'video']),
           text: z.string().optional(),
+          parameter_name: z.string().optional(), // For named parameters
           currency: z.object({
             fallback_value: z.string(),
             code: z.string(),
