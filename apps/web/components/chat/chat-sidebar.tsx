@@ -488,6 +488,15 @@ export function ChatSidebar() {
               </TabsList>
 
               <TabsContent value="contact" className="space-y-3 mt-4">
+                {isMetaCloud && (
+                  <Alert className="border-amber-200 bg-amber-50 dark:bg-amber-950/20 dark:border-amber-800 mb-3">
+                    <AlertCircle className="h-4 w-4 text-amber-600" />
+                    <AlertDescription className="text-amber-800 dark:text-amber-200 text-xs">
+                      <strong>API Oficial:</strong> Use a aba "Template" para iniciar a conversa. 
+                      Templates são obrigatórios para a primeira mensagem.
+                    </AlertDescription>
+                  </Alert>
+                )}
                 <div className="space-y-2">
                   <Label>Buscar contato</Label>
                   <div className="relative">
@@ -563,6 +572,15 @@ export function ChatSidebar() {
               </TabsContent>
 
               <TabsContent value="manual" className="space-y-3 mt-4">
+                {isMetaCloud && (
+                  <Alert className="border-amber-200 bg-amber-50 dark:bg-amber-950/20 dark:border-amber-800 mb-3">
+                    <AlertCircle className="h-4 w-4 text-amber-600" />
+                    <AlertDescription className="text-amber-800 dark:text-amber-200 text-xs">
+                      <strong>API Oficial:</strong> Use a aba "Template" para iniciar a conversa. 
+                      Templates são obrigatórios para a primeira mensagem.
+                    </AlertDescription>
+                  </Alert>
+                )}
                 <div className="space-y-2">
                   <Label>Telefone *</Label>
                   <Input
@@ -695,18 +713,30 @@ export function ChatSidebar() {
             <Button variant="outline" onClick={resetNewConversationDialog}>
               Cancelar
             </Button>
-            <Button
-              onClick={handleCreateConversation}
-              disabled={
-                isCreating ||
-                !selectedConnectionId ||
-                (newConvoTab === "contact" && !selectedContact) ||
-                (newConvoTab === "manual" && !phoneInput)
-              }
-            >
-              {isCreating && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
-              Iniciar Conversa
-            </Button>
+            {/* For META_CLOUD connections, hide the regular "Iniciar Conversa" button 
+                and force users to use the Template tab */}
+            {isMetaCloud && newConvoTab !== "template" ? (
+              <Button
+                onClick={() => setNewConvoTab("template")}
+                disabled={!selectedConnectionId}
+              >
+                <FileText className="w-4 h-4 mr-2" />
+                Usar Template (obrigatório)
+              </Button>
+            ) : !isMetaCloud ? (
+              <Button
+                onClick={handleCreateConversation}
+                disabled={
+                  isCreating ||
+                  !selectedConnectionId ||
+                  (newConvoTab === "contact" && !selectedContact) ||
+                  (newConvoTab === "manual" && !phoneInput)
+                }
+              >
+                {isCreating && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+                Iniciar Conversa
+              </Button>
+            ) : null}
           </DialogFooter>
         </DialogContent>
       </Dialog>
