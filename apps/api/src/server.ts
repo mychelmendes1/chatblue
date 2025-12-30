@@ -133,7 +133,7 @@ app.use('/api/upload', uploadRouter);
 app.use('/api/push', pushRouter);
 app.use('/api/knowledge', knowledgeRouter);
 app.use('/api/faq', faqRouter);
-app.use('/webhook', webhookRouter);
+app.use('/webhooks', webhookRouter);
 
 // Serve uploaded files statically
 const uploadsDir = process.env.UPLOADS_DIR || path.join(process.cwd(), 'apps', 'api', 'uploads');
