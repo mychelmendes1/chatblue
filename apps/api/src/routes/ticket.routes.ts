@@ -1077,11 +1077,13 @@ router.post('/', authenticate, ensureTenant, async (req, res, next) => {
       }
     }
 
-    // Check if there's already an open ticket for this contact
+    // Check if there's already an open ticket for this contact on the SAME connection
+    // This is important for Meta Cloud API because templates require specific connection
     const existingTicket = await prisma.ticket.findFirst({
       where: {
         contactId: contact.id,
         companyId: req.user!.companyId,
+        connectionId: data.connectionId, // Must be the same connection
         status: { in: ['PENDING', 'IN_PROGRESS', 'WAITING'] },
       },
       include: {
@@ -1109,11 +1111,18 @@ router.post('/', authenticate, ensureTenant, async (req, res, next) => {
             color: true,
           },
         },
+        connection: {
+          select: {
+            id: true,
+            name: true,
+            type: true,
+          },
+        },
       },
     });
 
     if (existingTicket) {
-      // Return existing open ticket
+      // Return existing open ticket for this connection
       return res.json({ ticket: existingTicket, isExisting: true });
     }
 
