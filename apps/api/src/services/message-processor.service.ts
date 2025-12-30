@@ -445,6 +445,12 @@ export class MessageProcessor {
         },
       });
 
+      // Update contact's lastMessageAt for 24-hour messaging window tracking (Meta Cloud API)
+      await prisma.contact.update({
+        where: { id: contact.id },
+        data: { lastMessageAt: timestamp },
+      });
+
       // Fetch message with quoted relation for socket emission
       const messageWithQuoted = await prisma.message.findUnique({
         where: { id: message.id },

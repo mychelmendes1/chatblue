@@ -392,6 +392,55 @@ router.put('/:id/company', authenticate, requireAdmin, ensureTenant, async (req,
   }
 });
 
+// Get message templates for Meta Cloud connection
+router.get('/:id/templates', authenticate, ensureTenant, async (req, res, next) => {
+  try {
+    // Build where clause - super admin can access any connection
+    const whereClause: any = {
+      id: req.params.id,
+    };
+    
+    if (req.user!.role !== 'SUPER_ADMIN') {
+      whereClause.companyId = req.user!.companyId;
+    }
+    
+    const connection = await prisma.whatsAppConnection.findFirst({
+      where: whereClause,
+    });
+
+    if (!connection) {
+      throw new NotFoundError('Connection not found');
+    }
+
+    // Templates are only available for Meta Cloud connections
+    if (connection.type !== 'META_CLOUD') {
+      return res.json({ 
+        templates: [],
+        message: 'Templates are only available for Meta Cloud API connections'
+      });
+    }
+
+    const metaService = new MetaCloudService(connection);
+    const templates = await metaService.getTemplates();
+
+    // Filter only approved templates and format the response
+    const approvedTemplates = templates
+      .filter((t: any) => t.status === 'APPROVED')
+      .map((t: any) => ({
+        id: t.id,
+        name: t.name,
+        language: t.language,
+        category: t.category,
+        status: t.status,
+        components: t.components,
+      }));
+
+    res.json({ templates: approvedTemplates });
+  } catch (error) {
+    next(error);
+  }
+});
+
 // Delete/Deactivate connection
 // IMPORTANT: We do NOT delete messages and tickets - they are historical data that must be preserved
 router.delete('/:id', authenticate, requireAdmin, ensureTenant, async (req, res, next) => {

@@ -451,6 +451,213 @@ router.post('/ticket/:ticketId/read', authenticate, ensureTenant, async (req, re
   }
 });
 
+// Send template message (Meta Cloud API only)
+router.post('/template', authenticate, ensureTenant, async (req, res, next) => {
+  try {
+    const { ticketId, templateName, languageCode, components } = z.object({
+      ticketId: z.string().cuid(),
+      templateName: z.string().min(1),
+      languageCode: z.string().min(2).default('pt_BR'),
+      components: z.array(z.object({
+        type: z.enum(['header', 'body', 'button']),
+        parameters: z.array(z.object({
+          type: z.enum(['text', 'currency', 'date_time', 'image', 'document', 'video']),
+          text: z.string().optional(),
+          currency: z.object({
+            fallback_value: z.string(),
+            code: z.string(),
+            amount_1000: z.number(),
+          }).optional(),
+          date_time: z.object({
+            fallback_value: z.string(),
+          }).optional(),
+          image: z.object({ link: z.string() }).optional(),
+          document: z.object({ link: z.string(), filename: z.string().optional() }).optional(),
+          video: z.object({ link: z.string() }).optional(),
+        })).optional(),
+        sub_type: z.string().optional(),
+        index: z.number().optional(),
+      })).optional(),
+    }).parse(req.body);
+
+    const ticket = await prisma.ticket.findFirst({
+      where: {
+        id: ticketId,
+        companyId: req.user!.companyId,
+      },
+      include: {
+        contact: true,
+        connection: true,
+      },
+    });
+
+    if (!ticket) {
+      throw new NotFoundError('Ticket not found');
+    }
+
+    // Templates only work with Meta Cloud connections
+    if (ticket.connection.type !== 'META_CLOUD') {
+      return res.status(400).json({
+        error: 'Templates are only available for Meta Cloud API connections',
+      });
+    }
+
+    // Get sender name
+    const sender = await prisma.user.findUnique({
+      where: { id: req.user!.userId },
+      select: { name: true },
+    });
+
+    // Build template content preview (for the message record)
+    const templateContent = `[Template: ${templateName}]`;
+
+    // Create message in database
+    const message = await prisma.message.create({
+      data: {
+        type: 'TEMPLATE',
+        content: templateContent,
+        isFromMe: true,
+        isAIGenerated: false,
+        isInternal: false,
+        status: 'PENDING',
+        ticketId: ticket.id,
+        senderId: req.user!.userId,
+        connectionId: ticket.connectionId,
+        metadata: {
+          templateName,
+          languageCode,
+          components,
+        },
+      },
+      include: {
+        sender: {
+          select: {
+            id: true,
+            name: true,
+            avatar: true,
+            isAI: true,
+          },
+        },
+      },
+    });
+
+    // Send via WhatsApp
+    const whatsappService = new WhatsAppService(ticket.connection);
+    const result = await whatsappService.sendTemplate(
+      ticket.contact.phone,
+      templateName,
+      languageCode,
+      components
+    );
+
+    // Update message with WhatsApp ID and SENT status
+    const updatedMessage = await prisma.message.update({
+      where: { id: message.id },
+      data: {
+        wamid: result.messageId,
+        status: 'SENT',
+        sentAt: new Date(),
+      },
+      include: {
+        sender: {
+          select: {
+            id: true,
+            name: true,
+            avatar: true,
+            isAI: true,
+          },
+        },
+      },
+    });
+
+    // Update ticket - auto-assign to agent if no one is assigned
+    const shouldAssign = !ticket.assignedToId;
+    const shouldChangeStatus = ticket.status === 'PENDING';
+    
+    const updatedTicket = await prisma.ticket.update({
+      where: { id: ticket.id },
+      data: {
+        updatedAt: new Date(),
+        ...(shouldAssign && {
+          assignedToId: req.user!.userId,
+        }),
+        ...(shouldChangeStatus && {
+          status: 'IN_PROGRESS',
+        }),
+        ...(ticket.firstResponse === null && {
+          firstResponse: new Date(),
+          responseTime: Math.floor((Date.now() - ticket.createdAt.getTime()) / 1000),
+        }),
+      },
+      include: {
+        contact: {
+          select: {
+            id: true,
+            name: true,
+            phone: true,
+            avatar: true,
+            isClient: true,
+          },
+        },
+        assignedTo: {
+          select: {
+            id: true,
+            name: true,
+            avatar: true,
+            isAI: true,
+          },
+        },
+        department: {
+          select: {
+            id: true,
+            name: true,
+            color: true,
+          },
+        },
+        messages: {
+          take: 1,
+          orderBy: { createdAt: 'desc' },
+          select: {
+            content: true,
+            type: true,
+            createdAt: true,
+            isFromMe: true,
+          },
+        },
+        _count: {
+          select: {
+            messages: {
+              where: {
+                isFromMe: false,
+                readAt: null,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    // Emit socket events
+    const io = req.app.get('io');
+    io.to(`ticket:${ticket.id}`).emit('message:sent', updatedMessage);
+    
+    if (shouldAssign || shouldChangeStatus) {
+      io.to(`company:${req.user!.companyId}`).emit('ticket:updated', updatedTicket);
+      
+      logger.info('Template sent and ticket auto-assigned', {
+        ticketId: ticket.id,
+        templateName,
+        assignedToId: req.user!.userId,
+        assignedToName: sender?.name,
+      });
+    }
+
+    res.status(201).json(updatedMessage);
+  } catch (error) {
+    next(error);
+  }
+});
+
 // Delete message
 router.delete('/:id', authenticate, ensureTenant, async (req, res, next) => {
   try {

@@ -128,6 +128,13 @@ export function ChatWindow({ ticket, onShowContactInfo }: ChatWindowProps) {
   // Reply state
   const [replyingTo, setReplyingTo] = useState<any>(null);
 
+  // Messaging window state (for Meta Cloud API 24h rule)
+  const [messagingWindow, setMessagingWindow] = useState<{
+    isOpen: boolean;
+    hoursRemaining: number | null;
+    requiresTemplate: boolean;
+  } | null>(null);
+
   const contactName = ticket.contact?.name || formatPhone(ticket.contact?.phone);
 
   // Fetch users for mentions
@@ -142,6 +149,30 @@ export function ChatWindow({ ticket, onShowContactInfo }: ChatWindowProps) {
     }
     fetchUsers();
   }, []);
+
+  // Fetch messaging window status for Meta Cloud connections
+  useEffect(() => {
+    async function fetchMessagingWindow() {
+      if (!ticket.contact?.id) return;
+      
+      try {
+        const response = await api.get<{
+          isOpen: boolean;
+          hoursRemaining: number | null;
+          requiresTemplate: boolean;
+        }>(`/contacts/${ticket.contact.id}/messaging-window`);
+        setMessagingWindow(response.data);
+      } catch (error) {
+        // Silently fail - not critical
+        console.debug("Could not fetch messaging window:", error);
+      }
+    }
+    
+    fetchMessagingWindow();
+    // Refresh every 5 minutes
+    const interval = setInterval(fetchMessagingWindow, 5 * 60 * 1000);
+    return () => clearInterval(interval);
+  }, [ticket.contact?.id]);
 
   const scrollAreaRef = useRef<HTMLDivElement>(null);
   const [messagePage, setMessagePage] = useState(1);
@@ -738,6 +769,19 @@ export function ChatWindow({ ticket, onShowContactInfo }: ChatWindowProps) {
                   <Bot className="w-3 h-3" />
                   IA
                 </span>
+              )}
+              {messagingWindow && (
+                messagingWindow.isOpen ? (
+                  <span className="flex items-center gap-1 text-xs bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400 px-2 py-0.5 rounded" title={`Janela de 24h aberta - ${messagingWindow.hoursRemaining}h restantes`}>
+                    <Clock className="w-3 h-3" />
+                    {messagingWindow.hoursRemaining}h
+                  </span>
+                ) : (
+                  <span className="flex items-center gap-1 text-xs bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400 px-2 py-0.5 rounded" title="Janela de 24h fechada - Use templates">
+                    <AlertCircle className="w-3 h-3" />
+                    Template
+                  </span>
+                )
               )}
             </div>
             <p className="text-sm text-muted-foreground">

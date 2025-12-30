@@ -438,6 +438,58 @@ router.get('/search', authenticate, ensureTenant, async (req, res, next) => {
   }
 });
 
+// Get messaging window status for a contact (Meta Cloud API 24-hour rule)
+router.get('/:id/messaging-window', authenticate, ensureTenant, async (req, res, next) => {
+  try {
+    const contact = await prisma.contact.findFirst({
+      where: {
+        id: req.params.id,
+        companyId: req.user!.companyId,
+      },
+      select: {
+        id: true,
+        phone: true,
+        lastMessageAt: true,
+      },
+    });
+
+    if (!contact) {
+      throw new NotFoundError('Contact not found');
+    }
+
+    // Calculate if the 24-hour messaging window is open
+    // The window is open if the contact sent us a message in the last 24 hours
+    const WINDOW_DURATION_MS = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
+    const now = new Date();
+    
+    let isOpen = false;
+    let expiresAt: Date | null = null;
+    let hoursRemaining: number | null = null;
+
+    if (contact.lastMessageAt) {
+      const windowEnd = new Date(contact.lastMessageAt.getTime() + WINDOW_DURATION_MS);
+      isOpen = windowEnd > now;
+      
+      if (isOpen) {
+        expiresAt = windowEnd;
+        hoursRemaining = Math.max(0, Math.round((windowEnd.getTime() - now.getTime()) / (60 * 60 * 1000)));
+      }
+    }
+
+    res.json({
+      contactId: contact.id,
+      phone: contact.phone,
+      isOpen,
+      expiresAt: expiresAt?.toISOString() || null,
+      hoursRemaining,
+      lastMessageAt: contact.lastMessageAt?.toISOString() || null,
+      requiresTemplate: !isOpen,
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
 // Temporary route to fix contact phone numbers (remove after running)
 router.post('/fix-phones', authenticate, requireAdmin, ensureTenant, async (req, res, next) => {
   try {

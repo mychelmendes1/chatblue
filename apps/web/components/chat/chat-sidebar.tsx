@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Search, Filter, Bot, User, Clock, Plus, Loader2, Phone, Users, CheckSquare } from "lucide-react";
+import { Search, Filter, Bot, User, Clock, Plus, Loader2, Phone, Users, CheckSquare, FileText, AlertCircle } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -29,6 +29,8 @@ import { cn, formatDate, formatPhone, getStatusColor, formatSLATime } from "@/li
 import { useChatStore } from "@/stores/chat.store";
 import { useAuthStore } from "@/stores/auth.store";
 import { api } from "@/lib/api";
+import { TemplateSelector } from "./template-selector";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 
 interface Connection {
   id: string;
@@ -68,7 +70,7 @@ export function ChatSidebar() {
 
   // New conversation states
   const [showNewConversationDialog, setShowNewConversationDialog] = useState(false);
-  const [newConvoTab, setNewConvoTab] = useState<"contact" | "manual">("contact");
+  const [newConvoTab, setNewConvoTab] = useState<"contact" | "manual" | "template">("contact");
   const [phoneInput, setPhoneInput] = useState("");
   const [contactNameInput, setContactNameInput] = useState("");
   const [contactSearch, setContactSearch] = useState("");
@@ -78,6 +80,11 @@ export function ChatSidebar() {
   const [selectedConnectionId, setSelectedConnectionId] = useState("");
   const [isCreating, setIsCreating] = useState(false);
   const [isSearching, setIsSearching] = useState(false);
+  const [showTemplateSelector, setShowTemplateSelector] = useState(false);
+
+  // Check if selected connection is Meta Cloud
+  const selectedConnection = connections.find(c => c.id === selectedConnectionId);
+  const isMetaCloud = selectedConnection?.type === "META_CLOUD";
 
   useEffect(() => {
     fetchTickets();
@@ -173,6 +180,81 @@ export function ChatSidebar() {
     setSelectedContact(null);
     setNewConvoTab("contact");
     setShowNewConversationDialog(false);
+    setShowTemplateSelector(false);
+  }
+
+  async function handleSendTemplate(template: any, variables: Record<string, string>) {
+    if (!selectedConnectionId) return;
+    
+    // First create the ticket/conversation
+    let phone = "";
+    let contactId: string | undefined;
+    let contactName: string | undefined;
+
+    if (selectedContact) {
+      phone = selectedContact.phone;
+      contactId = selectedContact.id;
+    } else if (phoneInput) {
+      phone = phoneInput.replace(/\D/g, "");
+      contactName = contactNameInput || undefined;
+    } else {
+      toast({
+        title: "Erro",
+        description: "Selecione um contato ou digite um telefone primeiro",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setIsCreating(true);
+    try {
+      // Create ticket first
+      const ticketResponse = await api.post<{ ticket: any; isExisting: boolean }>("/tickets", {
+        phone,
+        contactId,
+        contactName,
+        connectionId: selectedConnectionId,
+      });
+
+      const ticket = ticketResponse.data.ticket;
+
+      // Build components array for the API
+      const templateVars = Object.keys(variables).sort((a, b) => parseInt(a) - parseInt(b));
+      const bodyParameters = templateVars.map(v => ({
+        type: "text" as const,
+        text: variables[v],
+      }));
+
+      const components = bodyParameters.length > 0 ? [{
+        type: "body" as const,
+        parameters: bodyParameters,
+      }] : [];
+
+      // Send template message
+      await api.post("/messages/template", {
+        ticketId: ticket.id,
+        templateName: template.name,
+        languageCode: template.language,
+        components,
+      });
+
+      toast({ 
+        title: "Template enviado",
+        description: ticketResponse.data.isExisting ? "Mensagem enviada para conversa existente" : "Nova conversa iniciada com template",
+      });
+
+      resetNewConversationDialog();
+      fetchTickets();
+      selectTicket(ticket);
+    } catch (error: any) {
+      toast({
+        title: "Erro ao enviar template",
+        description: error.message || "Falha ao enviar mensagem template",
+        variant: "destructive",
+      });
+    } finally {
+      setIsCreating(false);
+    }
   }
 
   async function handleCreateConversation() {
@@ -376,8 +458,19 @@ export function ChatSidebar() {
               )}
             </div>
 
-            <Tabs value={newConvoTab} onValueChange={(v) => setNewConvoTab(v as "contact" | "manual")}>
-              <TabsList className="grid w-full grid-cols-2">
+            {/* Alert for Meta Cloud connections */}
+            {isMetaCloud && !showTemplateSelector && (
+              <Alert className="border-amber-200 bg-amber-50 dark:bg-amber-950/20 dark:border-amber-800">
+                <AlertCircle className="h-4 w-4 text-amber-600" />
+                <AlertDescription className="text-amber-800 dark:text-amber-200 text-xs">
+                  API Oficial do WhatsApp: Para iniciar conversas fora da janela de 24h, 
+                  é necessário usar um template de mensagem pré-aprovado.
+                </AlertDescription>
+              </Alert>
+            )}
+
+            <Tabs value={newConvoTab} onValueChange={(v) => setNewConvoTab(v as "contact" | "manual" | "template")}>
+              <TabsList className={cn("grid w-full", isMetaCloud ? "grid-cols-3" : "grid-cols-2")}>
                 <TabsTrigger value="contact" className="flex items-center gap-2">
                   <Users className="w-4 h-4" />
                   Contato
@@ -386,6 +479,12 @@ export function ChatSidebar() {
                   <Phone className="w-4 h-4" />
                   Manual
                 </TabsTrigger>
+                {isMetaCloud && (
+                  <TabsTrigger value="template" className="flex items-center gap-2">
+                    <FileText className="w-4 h-4" />
+                    Template
+                  </TabsTrigger>
+                )}
               </TabsList>
 
               <TabsContent value="contact" className="space-y-3 mt-4">
@@ -485,6 +584,110 @@ export function ChatSidebar() {
                   />
                 </div>
               </TabsContent>
+
+              {isMetaCloud && (
+                <TabsContent value="template" className="mt-4">
+                  {showTemplateSelector ? (
+                    <TemplateSelector
+                      connectionId={selectedConnectionId}
+                      onSelect={handleSendTemplate}
+                      onCancel={() => setShowTemplateSelector(false)}
+                    />
+                  ) : (
+                    <div className="space-y-4">
+                      <p className="text-sm text-muted-foreground">
+                        Primeiro selecione ou digite o contato, depois escolha um template para enviar.
+                      </p>
+                      
+                      {/* Contact selection for template */}
+                      <div className="space-y-2">
+                        <Label>Buscar contato</Label>
+                        <div className="relative">
+                          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                          <Input
+                            placeholder="Nome, telefone ou email..."
+                            value={contactSearch}
+                            onChange={(e) => {
+                              setContactSearch(e.target.value);
+                              searchContacts(e.target.value);
+                            }}
+                            className="pl-9"
+                          />
+                        </div>
+                      </div>
+
+                      {searchResults.length > 0 && !selectedContact && (
+                        <div className="border rounded-md max-h-32 overflow-y-auto">
+                          {searchResults.map((contact) => (
+                            <button
+                              key={contact.id}
+                              type="button"
+                              className="w-full p-2 flex items-center gap-2 text-left hover:bg-muted/50 transition-colors border-b last:border-b-0 text-sm"
+                              onClick={() => setSelectedContact(contact)}
+                            >
+                              <Avatar className="w-6 h-6">
+                                <AvatarImage src={contact.avatar} />
+                                <AvatarFallback className="text-xs">
+                                  {(contact.name || contact.phone).slice(0, 2).toUpperCase()}
+                                </AvatarFallback>
+                              </Avatar>
+                              <span className="truncate">
+                                {contact.name || formatPhone(contact.phone)}
+                              </span>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+
+                      {selectedContact && (
+                        <div className="p-2 bg-muted rounded-md flex items-center gap-2">
+                          <Avatar className="w-8 h-8">
+                            <AvatarImage src={selectedContact.avatar} />
+                            <AvatarFallback>
+                              {(selectedContact.name || selectedContact.phone).slice(0, 2).toUpperCase()}
+                            </AvatarFallback>
+                          </Avatar>
+                          <div className="flex-1">
+                            <p className="text-sm font-medium">{selectedContact.name || "Sem nome"}</p>
+                            <p className="text-xs text-muted-foreground">
+                              {formatPhone(selectedContact.phone)}
+                            </p>
+                          </div>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => setSelectedContact(null)}
+                          >
+                            Trocar
+                          </Button>
+                        </div>
+                      )}
+
+                      {/* Manual phone input */}
+                      {!selectedContact && (
+                        <div className="space-y-2">
+                          <Label className="text-xs">Ou digite o número manualmente</Label>
+                          <Input
+                            placeholder="5511999999999"
+                            value={phoneInput}
+                            onChange={(e) => setPhoneInput(e.target.value)}
+                            className="text-sm"
+                          />
+                        </div>
+                      )}
+
+                      <Button
+                        className="w-full"
+                        onClick={() => setShowTemplateSelector(true)}
+                        disabled={!selectedContact && !phoneInput}
+                      >
+                        <FileText className="w-4 h-4 mr-2" />
+                        Escolher Template
+                      </Button>
+                    </div>
+                  )}
+                </TabsContent>
+              )}
             </Tabs>
           </div>
 
