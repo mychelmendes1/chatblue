@@ -64,6 +64,43 @@ router.get('/', authenticate, ensureTenant, async (req, res, next) => {
   }
 });
 
+// Search contacts for autocomplete - MUST be before /:id route
+router.get('/search', authenticate, ensureTenant, async (req, res, next) => {
+  try {
+    const { q, limit = '10' } = req.query;
+
+    if (!q || typeof q !== 'string' || q.length < 2) {
+      return res.json([]);
+    }
+
+    const contacts = await prisma.contact.findMany({
+      where: {
+        companyId: req.user!.companyId,
+        isActive: true,
+        OR: [
+          { name: { contains: q, mode: 'insensitive' } },
+          { phone: { contains: q } },
+          { email: { contains: q, mode: 'insensitive' } },
+        ],
+      },
+      select: {
+        id: true,
+        phone: true,
+        name: true,
+        email: true,
+        avatar: true,
+        isClient: true,
+      },
+      take: parseInt(limit as string),
+      orderBy: { updatedAt: 'desc' },
+    });
+
+    res.json(contacts);
+  } catch (error) {
+    next(error);
+  }
+});
+
 // Get contact
 router.get('/:id', authenticate, ensureTenant, async (req, res, next) => {
   try {
@@ -396,43 +433,6 @@ router.post('/import', authenticate, requireAdmin, ensureTenant, async (req, res
       message: `Import completed: ${results.imported} imported, ${results.skipped} skipped, ${results.errors.length} errors`,
       ...results,
     });
-  } catch (error) {
-    next(error);
-  }
-});
-
-// Search contacts for autocomplete
-router.get('/search', authenticate, ensureTenant, async (req, res, next) => {
-  try {
-    const { q, limit = '10' } = req.query;
-
-    if (!q || typeof q !== 'string' || q.length < 2) {
-      return res.json([]);
-    }
-
-    const contacts = await prisma.contact.findMany({
-      where: {
-        companyId: req.user!.companyId,
-        isActive: true,
-        OR: [
-          { name: { contains: q, mode: 'insensitive' } },
-          { phone: { contains: q } },
-          { email: { contains: q, mode: 'insensitive' } },
-        ],
-      },
-      select: {
-        id: true,
-        phone: true,
-        name: true,
-        email: true,
-        avatar: true,
-        isClient: true,
-      },
-      take: parseInt(limit as string),
-      orderBy: { updatedAt: 'desc' },
-    });
-
-    res.json(contacts);
   } catch (error) {
     next(error);
   }
