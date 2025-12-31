@@ -70,11 +70,11 @@ function ChatPageContent() {
   };
 
   return (
-    <div className="flex h-full">
+    <div className="flex h-full overflow-hidden">
       {/* Chat Sidebar - Lista de conversas */}
       {/* On mobile: hidden when viewing chat */}
       <div className={cn(
-        "md:block",
+        "md:block h-full overflow-hidden",
         mobileShowChat ? "hidden" : "block w-full"
       )}>
         <ChatSidebar />
@@ -83,8 +83,8 @@ function ChatPageContent() {
       {/* Chat Window - Conversa principal */}
       {/* On mobile: full width when viewing chat */}
       <div className={cn(
-        "flex-1 flex flex-col",
-        mobileShowChat ? "block" : "hidden md:flex"
+        "flex-1 flex flex-col h-full overflow-hidden",
+        mobileShowChat ? "flex" : "hidden md:flex"
       )}>
         {selectedTicket ? (
           <ChatWindow

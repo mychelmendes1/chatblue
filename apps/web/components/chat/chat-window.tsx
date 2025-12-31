@@ -749,9 +749,9 @@ export function ChatWindow({ ticket, onShowContactInfo, onMobileBack }: ChatWind
   }
 
   return (
-    <div className="flex flex-col h-full overflow-x-hidden">
+    <div className="flex flex-col h-full overflow-hidden">
       {/* Header */}
-      <div className="flex items-center justify-between px-2 md:px-4 py-2 md:py-3 border-b bg-card">
+      <div className="flex items-center justify-between px-2 md:px-4 py-2 md:py-3 border-b bg-card flex-shrink-0">
         <div className="flex items-center gap-2 md:gap-3">
           {/* Mobile back button */}
           {onMobileBack && (
@@ -874,7 +874,7 @@ export function ChatWindow({ ticket, onShowContactInfo, onMobileBack }: ChatWind
       <ScrollArea 
         ref={scrollAreaRef}
         className={cn(
-          "flex-1 p-2 md:p-4 bg-muted/30 relative overflow-x-hidden",
+          "flex-1 min-h-0 p-2 md:p-4 bg-muted/30 relative overflow-x-hidden",
           isDragging && "bg-primary/5"
         )}
         onDragOver={handleDragOver}
@@ -929,8 +929,8 @@ export function ChatWindow({ ticket, onShowContactInfo, onMobileBack }: ChatWind
         </div>
       </ScrollArea>
 
-      {/* Input */}
-      <div className="relative">
+      {/* Input - Fixed at bottom */}
+      <div className="relative flex-shrink-0 bg-card">
         {/* Mention dropdown */}
         {showMentions && filteredUsers.length > 0 && (
           <div className="absolute bottom-full left-0 right-0 mx-4 mb-2 bg-card border rounded-lg shadow-lg max-h-48 overflow-y-auto z-10">
