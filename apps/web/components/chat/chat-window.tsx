@@ -749,9 +749,9 @@ export function ChatWindow({ ticket, onShowContactInfo, onMobileBack }: ChatWind
   }
 
   return (
-    <div className="flex flex-col h-full overflow-hidden">
-      {/* Header */}
-      <div className="flex items-center justify-between px-2 md:px-4 py-2 md:py-3 border-b bg-card flex-shrink-0">
+    <div className="flex flex-col h-full min-h-0 overflow-hidden">
+      {/* Header - fixed height */}
+      <div className="flex items-center justify-between px-2 md:px-4 py-2 md:py-3 border-b bg-card flex-shrink-0 h-14 md:h-16">
         <div className="flex items-center gap-2 md:gap-3">
           {/* Mobile back button */}
           {onMobileBack && (
@@ -929,8 +929,8 @@ export function ChatWindow({ ticket, onShowContactInfo, onMobileBack }: ChatWind
         </div>
       </ScrollArea>
 
-      {/* Input - Fixed at bottom */}
-      <div className="relative flex-shrink-0 bg-card">
+      {/* Input - Fixed at bottom with explicit height */}
+      <div className="relative flex-shrink-0 bg-card border-t">
         {/* Mention dropdown */}
         {showMentions && filteredUsers.length > 0 && (
           <div className="absolute bottom-full left-0 right-0 mx-4 mb-2 bg-card border rounded-lg shadow-lg max-h-48 overflow-y-auto z-10">
@@ -1052,7 +1052,7 @@ export function ChatWindow({ ticket, onShowContactInfo, onMobileBack }: ChatWind
 
         <form
           onSubmit={handleSendMessage}
-          className="flex items-center gap-1.5 md:gap-2 p-2 md:p-4 border-t bg-card relative"
+          className="flex items-center gap-1.5 md:gap-2 p-2 md:p-3 bg-card relative"
         >
           {/* Emoji Picker */}
           {showEmojiPicker && (

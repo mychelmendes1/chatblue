@@ -83,8 +83,8 @@ function ChatPageContent() {
       {/* Chat Window - Conversa principal */}
       {/* On mobile: full width when viewing chat */}
       <div className={cn(
-        "flex-1 flex flex-col h-full overflow-hidden",
-        mobileShowChat ? "flex" : "hidden md:flex"
+        "flex-1 flex flex-col h-full overflow-hidden min-h-0",
+        mobileShowChat ? "flex chat-container-mobile md:h-full" : "hidden md:flex"
       )}>
         {selectedTicket ? (
           <ChatWindow

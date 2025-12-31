@@ -139,3 +139,37 @@
     overflow-wrap: break-word;
   }
 }
+
+/* Mobile viewport height fix */
+/* Use dvh (dynamic viewport height) for mobile to handle browser chrome */
+@supports (height: 100dvh) {
+  .h-screen-mobile {
+    height: 100dvh;
+  }
+}
+
+@supports not (height: 100dvh) {
+  .h-screen-mobile {
+    height: 100vh;
+    height: -webkit-fill-available;
+  }
+}
+
+/* Chat container for mobile - fixed height layout */
+@media (max-width: 768px) {
+  .chat-container-mobile {
+    display: flex;
+    flex-direction: column;
+    height: calc(100dvh - 48px - 64px); /* viewport - header - bottom nav */
+    height: calc(100vh - 48px - 64px);
+    max-height: calc(100dvh - 48px - 64px);
+    overflow: hidden;
+  }
+  
+  @supports not (height: 100dvh) {
+    .chat-container-mobile {
+      height: calc(100vh - 48px - 64px);
+      height: calc(-webkit-fill-available - 48px - 64px);
+    }
+  }
+}
