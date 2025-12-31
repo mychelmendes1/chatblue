@@ -129,6 +129,13 @@
 /* Message bubbles responsive */
 @media (max-width: 768px) {
   .message-bubble {
-    @apply max-w-[85%];
+    @apply max-w-[80%] text-sm px-2.5 py-1.5;
+  }
+  
+  /* Prevent horizontal scroll */
+  .message-bubble p,
+  .message-bubble span {
+    word-break: break-word;
+    overflow-wrap: break-word;
   }
 }

@@ -749,9 +749,9 @@ export function ChatWindow({ ticket, onShowContactInfo, onMobileBack }: ChatWind
   }
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col h-full overflow-x-hidden">
       {/* Header */}
-      <div className="flex items-center justify-between px-2 md:px-4 py-3 border-b bg-card">
+      <div className="flex items-center justify-between px-2 md:px-4 py-2 md:py-3 border-b bg-card">
         <div className="flex items-center gap-2 md:gap-3">
           {/* Mobile back button */}
           {onMobileBack && (
@@ -874,7 +874,7 @@ export function ChatWindow({ ticket, onShowContactInfo, onMobileBack }: ChatWind
       <ScrollArea 
         ref={scrollAreaRef}
         className={cn(
-          "flex-1 p-4 bg-muted/30 relative",
+          "flex-1 p-2 md:p-4 bg-muted/30 relative overflow-x-hidden",
           isDragging && "bg-primary/5"
         )}
         onDragOver={handleDragOver}
@@ -884,13 +884,13 @@ export function ChatWindow({ ticket, onShowContactInfo, onMobileBack }: ChatWind
         {/* Drag overlay */}
         {isDragging && (
           <div className="absolute inset-0 bg-primary/10 border-2 border-dashed border-primary rounded-lg flex items-center justify-center z-10 pointer-events-none">
-            <div className="bg-card px-6 py-4 rounded-lg shadow-lg flex items-center gap-3">
-              <Paperclip className="w-6 h-6 text-primary" />
-              <span className="text-lg font-medium">Solte o arquivo aqui</span>
+            <div className="bg-card px-4 md:px-6 py-3 md:py-4 rounded-lg shadow-lg flex items-center gap-2 md:gap-3">
+              <Paperclip className="w-5 h-5 md:w-6 md:h-6 text-primary" />
+              <span className="text-base md:text-lg font-medium">Solte o arquivo aqui</span>
             </div>
           </div>
         )}
-        <div className="space-y-4 max-w-3xl mx-auto">
+        <div className="space-y-3 md:space-y-4 max-w-full md:max-w-3xl mx-auto">
           {/* Load older messages button */}
           {hasMoreMessages && (
             <div className="flex justify-center py-2">
@@ -1052,13 +1052,13 @@ export function ChatWindow({ ticket, onShowContactInfo, onMobileBack }: ChatWind
 
         <form
           onSubmit={handleSendMessage}
-          className="flex items-center gap-2 p-4 border-t bg-card relative"
+          className="flex items-center gap-1.5 md:gap-2 p-2 md:p-4 border-t bg-card relative"
         >
           {/* Emoji Picker */}
           {showEmojiPicker && (
             <div
               ref={emojiPickerRef}
-              className="absolute bottom-full left-0 mb-2 bg-background border rounded-lg shadow-lg p-3 w-80 h-64 overflow-y-auto z-50"
+              className="absolute bottom-full left-0 mb-2 bg-background border rounded-lg shadow-lg p-3 w-64 md:w-80 h-64 overflow-y-auto z-50"
             >
               <div className="grid grid-cols-8 gap-1">
                 {commonEmojis.slice(0, 200).map((emoji, index) => (
@@ -1080,9 +1080,10 @@ export function ChatWindow({ ticket, onShowContactInfo, onMobileBack }: ChatWind
             type="button" 
             variant="ghost" 
             size="icon"
+            className="h-8 w-8 md:h-10 md:w-10 flex-shrink-0"
             onClick={() => setShowEmojiPicker(!showEmojiPicker)}
           >
-            <Smile className="w-5 h-5" />
+            <Smile className="w-4 h-4 md:w-5 md:h-5" />
           </Button>
           
           {/* Audio recording button */}
@@ -1091,27 +1092,28 @@ export function ChatWindow({ ticket, onShowContactInfo, onMobileBack }: ChatWind
               type="button" 
               variant="ghost" 
               size="icon"
+              className="h-8 w-8 md:h-10 md:w-10 flex-shrink-0 hidden md:flex"
               onClick={handleStartRecording}
               title="Gravar áudio"
             >
-              <Mic className="w-5 h-5" />
+              <Mic className="w-4 h-4 md:w-5 md:h-5" />
             </Button>
           ) : (
             <Button 
               type="button" 
               variant="destructive" 
               size="icon"
+              className="h-8 w-8 md:h-10 md:w-10 flex-shrink-0"
               onClick={handleStopRecording}
               title="Parar gravação"
-              className="animate-pulse"
             >
-              <Square className="w-5 h-5" />
+              <Square className="w-4 h-4 md:w-5 md:h-5" />
             </Button>
           )}
           
           {/* Recording time indicator */}
           {isRecording && (
-            <span className="text-sm text-muted-foreground">
+            <span className="text-xs md:text-sm text-muted-foreground">
               {formatRecordingTime(recordingTime)}
             </span>
           )}
@@ -1119,14 +1121,16 @@ export function ChatWindow({ ticket, onShowContactInfo, onMobileBack }: ChatWind
             type="button" 
             variant="ghost" 
             size="icon"
+            className="h-8 w-8 md:h-10 md:w-10 flex-shrink-0"
             onClick={() => fileInputRef.current?.click()}
           >
-            <Paperclip className="w-5 h-5" />
+            <Paperclip className="w-4 h-4 md:w-5 md:h-5" />
           </Button>
           <Button 
             type="button" 
             variant={isInternalMode ? "default" : "ghost"} 
             size="icon"
+            className="h-8 w-8 md:h-10 md:w-10 flex-shrink-0 hidden md:flex"
             onClick={() => {
               setIsInternalMode(!isInternalMode);
               if (!isInternalMode) {
@@ -1138,24 +1142,25 @@ export function ChatWindow({ ticket, onShowContactInfo, onMobileBack }: ChatWind
             }}
             title="Mensagem interna com menção"
           >
-            <AtSign className="w-5 h-5" />
+            <AtSign className="w-4 h-4 md:w-5 md:h-5" />
           </Button>
           <Input
             ref={inputRef}
-            placeholder={isInternalMode ? "Mensagem interna... @mencione alguém" : "Digite uma mensagem..."}
+            placeholder={isInternalMode ? "Interna... @mencione" : "Mensagem..."}
             value={newMessage}
             onChange={handleMessageChange}
-            className={cn("flex-1", isInternalMode && "border-amber-400 focus-visible:ring-amber-400")}
+            className={cn("flex-1 min-w-0 h-8 md:h-10 text-sm md:text-base", isInternalMode && "border-amber-400 focus-visible:ring-amber-400")}
           />
           <Button 
             type="submit" 
             size="icon" 
+            className="h-8 w-8 md:h-10 md:w-10 flex-shrink-0"
             disabled={(!newMessage.trim() && !selectedFile) || isSending || isUploading}
           >
             {isUploading ? (
-              <Loader2 className="w-5 h-5 animate-spin" />
+              <Loader2 className="w-4 h-4 md:w-5 md:h-5 animate-spin" />
             ) : (
-              <Send className="w-5 h-5" />
+              <Send className="w-4 h-4 md:w-5 md:h-5" />
             )}
           </Button>
         </form>
@@ -1319,7 +1324,7 @@ function MessageBubble({ message, onReply }: { message: any; onReply: () => void
             <img
               src={message.mediaUrl}
               alt=""
-              className="max-w-[300px] rounded-md"
+              className="max-w-[200px] md:max-w-[300px] rounded-md"
               crossOrigin="anonymous"
             />
             {(message.caption || message.content) && (
@@ -1336,7 +1341,7 @@ function MessageBubble({ message, onReply }: { message: any; onReply: () => void
 
         {!isDeleted && messageType === "AUDIO" && message.mediaUrl && (
           <div className="space-y-2">
-            <audio controls src={message.mediaUrl} className="max-w-[300px]" crossOrigin="anonymous" />
+            <audio controls src={message.mediaUrl} className="max-w-[200px] md:max-w-[300px] w-full" crossOrigin="anonymous" />
             {message.transcription && (
               <div className="text-sm bg-muted/30 p-2 rounded-md border-l-2 border-primary/50">
                 <span className="text-xs text-muted-foreground block mb-1">Transcrição:</span>
@@ -1363,7 +1368,7 @@ function MessageBubble({ message, onReply }: { message: any; onReply: () => void
             <video 
               controls 
               src={message.mediaUrl} 
-              className="max-w-[300px] rounded-md"
+              className="max-w-[200px] md:max-w-[300px] rounded-md"
               crossOrigin="anonymous"
             />
             {(message.caption || message.content) && (
