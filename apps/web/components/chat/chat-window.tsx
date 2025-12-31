@@ -33,6 +33,7 @@ import {
   Mic,
   Square,
   FileText,
+  ArrowLeft,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -53,6 +54,7 @@ interface User {
 interface ChatWindowProps {
   ticket: any;
   onShowContactInfo: () => void;
+  onMobileBack?: () => void;
 }
 
 // Error boundary for message rendering
@@ -95,7 +97,7 @@ class MessageErrorBoundary extends Component<
   }
 }
 
-export function ChatWindow({ ticket, onShowContactInfo }: ChatWindowProps) {
+export function ChatWindow({ ticket, onShowContactInfo, onMobileBack }: ChatWindowProps) {
   // Subscribe to messages to ensure re-renders on changes - filter by current ticket
   const allMessages = useChatStore((state) => state.messages);
   const messages = allMessages.filter((m) => !m.ticketId || m.ticketId === ticket.id);
@@ -749,9 +751,20 @@ export function ChatWindow({ ticket, onShowContactInfo }: ChatWindowProps) {
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 border-b bg-card">
-        <div className="flex items-center gap-3">
-          <Avatar className="w-10 h-10 cursor-pointer" onClick={onShowContactInfo}>
+      <div className="flex items-center justify-between px-2 md:px-4 py-3 border-b bg-card">
+        <div className="flex items-center gap-2 md:gap-3">
+          {/* Mobile back button */}
+          {onMobileBack && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="md:hidden h-10 w-10 -ml-1"
+              onClick={onMobileBack}
+            >
+              <ArrowLeft className="w-5 h-5" />
+            </Button>
+          )}
+          <Avatar className="w-9 h-9 md:w-10 md:h-10 cursor-pointer" onClick={onShowContactInfo}>
             <AvatarImage src={ticket.contact?.avatar} />
             <AvatarFallback>
               {contactName
@@ -762,30 +775,30 @@ export function ChatWindow({ ticket, onShowContactInfo }: ChatWindowProps) {
                 .slice(0, 2)}
             </AvatarFallback>
           </Avatar>
-          <div>
-            <div className="flex items-center gap-2">
-              <h3 className="font-medium">{contactName}</h3>
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-1 md:gap-2 flex-wrap">
+              <h3 className="font-medium text-sm md:text-base truncate max-w-[120px] md:max-w-none">{contactName}</h3>
               {ticket.isAIHandled && (
-                <span className="flex items-center gap-1 text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded">
+                <span className="flex items-center gap-1 text-[10px] md:text-xs bg-purple-100 text-purple-700 px-1.5 md:px-2 py-0.5 rounded">
                   <Bot className="w-3 h-3" />
-                  IA
+                  <span className="hidden md:inline">IA</span>
                 </span>
               )}
               {messagingWindow && (
                 messagingWindow.isOpen ? (
-                  <span className="flex items-center gap-1 text-xs bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400 px-2 py-0.5 rounded" title={`Janela de 24h aberta - ${messagingWindow.hoursRemaining}h restantes`}>
+                  <span className="flex items-center gap-1 text-[10px] md:text-xs bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400 px-1.5 md:px-2 py-0.5 rounded" title={`Janela de 24h aberta - ${messagingWindow.hoursRemaining}h restantes`}>
                     <Clock className="w-3 h-3" />
-                    {messagingWindow.hoursRemaining}h
+                    <span className="hidden md:inline">{messagingWindow.hoursRemaining}h</span>
                   </span>
                 ) : (
-                  <span className="flex items-center gap-1 text-xs bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400 px-2 py-0.5 rounded" title="Janela de 24h fechada - Use templates">
+                  <span className="flex items-center gap-1 text-[10px] md:text-xs bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400 px-1.5 md:px-2 py-0.5 rounded" title="Janela de 24h fechada - Use templates">
                     <AlertCircle className="w-3 h-3" />
-                    Template
+                    <span className="hidden md:inline">Template</span>
                   </span>
                 )
               )}
             </div>
-            <p className="text-sm text-muted-foreground">
+            <p className="text-xs md:text-sm text-muted-foreground truncate">
               {ticket.contact?.phone} • {getStatusLabel(ticket.status)}
             </p>
           </div>

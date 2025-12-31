@@ -335,11 +335,11 @@ export function ChatSidebar() {
   }
 
   return (
-    <div className="w-80 border-r flex flex-col bg-card">
+    <div className="w-full md:w-80 border-r flex flex-col bg-card h-full">
       {/* Header */}
-      <div className="p-4 border-b">
-        <div className="flex items-center justify-between mb-3">
-          <h2 className="text-lg font-semibold">Conversas</h2>
+      <div className="p-3 md:p-4 border-b">
+        <div className="flex items-center justify-between mb-2 md:mb-3">
+          <h2 className="text-base md:text-lg font-semibold">Conversas</h2>
           <Button
             size="icon"
             variant="outline"
@@ -367,10 +367,11 @@ export function ChatSidebar() {
         </form>
 
         {/* Quick Filters */}
-        <div className="flex gap-2 mt-3">
+        <div className="flex gap-1.5 md:gap-2 mt-2 md:mt-3">
           <Button
             variant={!filters.status && !filters.assignedToId ? "default" : "outline"}
             size="sm"
+            className="text-xs md:text-sm px-2 md:px-3 h-7 md:h-8"
             onClick={() => setFilters({ status: undefined, assignedToId: undefined })}
           >
             Todos
@@ -378,6 +379,7 @@ export function ChatSidebar() {
           <Button
             variant={filters.status === "PENDING" && !filters.assignedToId ? "default" : "outline"}
             size="sm"
+            className="text-xs md:text-sm px-2 md:px-3 h-7 md:h-8"
             onClick={() => setFilters({ status: "PENDING", assignedToId: undefined })}
           >
             Fila
@@ -385,6 +387,7 @@ export function ChatSidebar() {
           <Button
             variant={filters.assignedToId === user?.id ? "default" : "outline"}
             size="sm"
+            className="text-xs md:text-sm px-2 md:px-3 h-7 md:h-8"
             onClick={() => setFilters({ status: undefined, assignedToId: user?.id })}
           >
             Meus
@@ -392,12 +395,12 @@ export function ChatSidebar() {
         </div>
 
         {/* Show Resolved Toggle */}
-        <div className="flex items-center justify-between mt-3 pt-3 border-t">
+        <div className="flex items-center justify-between mt-2 md:mt-3 pt-2 md:pt-3 border-t">
           <label
             htmlFor="showResolved"
-            className="text-sm text-muted-foreground cursor-pointer select-none flex items-center gap-2"
+            className="text-xs md:text-sm text-muted-foreground cursor-pointer select-none flex items-center gap-1.5 md:gap-2"
           >
-            <CheckSquare className="w-4 h-4" />
+            <CheckSquare className="w-3.5 h-3.5 md:w-4 md:h-4" />
             Mostrar resolvidas
           </label>
           <Switch
@@ -783,65 +786,65 @@ function TicketItem({ ticket, isSelected, onSelect }: TicketItemProps) {
   return (
     <button
       className={cn(
-        "w-full p-3 flex items-start gap-3 text-left hover:bg-muted/50 transition-colors",
+        "w-full p-2.5 md:p-3 flex items-start gap-2.5 md:gap-3 text-left hover:bg-muted/50 transition-colors active:bg-muted/70",
         isSelected && "bg-muted",
         hasUnread && !isSelected && "bg-primary/5 border-l-2 border-l-primary"
       )}
       onClick={onSelect}
     >
-      <div className="relative">
-        <Avatar className={cn(hasUnread && "ring-2 ring-primary ring-offset-2")}>
+      <div className="relative flex-shrink-0">
+        <Avatar className={cn("w-10 h-10 md:w-10 md:h-10", hasUnread && "ring-2 ring-primary ring-offset-2")}>
           <AvatarImage src={ticket.contact?.avatar} />
-          <AvatarFallback>{initials}</AvatarFallback>
+          <AvatarFallback className="text-sm">{initials}</AvatarFallback>
         </Avatar>
         {ticket.isAIHandled && (
-          <div className="absolute -bottom-1 -right-1 w-5 h-5 bg-purple-500 rounded-full flex items-center justify-center">
-            <Bot className="w-3 h-3 text-white" />
+          <div className="absolute -bottom-1 -right-1 w-4 h-4 md:w-5 md:h-5 bg-purple-500 rounded-full flex items-center justify-center">
+            <Bot className="w-2.5 h-2.5 md:w-3 md:h-3 text-white" />
           </div>
         )}
       </div>
 
       <div className="flex-1 min-w-0">
-        <div className="flex items-center justify-between mb-1">
-          <span className={cn("truncate", hasUnread ? "font-bold" : "font-medium")}>
+        <div className="flex items-center justify-between mb-0.5 md:mb-1">
+          <span className={cn("truncate text-sm md:text-base", hasUnread ? "font-bold" : "font-medium")}>
             {contactName}
           </span>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5 md:gap-2 flex-shrink-0">
             {hasUnread && (
-              <span className="flex items-center justify-center min-w-5 h-5 px-1.5 text-xs font-bold text-white bg-primary rounded-full">
+              <span className="flex items-center justify-center min-w-4 md:min-w-5 h-4 md:h-5 px-1 md:px-1.5 text-[10px] md:text-xs font-bold text-white bg-primary rounded-full">
                 {unreadCount > 99 ? "99+" : unreadCount}
               </span>
             )}
-            <span className="text-xs text-muted-foreground">
+            <span className="text-[10px] md:text-xs text-muted-foreground">
               {formatDate(ticket.updatedAt)}
             </span>
           </div>
         </div>
 
-        <div className="flex items-center gap-2 mb-1 flex-wrap">
+        <div className="flex items-center gap-1.5 md:gap-2 mb-0.5 md:mb-1 flex-wrap">
           <span
             className={cn(
-              "w-2 h-2 rounded-full flex-shrink-0",
+              "w-1.5 h-1.5 md:w-2 md:h-2 rounded-full flex-shrink-0",
               getStatusColor(ticket.status)
             )}
           />
           {ticket.department ? (
             <span
-              className="text-xs px-1.5 py-0.5 rounded"
+              className="text-[10px] md:text-xs px-1 md:px-1.5 py-0.5 rounded"
               style={{ backgroundColor: ticket.department.color + "20" }}
             >
               {ticket.department.name}
             </span>
           ) : (
             <span
-              className="text-xs px-1.5 py-0.5 rounded bg-amber-100 text-amber-800"
+              className="text-[10px] md:text-xs px-1 md:px-1.5 py-0.5 rounded bg-amber-100 text-amber-800"
             >
               Triagem
             </span>
           )}
           {ticket.assignedTo && (
-            <span className="text-xs px-1.5 py-0.5 rounded bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400 flex items-center gap-1">
-              <User className="w-3 h-3" />
+            <span className="text-[10px] md:text-xs px-1 md:px-1.5 py-0.5 rounded bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400 flex items-center gap-0.5 md:gap-1">
+              <User className="w-2.5 h-2.5 md:w-3 md:h-3" />
               {ticket.assignedTo.name?.split(" ")[0]}
             </span>
           )}
@@ -849,7 +852,7 @@ function TicketItem({ ticket, isSelected, onSelect }: TicketItemProps) {
 
         {lastMessage && (
           <p className={cn(
-            "text-sm truncate",
+            "text-xs md:text-sm truncate",
             hasUnread ? "text-foreground font-medium" : "text-muted-foreground"
           )}>
             {lastMessage.isFromMe && "Você: "}

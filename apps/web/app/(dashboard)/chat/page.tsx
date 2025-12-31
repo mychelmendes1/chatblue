@@ -7,6 +7,7 @@ import { ChatWindow } from "@/components/chat/chat-window";
 import { ContactInfo } from "@/components/chat/contact-info";
 import { useChatStore, type Ticket } from "@/stores/chat.store";
 import { api } from "@/lib/api";
+import { cn } from "@/lib/utils";
 
 function ChatPageContent() {
   const searchParams = useSearchParams();
@@ -14,6 +15,8 @@ function ChatPageContent() {
   const { selectedTicket, selectTicket, tickets, setTickets } = useChatStore();
   const [showContactInfo, setShowContactInfo] = useState(false);
   const [isLoadingTicket, setIsLoadingTicket] = useState(false);
+  // Mobile: track if we're viewing a conversation
+  const [mobileShowChat, setMobileShowChat] = useState(false);
 
   // Handle ticket URL parameter
   useEffect(() => {
@@ -27,6 +30,7 @@ function ChatPageContent() {
       
       if (existingTicket) {
         selectTicket(existingTicket);
+        setMobileShowChat(true);
         setIsLoadingTicket(false);
         // Clear the URL parameter
         router.replace("/chat", { scroll: false });
@@ -38,6 +42,7 @@ function ChatPageContent() {
             // Add to tickets list if not present
             setTickets([ticket, ...tickets.filter(t => t.id !== ticket.id)]);
             selectTicket(ticket);
+            setMobileShowChat(true);
             // Clear the URL parameter
             router.replace("/chat", { scroll: false });
           })
@@ -51,17 +56,41 @@ function ChatPageContent() {
     }
   }, [searchParams, selectedTicket?.id, tickets, selectTicket, setTickets, router]);
 
+  // When a ticket is selected (from sidebar), show chat on mobile
+  useEffect(() => {
+    if (selectedTicket) {
+      setMobileShowChat(true);
+    }
+  }, [selectedTicket?.id]);
+
+  // Handle back button on mobile
+  const handleMobileBack = () => {
+    setMobileShowChat(false);
+    selectTicket(null);
+  };
+
   return (
     <div className="flex h-full">
       {/* Chat Sidebar - Lista de conversas */}
-      <ChatSidebar />
+      {/* On mobile: hidden when viewing chat */}
+      <div className={cn(
+        "md:block",
+        mobileShowChat ? "hidden" : "block w-full"
+      )}>
+        <ChatSidebar />
+      </div>
 
       {/* Chat Window - Conversa principal */}
-      <div className="flex-1 flex flex-col">
+      {/* On mobile: full width when viewing chat */}
+      <div className={cn(
+        "flex-1 flex flex-col",
+        mobileShowChat ? "block" : "hidden md:flex"
+      )}>
         {selectedTicket ? (
           <ChatWindow
             ticket={selectedTicket}
             onShowContactInfo={() => setShowContactInfo(true)}
+            onMobileBack={handleMobileBack}
           />
         ) : (
           <div className="flex-1 flex items-center justify-center bg-muted/50">
