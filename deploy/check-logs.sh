@@ -40,3 +40,7 @@ echo "=========================================="
 echo "Conectando ao banco para verificar usuários..."
 docker exec chatblue_postgres psql -U chatblue -d chatblue -c "SELECT id, email, name, \"is_active\", \"company_id\", created_at FROM users ORDER BY created_at DESC LIMIT 10;" 2>/dev/null || echo "Erro ao conectar ao banco de dados"
 
+
+
+
+

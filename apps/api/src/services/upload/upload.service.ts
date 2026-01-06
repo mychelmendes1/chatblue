@@ -5,7 +5,7 @@ import { v4 as uuidv4 } from "uuid";
 import { logger } from "../../config/logger";
 
 // Ensure upload directories exist
-const uploadsDir = process.env.UPLOADS_DIR || "./uploads";
+const uploadsDir = process.env.UPLOADS_DIR || path.join(process.cwd(), 'apps', 'api', 'uploads');
 const tempDir = path.join(uploadsDir, "temp");
 const mediaDir = path.join(uploadsDir, "media");
 const documentsDir = path.join(uploadsDir, "documents");
@@ -60,10 +60,11 @@ const storage = multer.diskStorage({
   filename: (req, file, cb) => {
     const uniqueId = uuidv4();
     const ext = path.extname(file.originalname);
-    const safeName = file.originalname
+    const baseName = path.basename(file.originalname, ext);
+    const safeName = baseName
       .replace(/[^a-zA-Z0-9.-]/g, "_")
       .substring(0, 50);
-    cb(null, `${uniqueId}-${safeName}`);
+    cb(null, `${uniqueId}-${safeName}${ext}`);
   },
 });
 

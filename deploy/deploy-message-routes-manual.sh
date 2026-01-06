@@ -24,3 +24,7 @@ expect "# "
 send "cat > /opt/chatblue/app/apps/api/src/routes/message.routes.tmp.ts << 'ENDOFFILE'\r"
 expect ">"
 
+
+
+
+
