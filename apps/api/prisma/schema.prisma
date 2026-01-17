@@ -138,6 +138,8 @@ model Company {
   slaConfigs     SLAConfig[]
   knowledgeBase  KnowledgeBase[]
   faqs           FAQ[]
+  metricGoals    MetricGoal[]
+  metricAlerts   MetricAlert[]
 
   @@map("companies")
 }
@@ -167,6 +169,7 @@ model User {
   tickets          Ticket[]         @relation("AssignedTickets")
   messages         Message[]
   activities       Activity[]
+  metricGoals      MetricGoal[]
 
   @@map("users")
 }
@@ -215,6 +218,7 @@ model Department {
   slaConfig     SLAConfig?
   knowledgeBase KnowledgeBase[]
   faqs          FAQ[]
+  metricGoals   MetricGoal[]
 
   @@map("departments")
 }
@@ -326,6 +330,22 @@ model Ticket {
   rating        Int?    @map("rating") // 1-5 estrelas
   ratingComment String? @map("rating_comment")
   ratedAt       DateTime? @map("rated_at")
+
+  // NPS (Net Promoter Score) - 0 a 10
+  npsScore      Int?    @map("nps_score") // 0-10: 0-6 detratores, 7-8 neutros, 9-10 promotores
+  npsComment    String? @map("nps_comment")
+  npsRatedAt    DateTime? @map("nps_rated_at")
+
+  // Métricas de qualidade
+  isFirstContactResolution Boolean @default(false) @map("is_first_contact_resolution") // FCR
+  reopenCount   Int     @default(0) @map("reopen_count") // Quantidade de reaberturas
+  reopenedAt    DateTime? @map("reopened_at") // Última reabertura
+  abandonedAt   DateTime? @map("abandoned_at") // Quando foi abandonado na fila
+  wasAbandoned  Boolean @default(false) @map("was_abandoned") // Se foi abandonado
+
+  // Categoria/Motivo do contato (para análise)
+  contactReason String? @map("contact_reason")
+  resolution    String? @map("resolution") // Como foi resolvido
 
   isAIHandled     Boolean   @default(false) @map("is_ai_handled")
   aiTakeoverAt    DateTime? @map("ai_takeover_at")
@@ -574,4 +594,54 @@ model FAQ {
   @@index([companyId, isActive])
   @@index([departmentId, isActive])
   @@map("faqs")
+}
+
+/// Metas de Métricas
+model MetricGoal {
+  id        String   @id @default(cuid())
+  name      String
+  metric    String   // nps, slaCompliance, avgResponseTime, fcr, etc.
+  target    Float    // Valor alvo
+  period    String   @default("monthly") // daily, weekly, monthly, quarterly
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  companyId String  @map("company_id")
+  company   Company @relation(fields: [companyId], references: [id])
+
+  departmentId String?     @map("department_id")
+  department   Department? @relation(fields: [departmentId], references: [id])
+
+  userId String? @map("user_id")
+  user   User?   @relation(fields: [userId], references: [id])
+
+  @@map("metric_goals")
+}
+
+/// Alertas de Métricas
+model MetricAlert {
+  id          String   @id @default(cuid())
+  name        String
+  metric      String   // Métrica a monitorar
+  condition   String   // below, above, equals
+  threshold   Float    // Valor de threshold
+  isActive    Boolean  @default(true) @map("is_active")
+
+  // Notificações
+  notifyEmail    Boolean @default(true) @map("notify_email")
+  notifyInApp    Boolean @default(true) @map("notify_in_app")
+  notifyWebhook  String? @map("notify_webhook")
+
+  // Última vez que foi disparado
+  lastTriggeredAt DateTime? @map("last_triggered_at")
+  triggerCount    Int       @default(0) @map("trigger_count")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  companyId String  @map("company_id")
+  company   Company @relation(fields: [companyId], references: [id])
+
+  @@map("metric_alerts")
 }
