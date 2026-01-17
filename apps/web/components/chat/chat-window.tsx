@@ -43,6 +43,14 @@ import { cn, formatPhone, getStatusLabel } from "@/lib/utils";
 import { useChatStore } from "@/stores/chat.store";
 import { useSocket } from "@/components/providers/socket-provider";
 import { api } from "@/lib/api";
+import { TemplateSelector } from "./template-selector";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { useToast } from "@/components/ui/use-toast";
 
 interface User {
   id: string;
@@ -104,6 +112,7 @@ export function ChatWindow({ ticket, onShowContactInfo, onMobileBack }: ChatWind
   const { setMessages, addMessage, setLoadingMessages, markTicketAsRead } = useChatStore();
   const store = useChatStore.getState();
   const { socket } = useSocket();
+  const { toast } = useToast();
   
   // Debug: log when messages change
   useEffect(() => {
@@ -136,7 +145,12 @@ export function ChatWindow({ ticket, onShowContactInfo, onMobileBack }: ChatWind
     isOpen: boolean;
     hoursRemaining: number | null;
     requiresTemplate: boolean;
+    windowApplies: boolean; // true only for META_CLOUD connections
+    connectionType?: string;
   } | null>(null);
+
+  // Template selector state for sending templates from chat
+  const [showTemplateSelector, setShowTemplateSelector] = useState(false);
 
   const contactName = ticket.contact?.name || formatPhone(ticket.contact?.phone);
 
@@ -156,26 +170,29 @@ export function ChatWindow({ ticket, onShowContactInfo, onMobileBack }: ChatWind
   // Fetch messaging window status for Meta Cloud connections
   useEffect(() => {
     async function fetchMessagingWindow() {
-      if (!ticket.contact?.id) return;
-      
+      if (!ticket.contact?.id || !ticket.id) return;
+
       try {
+        // Pass ticketId to check connection type
         const response = await api.get<{
           isOpen: boolean;
           hoursRemaining: number | null;
           requiresTemplate: boolean;
-        }>(`/contacts/${ticket.contact.id}/messaging-window`);
+          windowApplies: boolean;
+          connectionType?: string;
+        }>(`/contacts/${ticket.contact.id}/messaging-window?ticketId=${ticket.id}`);
         setMessagingWindow(response.data);
       } catch (error) {
         // Silently fail - not critical
         console.debug("Could not fetch messaging window:", error);
       }
     }
-    
+
     fetchMessagingWindow();
     // Refresh every 5 minutes
     const interval = setInterval(fetchMessagingWindow, 5 * 60 * 1000);
     return () => clearInterval(interval);
-  }, [ticket.contact?.id]);
+  }, [ticket.contact?.id, ticket.id]);
 
   const scrollAreaRef = useRef<HTMLDivElement>(null);
   const [messagePage, setMessagePage] = useState(1);
@@ -699,6 +716,74 @@ export function ChatWindow({ ticket, onShowContactInfo, onMobileBack }: ChatWind
     }
   }, [showEmojiPicker]);
 
+  // Check if input should be blocked (META_CLOUD with closed window)
+  const shouldBlockInput = messagingWindow?.windowApplies && !messagingWindow?.isOpen;
+
+  // Handle sending template from chat window
+  async function handleSendTemplate(template: any, variables: Record<string, string>) {
+    if (!ticket.connectionId) return;
+
+    try {
+      // Build components array for the API
+      const templateVars = Object.keys(variables);
+
+      // Check if template uses named parameters (non-numeric variable names)
+      const isNamedParams = templateVars.length > 0 && templateVars.some(v => isNaN(parseInt(v)));
+
+      let bodyParameters;
+      if (isNamedParams) {
+        // Named parameters format for Meta API
+        bodyParameters = templateVars.map(v => ({
+          type: "text" as const,
+          parameter_name: v,
+          text: variables[v],
+        }));
+      } else {
+        // Positional parameters format (sorted by number)
+        const sortedVars = templateVars.sort((a, b) => parseInt(a) - parseInt(b));
+        bodyParameters = sortedVars.map(v => ({
+          type: "text" as const,
+          text: variables[v],
+        }));
+      }
+
+      const components = bodyParameters.length > 0 ? [{
+        type: "body" as const,
+        parameters: bodyParameters,
+      }] : [];
+
+      // Send template message
+      const response = await api.post("/messages/template", {
+        ticketId: ticket.id,
+        templateName: template.name,
+        languageCode: template.language,
+        components,
+      });
+
+      // Add message to chat
+      if (response.data) {
+        addMessage({
+          ...response.data,
+          ticketId: ticket.id,
+        });
+      }
+
+      toast({
+        title: "Template enviado",
+        description: "Mensagem de template enviada com sucesso",
+      });
+
+      setShowTemplateSelector(false);
+      setTimeout(() => scrollToBottom(false), 150);
+    } catch (error: any) {
+      toast({
+        title: "Erro ao enviar template",
+        description: error.response?.data?.message || error.message || "Falha ao enviar mensagem template",
+        variant: "destructive",
+      });
+    }
+  }
+
   async function handleTakeover() {
     try {
       await api.post(`/tickets/${ticket.id}/takeover`);
@@ -784,7 +869,8 @@ export function ChatWindow({ ticket, onShowContactInfo, onMobileBack }: ChatWind
                   <span className="hidden md:inline">IA</span>
                 </span>
               )}
-              {messagingWindow && (
+              {/* Only show messaging window indicator for META_CLOUD connections */}
+              {messagingWindow && messagingWindow.windowApplies && (
                 messagingWindow.isOpen ? (
                   <span className="flex items-center gap-1 text-[10px] md:text-xs bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400 px-1.5 md:px-2 py-0.5 rounded" title={`Janela de 24h aberta - ${messagingWindow.hoursRemaining}h restantes`}>
                     <Clock className="w-3 h-3" />
@@ -1054,9 +1140,36 @@ export function ChatWindow({ ticket, onShowContactInfo, onMobileBack }: ChatWind
           className="hidden"
         />
 
+        {/* Messaging window closed alert - only for META_CLOUD */}
+        {shouldBlockInput && (
+          <div className="flex items-center gap-3 px-4 py-3 bg-amber-50 dark:bg-amber-950/30 border-t border-amber-200 dark:border-amber-800">
+            <AlertCircle className="w-5 h-5 text-amber-600 flex-shrink-0" />
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium text-amber-800 dark:text-amber-200">
+                Janela de 24h expirada
+              </p>
+              <p className="text-xs text-amber-600 dark:text-amber-400">
+                Use um template para reiniciar a conversa
+              </p>
+            </div>
+            <Button
+              type="button"
+              size="sm"
+              onClick={() => setShowTemplateSelector(true)}
+              className="flex-shrink-0"
+            >
+              <FileText className="w-4 h-4 mr-2" />
+              Enviar Template
+            </Button>
+          </div>
+        )}
+
         <form
           onSubmit={handleSendMessage}
-          className="flex items-center gap-1.5 md:gap-2 p-2 md:p-3 bg-card relative"
+          className={cn(
+            "flex items-center gap-1.5 md:gap-2 p-2 md:p-3 bg-card relative",
+            shouldBlockInput && "opacity-50 pointer-events-none"
+          )}
         >
           {/* Emoji Picker */}
           {showEmojiPicker && (
@@ -1169,6 +1282,25 @@ export function ChatWindow({ ticket, onShowContactInfo, onMobileBack }: ChatWind
           </Button>
         </form>
       </div>
+
+      {/* Template Selector Dialog - for META_CLOUD when window is closed */}
+      <Dialog open={showTemplateSelector} onOpenChange={setShowTemplateSelector}>
+        <DialogContent className="max-w-lg max-h-[80vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <FileText className="w-5 h-5" />
+              Enviar Template
+            </DialogTitle>
+          </DialogHeader>
+          {ticket.connectionId && (
+            <TemplateSelector
+              connectionId={ticket.connectionId}
+              onSelect={handleSendTemplate}
+              onCancel={() => setShowTemplateSelector(false)}
+            />
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

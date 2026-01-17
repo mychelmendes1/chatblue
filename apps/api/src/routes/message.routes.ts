@@ -112,6 +112,35 @@ router.get('/ticket/:ticketId', authenticate, ensureTenant, async (req, res, nex
   }
 });
 
+// Helper function to check if 24h messaging window is open for META_CLOUD
+async function checkMessagingWindow(contactId: string, connectionType: string): Promise<{ isOpen: boolean; hoursRemaining: number | null }> {
+  // Baileys doesn't have window restrictions
+  if (connectionType !== 'META_CLOUD') {
+    return { isOpen: true, hoursRemaining: null };
+  }
+
+  const contact = await prisma.contact.findUnique({
+    where: { id: contactId },
+    select: { lastMessageAt: true },
+  });
+
+  if (!contact || !contact.lastMessageAt) {
+    return { isOpen: false, hoursRemaining: null };
+  }
+
+  const WINDOW_DURATION_MS = 24 * 60 * 60 * 1000; // 24 hours
+  const now = new Date();
+  const windowEnd = new Date(contact.lastMessageAt.getTime() + WINDOW_DURATION_MS);
+  const isOpen = windowEnd > now;
+
+  if (isOpen) {
+    const hoursRemaining = Math.max(0, Math.round((windowEnd.getTime() - now.getTime()) / (60 * 60 * 1000)));
+    return { isOpen: true, hoursRemaining };
+  }
+
+  return { isOpen: false, hoursRemaining: null };
+}
+
 // Send message
 router.post('/ticket/:ticketId', authenticate, ensureTenant, async (req, res, next) => {
   try {
@@ -136,6 +165,22 @@ router.post('/ticket/:ticketId', authenticate, ensureTenant, async (req, res, ne
 
     if (!ticket) {
       throw new NotFoundError('Ticket not found');
+    }
+
+    // For META_CLOUD connections, check if 24h messaging window is open
+    // Only check for non-internal messages (internal messages don't go to WhatsApp)
+    if (!isInternal && ticket.connection.type === 'META_CLOUD') {
+      const windowStatus = await checkMessagingWindow(ticket.contactId, ticket.connection.type);
+
+      if (!windowStatus.isOpen) {
+        return res.status(400).json({
+          error: 'Messaging window closed',
+          code: 'MESSAGING_WINDOW_CLOSED',
+          message: 'A janela de 24 horas expirou. Use um template de mensagem para reiniciar a conversa.',
+          requiresTemplate: true,
+          connectionType: 'META_CLOUD',
+        });
+      }
     }
 
     // Get sender name for formatting
