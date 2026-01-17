@@ -34,7 +34,9 @@ import {
   Square,
   FileText,
   ArrowLeft,
+  Sparkles,
 } from "lucide-react";
+import { AIResponsePreview, AIProcessingIndicator, AICategorySelector } from "./ai-response-preview";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -131,6 +133,29 @@ export function ChatWindow({ ticket, onShowContactInfo, onMobileBack }: ChatWind
   // Reply state
   const [replyingTo, setReplyingTo] = useState<any>(null);
 
+  // AI Assistant states
+  const [isAIProcessing, setIsAIProcessing] = useState(false);
+  const [aiResponse, setAiResponse] = useState<{
+    queryId: string;
+    response: string;
+    category: string;
+    confidence: number;
+    sources: any[];
+    processingTime: number;
+    hasKnowledgeGap: boolean;
+    gapDescription?: string;
+  } | null>(null);
+  const [showAIPreview, setShowAIPreview] = useState(false);
+  const [aiCategories, setAiCategories] = useState<Array<{
+    category: string;
+    name: string;
+    description?: string;
+    icon?: string;
+    color?: string;
+  }>>([]);
+  const [selectedAICategory, setSelectedAICategory] = useState<string | null>(null);
+  const [showAICategorySelector, setShowAICategorySelector] = useState(false);
+
   // Messaging window state (for Meta Cloud API 24h rule)
   const [messagingWindow, setMessagingWindow] = useState<{
     isOpen: boolean;
@@ -151,6 +176,25 @@ export function ChatWindow({ ticket, onShowContactInfo, onMobileBack }: ChatWind
       }
     }
     fetchUsers();
+  }, []);
+
+  // Fetch AI categories on mount
+  useEffect(() => {
+    async function fetchAICategories() {
+      try {
+        const response = await api.get<Array<{
+          category: string;
+          name: string;
+          description?: string;
+          icon?: string;
+          color?: string;
+        }>>("/ai-assistant/categories");
+        setAiCategories(response.data);
+      } catch (error) {
+        console.debug("Could not fetch AI categories:", error);
+      }
+    }
+    fetchAICategories();
   }, []);
 
   // Fetch messaging window status for Meta Cloud connections
@@ -374,12 +418,25 @@ export function ChatWindow({ ticket, onShowContactInfo, onMobileBack }: ChatWind
     const value = e.target.value;
     setNewMessage(value);
 
+    // Check for @ia trigger (AI Assistant)
+    const iaMatch = value.match(/@ia\s+(.+)/i);
+    if (iaMatch) {
+      // Don't show mentions when using @ia
+      setShowMentions(false);
+      return;
+    }
+
     // Check for @ mention trigger
     const lastAtIndex = value.lastIndexOf("@");
     if (lastAtIndex !== -1) {
       const textAfterAt = value.substring(lastAtIndex + 1);
       // Check if there's no space after @, meaning user is typing a mention
       if (!textAfterAt.includes(" ")) {
+        // Don't show mentions if it's @ia
+        if (textAfterAt.toLowerCase().startsWith("ia")) {
+          setShowMentions(false);
+          return;
+        }
         setMentionFilter(textAfterAt.toLowerCase());
         setShowMentions(true);
         setIsInternalMode(true);
@@ -413,16 +470,102 @@ export function ChatWindow({ ticket, onShowContactInfo, onMobileBack }: ChatWind
       !selectedMentions.some((m) => m.id === user.id)
   );
 
+  // Handle AI query - called when user types @ia followed by a question
+  async function handleAIQuery(query: string) {
+    setIsAIProcessing(true);
+    setAiResponse(null);
+
+    try {
+      const response = await api.post<{
+        queryId: string;
+        response: string;
+        category: string;
+        confidence: number;
+        sources: any[];
+        processingTime: number;
+        hasKnowledgeGap: boolean;
+        gapDescription?: string;
+      }>("/ai-assistant/query", {
+        query: query,
+        ticketId: ticket.id,
+        selectedCategory: selectedAICategory,
+      });
+
+      setAiResponse(response.data);
+      setShowAIPreview(true);
+    } catch (error: any) {
+      console.error("Failed to process AI query:", error);
+      alert(error?.response?.data?.error || "Erro ao processar consulta à IA. Tente novamente.");
+    } finally {
+      setIsAIProcessing(false);
+    }
+  }
+
+  // Cancel AI processing
+  function handleCancelAIProcessing() {
+    setIsAIProcessing(false);
+    setAiResponse(null);
+  }
+
+  // Send AI response as message
+  async function handleAISend(message: string, wasEdited: boolean) {
+    setIsSending(true);
+    try {
+      const response = await api.post<any>(`/messages/ticket/${ticket.id}`, {
+        content: message,
+        type: "TEXT",
+        isInternal: false,
+        isAIGenerated: true,
+        aiQueryId: aiResponse?.queryId,
+      });
+      // Ensure message has ticketId before adding
+      const messageWithTicketId = {
+        ...response.data,
+        ticketId: ticket.id,
+      };
+      addMessage(messageWithTicketId);
+      setNewMessage("");
+      setAiResponse(null);
+      setShowAIPreview(false);
+      setSelectedAICategory(null);
+      // Scroll after sending
+      setTimeout(() => scrollToBottom(false), 150);
+    } catch (error) {
+      console.error("Failed to send AI response:", error);
+      alert("Erro ao enviar mensagem. Tente novamente.");
+    } finally {
+      setIsSending(false);
+    }
+  }
+
+  // Discard AI response
+  function handleAIDiscard() {
+    setAiResponse(null);
+    setShowAIPreview(false);
+    setNewMessage("");
+    setSelectedAICategory(null);
+  }
+
   async function handleSendMessage(e: React.FormEvent) {
     e.preventDefault();
-    
+
     // If there's a file selected, send it
     if (selectedFile) {
       await handleSendFile();
       return;
     }
-    
+
     if (!newMessage.trim() || isSending) return;
+
+    // Check for @ia query pattern
+    const iaMatch = newMessage.match(/@ia\s+(.+)/i);
+    if (iaMatch) {
+      const query = iaMatch[1].trim();
+      if (query) {
+        await handleAIQuery(query);
+        return;
+      }
+    }
 
     setIsSending(true);
     try {
@@ -997,6 +1140,21 @@ export function ChatWindow({ ticket, onShowContactInfo, onMobileBack }: ChatWind
           </div>
         )}
 
+        {/* AI Processing Indicator */}
+        <AIProcessingIndicator
+          isVisible={isAIProcessing}
+          onCancel={handleCancelAIProcessing}
+        />
+
+        {/* AI Category Selector */}
+        <AICategorySelector
+          categories={aiCategories}
+          selectedCategory={selectedAICategory}
+          onSelect={setSelectedAICategory}
+          isVisible={showAICategorySelector}
+          onClose={() => setShowAICategorySelector(false)}
+        />
+
         {/* Internal mode indicator */}
         {isInternalMode && (
           <div className="flex items-center gap-2 px-4 py-2 bg-amber-50 dark:bg-amber-900/20 border-t border-amber-200 dark:border-amber-800 text-amber-700 dark:text-amber-400 text-sm">
@@ -1130,9 +1288,9 @@ export function ChatWindow({ ticket, onShowContactInfo, onMobileBack }: ChatWind
           >
             <Paperclip className="w-4 h-4 md:w-5 md:h-5" />
           </Button>
-          <Button 
-            type="button" 
-            variant={isInternalMode ? "default" : "ghost"} 
+          <Button
+            type="button"
+            variant={isInternalMode ? "default" : "ghost"}
             size="icon"
             className="h-8 w-8 md:h-10 md:w-10 flex-shrink-0 hidden md:flex"
             onClick={() => {
@@ -1148,6 +1306,31 @@ export function ChatWindow({ ticket, onShowContactInfo, onMobileBack }: ChatWind
           >
             <AtSign className="w-4 h-4 md:w-5 md:h-5" />
           </Button>
+          {/* AI Assistant button */}
+          <Button
+            type="button"
+            variant={selectedAICategory ? "default" : "ghost"}
+            size="icon"
+            className={cn(
+              "h-8 w-8 md:h-10 md:w-10 flex-shrink-0",
+              selectedAICategory && "bg-purple-600 hover:bg-purple-700"
+            )}
+            onClick={() => {
+              if (aiCategories.length > 0) {
+                setShowAICategorySelector(!showAICategorySelector);
+              } else {
+                // If no categories, just add @ia to input
+                setNewMessage(newMessage + "@ia ");
+                inputRef.current?.focus();
+              }
+            }}
+            title="Assistente IA - digite @ia seguido da pergunta"
+          >
+            <Sparkles className={cn(
+              "w-4 h-4 md:w-5 md:h-5",
+              selectedAICategory && "text-white"
+            )} />
+          </Button>
           <Input
             ref={inputRef}
             placeholder={isInternalMode ? "Interna... @mencione" : "Mensagem..."}
@@ -1155,13 +1338,13 @@ export function ChatWindow({ ticket, onShowContactInfo, onMobileBack }: ChatWind
             onChange={handleMessageChange}
             className={cn("flex-1 min-w-0 h-8 md:h-10 text-sm md:text-base", isInternalMode && "border-amber-400 focus-visible:ring-amber-400")}
           />
-          <Button 
-            type="submit" 
-            size="icon" 
+          <Button
+            type="submit"
+            size="icon"
             className="h-8 w-8 md:h-10 md:w-10 flex-shrink-0"
-            disabled={(!newMessage.trim() && !selectedFile) || isSending || isUploading}
+            disabled={(!newMessage.trim() && !selectedFile) || isSending || isUploading || isAIProcessing}
           >
-            {isUploading ? (
+            {isUploading || isAIProcessing ? (
               <Loader2 className="w-4 h-4 md:w-5 md:h-5 animate-spin" />
             ) : (
               <Send className="w-4 h-4 md:w-5 md:h-5" />
@@ -1169,6 +1352,24 @@ export function ChatWindow({ ticket, onShowContactInfo, onMobileBack }: ChatWind
           </Button>
         </form>
       </div>
+
+      {/* AI Response Preview Modal */}
+      {aiResponse && (
+        <AIResponsePreview
+          isOpen={showAIPreview}
+          onClose={() => setShowAIPreview(false)}
+          queryId={aiResponse.queryId}
+          response={aiResponse.response}
+          category={aiResponse.category}
+          confidence={aiResponse.confidence}
+          sources={aiResponse.sources}
+          processingTime={aiResponse.processingTime}
+          hasKnowledgeGap={aiResponse.hasKnowledgeGap}
+          gapDescription={aiResponse.gapDescription}
+          onSend={handleAISend}
+          onDiscard={handleAIDiscard}
+        />
+      )}
     </div>
   );
 }
