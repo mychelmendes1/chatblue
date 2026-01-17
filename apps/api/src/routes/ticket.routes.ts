@@ -143,6 +143,14 @@ router.get('/', authenticate, ensureTenant, async (req, res, next) => {
             color: true,
           },
         },
+        connection: {
+          select: {
+            id: true,
+            name: true,
+            type: true,
+            instagramUsername: true,
+          },
+        },
         messages: {
           take: 1,
           orderBy: { createdAt: 'desc' },
