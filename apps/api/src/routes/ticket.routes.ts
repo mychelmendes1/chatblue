@@ -27,6 +27,7 @@ router.get('/', authenticate, ensureTenant, async (req, res, next) => {
       isAIHandled,
       search,
       hideResolved,
+      mentionedUserId,
       page = '1',
       limit = '20',
     } = req.query;
@@ -64,6 +65,88 @@ router.get('/', authenticate, ensureTenant, async (req, res, next) => {
       }),
     };
 
+    // If filtering by mentions, we need to find tickets with active mentions
+    // "Active mentions" = mentions made AFTER the current conversation started
+    // Current conversation starts when: ticket was created OR was last reopened
+    let ticketIdsWithActiveMentions: string[] | null = null;
+
+    if (mentionedUserId) {
+      // First, get all active tickets (not RESOLVED/CLOSED) with mentions of this user
+      const ticketsWithMentions = await prisma.ticket.findMany({
+        where: {
+          companyId: req.user!.companyId,
+          status: { notIn: ['RESOLVED', 'CLOSED'] },
+        },
+        select: {
+          id: true,
+          createdAt: true,
+          messages: {
+            where: {
+              mentionedUserIds: { has: mentionedUserId as string },
+            },
+            select: {
+              id: true,
+              createdAt: true,
+            },
+            orderBy: { createdAt: 'asc' },
+          },
+        },
+      });
+
+      // For each ticket, find when the current conversation started
+      // by looking for the last SYSTEM message with "reaberto" or "Atendimento iniciado"
+      const validTicketIds: string[] = [];
+
+      for (const ticket of ticketsWithMentions) {
+        if (ticket.messages.length === 0) continue;
+
+        // Find the last "reopen" or "start" system message to determine conversation start
+        const systemMessages = await prisma.message.findMany({
+          where: {
+            ticketId: ticket.id,
+            type: 'SYSTEM',
+            OR: [
+              { content: { contains: 'reaberto' } },
+              { content: { contains: 'Atendimento iniciado' } },
+              { content: { contains: 'assumido por' } },
+            ],
+          },
+          orderBy: { createdAt: 'desc' },
+          take: 1,
+          select: { createdAt: true },
+        });
+
+        // Conversation start is either the last system message or the ticket creation
+        const conversationStartDate = systemMessages.length > 0
+          ? systemMessages[0].createdAt
+          : ticket.createdAt;
+
+        // Check if any mention was made after the conversation started
+        const hasActiveMention = ticket.messages.some(
+          msg => new Date(msg.createdAt) >= new Date(conversationStartDate)
+        );
+
+        if (hasActiveMention) {
+          validTicketIds.push(ticket.id);
+        }
+      }
+
+      ticketIdsWithActiveMentions = validTicketIds;
+
+      // If no tickets with active mentions, return empty result
+      if (ticketIdsWithActiveMentions.length === 0) {
+        return res.json({
+          tickets: [],
+          pagination: {
+            page: parseInt(page as string),
+            limit: parseInt(limit as string),
+            total: 0,
+            pages: 0,
+          },
+        });
+      }
+    }
+
     // Build search filter
     const searchConditions: any[] = [];
     if (search) {
@@ -75,7 +158,11 @@ router.get('/', authenticate, ensureTenant, async (req, res, next) => {
     }
 
     // Non-admins can only see tickets from their departments or assigned to them
-    const where: any = { ...baseWhere };
+    const where: any = {
+      ...baseWhere,
+      // Add mention filter if specified
+      ...(ticketIdsWithActiveMentions && { id: { in: ticketIdsWithActiveMentions } }),
+    };
     
     if (!['SUPER_ADMIN', 'ADMIN'].includes(req.user!.role)) {
       const visibilityConditions: any[] = [

@@ -116,6 +116,7 @@ export function ChatSidebar() {
       if (filters.status) params.set("status", filters.status);
       if (filters.departmentId) params.set("departmentId", filters.departmentId);
       if (filters.assignedToId) params.set("assignedToId", filters.assignedToId);
+      if (filters.mentionedUserId) params.set("mentionedUserId", filters.mentionedUserId);
       if (search) params.set("search", search);
       if (!showResolved) params.set("hideResolved", "true");
 
@@ -367,30 +368,38 @@ export function ChatSidebar() {
         </form>
 
         {/* Quick Filters */}
-        <div className="flex gap-1.5 md:gap-2 mt-2 md:mt-3">
+        <div className="flex gap-1.5 md:gap-2 mt-2 md:mt-3 flex-wrap">
           <Button
-            variant={!filters.status && !filters.assignedToId ? "default" : "outline"}
+            variant={!filters.status && !filters.assignedToId && !filters.mentionedUserId ? "default" : "outline"}
             size="sm"
             className="text-xs md:text-sm px-2 md:px-3 h-7 md:h-8"
-            onClick={() => setFilters({ status: undefined, assignedToId: undefined })}
+            onClick={() => setFilters({ status: undefined, assignedToId: undefined, mentionedUserId: undefined })}
           >
             Todos
           </Button>
           <Button
-            variant={filters.status === "PENDING" && !filters.assignedToId ? "default" : "outline"}
+            variant={filters.status === "PENDING" && !filters.assignedToId && !filters.mentionedUserId ? "default" : "outline"}
             size="sm"
             className="text-xs md:text-sm px-2 md:px-3 h-7 md:h-8"
-            onClick={() => setFilters({ status: "PENDING", assignedToId: undefined })}
+            onClick={() => setFilters({ status: "PENDING", assignedToId: undefined, mentionedUserId: undefined })}
           >
             Fila
           </Button>
           <Button
-            variant={filters.assignedToId === user?.id ? "default" : "outline"}
+            variant={filters.assignedToId === user?.id && !filters.mentionedUserId ? "default" : "outline"}
             size="sm"
             className="text-xs md:text-sm px-2 md:px-3 h-7 md:h-8"
-            onClick={() => setFilters({ status: undefined, assignedToId: user?.id })}
+            onClick={() => setFilters({ status: undefined, assignedToId: user?.id, mentionedUserId: undefined })}
           >
             Meus
+          </Button>
+          <Button
+            variant={filters.mentionedUserId === user?.id ? "default" : "outline"}
+            size="sm"
+            className="text-xs md:text-sm px-2 md:px-3 h-7 md:h-8"
+            onClick={() => setFilters({ status: undefined, assignedToId: undefined, mentionedUserId: user?.id })}
+          >
+            @ Menções
           </Button>
         </div>
 
