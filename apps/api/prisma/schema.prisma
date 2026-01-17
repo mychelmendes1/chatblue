@@ -326,6 +326,7 @@ model Ticket {
   rating        Int?    @map("rating") // 1-5 estrelas
   ratingComment String? @map("rating_comment")
   ratedAt       DateTime? @map("rated_at")
+  ratingToken   String? @unique @map("rating_token") // Token único para link de avaliação
 
   isAIHandled     Boolean   @default(false) @map("is_ai_handled")
   aiTakeoverAt    DateTime? @map("ai_takeover_at")

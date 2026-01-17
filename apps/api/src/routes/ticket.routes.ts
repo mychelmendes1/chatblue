@@ -1,11 +1,13 @@
 import { Router } from 'express';
 import { z } from 'zod';
+import { randomUUID } from 'crypto';
 import { prisma } from '../config/database.js';
 import { authenticate } from '../middlewares/auth.middleware.js';
 import { ensureTenant } from '../middlewares/tenant.middleware.js';
 import { NotFoundError, ForbiddenError } from '../middlewares/error.middleware.js';
 import { generateProtocol } from '../utils/protocol.js';
 import { logger } from '../config/logger.js';
+import { WhatsAppService } from '../services/whatsapp/whatsapp.service.js';
 
 const router = Router();
 
@@ -802,12 +804,19 @@ router.post('/:id/resolve', authenticate, ensureTenant, async (req, res, next) =
       summary = 'Atendimento resolvido.';
     }
 
-    // Update ticket
+    // Generate rating token for NPS survey
+    const ratingToken = randomUUID();
+
+    // Update ticket with resolved status and rating token
     const updatedTicket = await prisma.ticket.update({
       where: { id: ticket.id },
       data: {
         status: 'RESOLVED',
         resolvedAt: new Date(),
+        ratingToken,
+      },
+      include: {
+        connection: true,
       },
     });
 
@@ -834,6 +843,39 @@ router.post('/:id/resolve', authenticate, ensureTenant, async (req, res, next) =
         metadata: { summary },
       },
     });
+
+    // Send NPS survey message via WhatsApp
+    try {
+      const frontendUrl = process.env.FRONTEND_URL?.split(',')[0] || 'http://localhost:3000';
+      const ratingUrl = `${frontendUrl}/rate/${ratingToken}`;
+      const contactName = ticket.contact?.name ? ticket.contact.name.split(' ')[0] : '';
+
+      const npsMessage = contactName
+        ? `Ola ${contactName}! Seu atendimento foi finalizado. Gostaríamos de saber sua opiniao!\n\nAvalie nosso atendimento de 1 a 5 estrelas:\n${ratingUrl}`
+        : `Seu atendimento foi finalizado. Gostaríamos de saber sua opiniao!\n\nAvalie nosso atendimento de 1 a 5 estrelas:\n${ratingUrl}`;
+
+      const whatsappService = new WhatsAppService(updatedTicket.connection);
+      const result = await whatsappService.sendMessage(ticket.contact.phone, npsMessage);
+
+      // Save the NPS message to database
+      await prisma.message.create({
+        data: {
+          wamid: result.messageId,
+          type: 'TEXT',
+          content: npsMessage,
+          isFromMe: true,
+          status: 'SENT',
+          sentAt: new Date(),
+          ticketId: ticket.id,
+          connectionId: ticket.connectionId,
+        },
+      });
+
+      logger.info(`NPS survey sent for ticket ${ticket.protocol}`);
+    } catch (npsError) {
+      // Don't fail the resolve if NPS fails
+      logger.error('Failed to send NPS survey:', npsError);
+    }
 
     // Emit socket events
     const io = req.app.get('io');
