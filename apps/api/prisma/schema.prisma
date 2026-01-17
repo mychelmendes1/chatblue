@@ -100,6 +100,38 @@ enum ActivityType {
   SLA_BREACH
   CONTACT_UPDATED
   NOTE_ADDED
+  AI_ASSISTANT_QUERY
+  AI_SUGGESTION_USED
+  AI_SUGGESTION_EDITED
+  AI_SUGGESTION_DISCARDED
+}
+
+// AI Data Source Types
+enum AIDataSourceType {
+  INTERNAL       // Base interna do sistema
+  NOTION         // Integração Notion
+  GOOGLE_DRIVE   // Google Drive
+  CONFLUENCE     // Atlassian Confluence
+  SHAREPOINT     // Microsoft SharePoint
+  EXTERNAL_API   // APIs externas customizadas
+  WEBSITE        // Web scraping
+}
+
+// AI Query Status
+enum AIQueryStatus {
+  PROCESSING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+// AI Document Status
+enum AIDocumentStatus {
+  PENDING        // Aguardando indexação
+  INDEXING       // Em processo de indexação
+  INDEXED        // Indexado com sucesso
+  FAILED         // Falha na indexação
+  OUTDATED       // Precisa reindexar
 }
 
 enum UserCompanyStatus {
@@ -139,6 +171,10 @@ model Company {
   knowledgeBase  KnowledgeBase[]
   faqs           FAQ[]
 
+  // AI Assistant relations
+  aiDataSources  AIDataSource[]
+  aiAgentConfigs AIAgentConfig[]
+
   @@map("companies")
 }
 
@@ -167,6 +203,9 @@ model User {
   tickets          Ticket[]         @relation("AssignedTickets")
   messages         Message[]
   activities       Activity[]
+
+  // AI Assistant relations
+  aiQueries AIAssistantQuery[]
 
   @@map("users")
 }
@@ -215,6 +254,9 @@ model Department {
   slaConfig     SLAConfig?
   knowledgeBase KnowledgeBase[]
   faqs          FAQ[]
+
+  // AI Assistant relations
+  aiDocuments AIDocument[]
 
   @@map("departments")
 }
@@ -359,6 +401,9 @@ model Ticket {
   messages   Message[]
   transfers  TicketTransfer[]
   activities Activity[]
+
+  // AI Assistant relations
+  aiQueries AIAssistantQuery[]
 
   @@index([companyId, status])
   @@index([assignedToId, status])
@@ -575,4 +620,362 @@ model FAQ {
   @@index([companyId, isActive])
   @@index([departmentId, isActive])
   @@map("faqs")
+}
+
+// ============================================
+// AI ASSISTANT MODELS
+// ============================================
+
+/// Fonte de Dados para IA (Notion, Google Drive, Confluence, etc)
+model AIDataSource {
+  id          String           @id @default(cuid())
+  name        String           // "Produtos", "Políticas", "Procedimentos"
+  type        AIDataSourceType
+  description String?
+
+  // Configuração específica por tipo (JSON)
+  // Notion: { databaseId, titleProperty, contentProperty, filters }
+  // Google Drive: { folderId, credentials }
+  // Confluence: { spaceKey, baseUrl, credentials }
+  // External API: { url, headers, method, bodyTemplate }
+  config Json @default("{}")
+
+  // Organização
+  category String?  // "vendas", "suporte", "financeiro", "produtos"
+  tags     String[]
+  priority Int      @default(0) // Ordem de busca (maior = prioridade maior)
+
+  // Ícone e cor para UI
+  icon  String? // Nome do ícone Lucide
+  color String? // Cor hexadecimal
+
+  // Controle de sincronização
+  syncEnabled   Boolean   @default(true) @map("sync_enabled")
+  syncInterval  Int       @default(60) @map("sync_interval") // minutos
+  lastSyncAt    DateTime? @map("last_sync_at")
+  lastSyncError String?   @map("last_sync_error")
+
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  companyId String  @map("company_id")
+  company   Company @relation(fields: [companyId], references: [id])
+
+  documents AIDocument[]
+
+  // Relação com IAs que usam esta fonte
+  agentConfigs AIAgentDataSource[]
+
+  @@index([companyId, isActive])
+  @@index([companyId, type])
+  @@map("ai_data_sources")
+}
+
+/// Documento indexado para busca semântica
+model AIDocument {
+  id      String  @id @default(cuid())
+  title   String
+  content String  @db.Text
+  summary String? @db.Text // Resumo gerado por IA para busca rápida
+
+  // Metadados para organização e busca
+  category String?
+  tags     String[]
+  keywords String[] // Palavras-chave extraídas automaticamente
+
+  // Referência externa (para sync)
+  externalId  String? @map("external_id") // ID no Notion, Google Drive, etc
+  externalUrl String? @map("external_url") // Link para documento original
+  checksum    String? // Hash do conteúdo para detectar mudanças
+
+  // Embedding para busca semântica (vetor de 1536 dimensões para OpenAI, 1024 para Anthropic)
+  embedding     Float[] // Vetor de embedding
+  embeddingModel String? @map("embedding_model") // Modelo usado para gerar embedding
+
+  // Status de indexação
+  status         AIDocumentStatus @default(PENDING)
+  indexedAt      DateTime?        @map("indexed_at")
+  indexError     String?          @map("index_error")
+  tokensCount    Int?             @map("tokens_count") // Quantidade de tokens do documento
+
+  dataSourceId String       @map("data_source_id")
+  dataSource   AIDataSource @relation(fields: [dataSourceId], references: [id], onDelete: Cascade)
+
+  departmentId String?     @map("department_id")
+  department   Department? @relation(fields: [departmentId], references: [id])
+
+  companyId String @map("company_id")
+
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  // Uso nos queries
+  queryReferences AIQuerySource[]
+
+  @@index([companyId, isActive, status])
+  @@index([dataSourceId])
+  @@index([externalId])
+  @@map("ai_documents")
+}
+
+/// Configuração de IA por Categoria
+model AIAgentConfig {
+  id   String @id @default(cuid())
+  name String // "IA de Vendas", "IA de Suporte", "IA Financeira"
+
+  // Categoria que esta IA atende
+  category    String  // "vendas", "suporte", "financeiro", "produtos", "geral"
+  description String?
+
+  // Prompts específicos
+  systemPrompt String @db.Text @map("system_prompt")
+
+  // Configuração do modelo
+  provider    String // openai, anthropic
+  model       String // gpt-4o, claude-sonnet-4
+  temperature Float  @default(0.7)
+  maxTokens   Int    @default(1500) @map("max_tokens")
+
+  // Personalidade
+  tone  String? // friendly, formal, technical, empathetic
+  style String? // concise, detailed, conversational
+
+  // Regras e restrições (JSON)
+  // { maxResponseLength, forbiddenTopics, requiredDisclaimer, etc }
+  rules Json @default("{}")
+
+  // Keywords que ativam esta IA (para roteamento automático)
+  triggerKeywords String[] @map("trigger_keywords")
+
+  // Prioridade (maior = escolhida primeiro se houver empate)
+  priority Int @default(0)
+
+  // Ícone e cor para UI
+  icon  String? // Nome do ícone Lucide
+  color String? // Cor hexadecimal
+
+  isActive  Boolean  @default(true) @map("is_active")
+  isDefault Boolean  @default(false) @map("is_default") // IA padrão quando nenhuma categoria match
+
+  companyId String  @map("company_id")
+  company   Company @relation(fields: [companyId], references: [id])
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  // Fontes de dados que esta IA pode consultar
+  dataSources AIAgentDataSource[]
+
+  // Queries processadas por esta IA
+  queries AIAssistantQuery[]
+
+  @@unique([companyId, category])
+  @@index([companyId, isActive])
+  @@map("ai_agent_configs")
+}
+
+/// Relação N:N entre AIAgentConfig e AIDataSource
+model AIAgentDataSource {
+  id String @id @default(cuid())
+
+  agentConfigId String        @map("agent_config_id")
+  agentConfig   AIAgentConfig @relation(fields: [agentConfigId], references: [id], onDelete: Cascade)
+
+  dataSourceId String       @map("data_source_id")
+  dataSource   AIDataSource @relation(fields: [dataSourceId], references: [id], onDelete: Cascade)
+
+  // Peso/prioridade desta fonte para este agente
+  weight Int @default(1)
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@unique([agentConfigId, dataSourceId])
+  @@map("ai_agent_data_sources")
+}
+
+/// Histórico de Consultas @ia
+model AIAssistantQuery {
+  id String @id @default(cuid())
+
+  // Query original
+  query   String  @db.Text // Pergunta do atendente
+  context String? @db.Text // Contexto da conversa (últimas mensagens)
+
+  // Resposta gerada
+  response       String  @db.Text // Resposta gerada pela IA
+  editedResponse String? @db.Text @map("edited_response") // Resposta após edição do atendente
+
+  // Categoria detectada
+  detectedCategory String? @map("detected_category")
+  categoryConfidence Float? @map("category_confidence")
+
+  // Status do processamento
+  status AIQueryStatus @default(PROCESSING)
+
+  // Métricas de performance
+  processingTime  Int? @map("processing_time") // ms
+  tokensInput     Int? @map("tokens_input")
+  tokensOutput    Int? @map("tokens_output")
+  embeddingTime   Int? @map("embedding_time") // ms para gerar embedding da query
+  searchTime      Int? @map("search_time") // ms para buscar documentos
+
+  // Uso e feedback
+  wasUsed        Boolean   @default(false) @map("was_used") // Se foi enviada ao cliente
+  wasEdited      Boolean   @default(false) @map("was_edited")
+  usedAt         DateTime? @map("used_at")
+
+  // Rating do atendente (1-5)
+  rating         Int?      @map("rating")
+  ratingComment  String?   @map("rating_comment")
+  ratedAt        DateTime? @map("rated_at")
+
+  // Detecção de gap (se a IA não soube responder)
+  hasKnowledgeGap Boolean @default(false) @map("has_knowledge_gap")
+  gapDescription  String? @map("gap_description")
+
+  // Relações
+  ticketId String @map("ticket_id")
+  ticket   Ticket @relation(fields: [ticketId], references: [id])
+
+  userId String @map("user_id") // Atendente que consultou
+  user   User   @relation(fields: [userId], references: [id])
+
+  agentConfigId String?        @map("agent_config_id") // IA que processou
+  agentConfig   AIAgentConfig? @relation(fields: [agentConfigId], references: [id])
+
+  companyId String @map("company_id")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  // Fontes usadas na resposta
+  sourcesUsed AIQuerySource[]
+
+  @@index([ticketId])
+  @@index([userId])
+  @@index([companyId, createdAt])
+  @@index([companyId, hasKnowledgeGap])
+  @@map("ai_assistant_queries")
+}
+
+/// Fontes usadas em uma query (para rastreabilidade)
+model AIQuerySource {
+  id String @id @default(cuid())
+
+  queryId String           @map("query_id")
+  query   AIAssistantQuery @relation(fields: [queryId], references: [id], onDelete: Cascade)
+
+  documentId String     @map("document_id")
+  document   AIDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  // Score de relevância (0-1)
+  relevanceScore Float @map("relevance_score")
+
+  // Trecho usado do documento
+  usedExcerpt String? @db.Text @map("used_excerpt")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([queryId])
+  @@map("ai_query_sources")
+}
+
+/// Gaps de Conhecimento Detectados
+model AIKnowledgeGap {
+  id String @id @default(cuid())
+
+  // Descrição do gap
+  topic       String // Tópico/assunto que falta
+  description String @db.Text
+  frequency   Int    @default(1) // Quantas vezes foi detectado
+
+  // Exemplos de queries que geraram o gap
+  sampleQueries String[] @map("sample_queries")
+
+  // Sugestão de categoria/fonte onde adicionar
+  suggestedCategory   String? @map("suggested_category")
+  suggestedDataSource String? @map("suggested_data_source")
+
+  // Status
+  status    String   @default("pending") // pending, in_progress, resolved, dismissed
+  resolvedAt DateTime? @map("resolved_at")
+  resolvedBy String?   @map("resolved_by")
+
+  companyId String @map("company_id")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([companyId, status])
+  @@map("ai_knowledge_gaps")
+}
+
+/// Sugestões Automáticas (respostas sugeridas sem @ia)
+model AIAutoSuggestion {
+  id String @id @default(cuid())
+
+  // Mensagem que triggou a sugestão
+  triggerMessage String @db.Text @map("trigger_message")
+
+  // Sugestão gerada
+  suggestion String @db.Text
+
+  // Categoria detectada
+  category   String?
+  confidence Float?
+
+  // Se foi aceita/usada
+  wasAccepted Boolean   @default(false) @map("was_accepted")
+  wasEdited   Boolean   @default(false) @map("was_edited")
+  acceptedAt  DateTime? @map("accepted_at")
+
+  // Relações
+  ticketId String @map("ticket_id")
+
+  userId String? @map("user_id") // Atendente que recebeu
+
+  companyId String @map("company_id")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([ticketId])
+  @@index([companyId, createdAt])
+  @@map("ai_auto_suggestions")
+}
+
+/// Análise de Sentimento das Conversas
+model AISentimentAnalysis {
+  id String @id @default(cuid())
+
+  // Análise
+  sentiment String // positive, negative, neutral
+  score     Float  // -1 a 1
+
+  // Emoções detectadas
+  emotions Json? // { joy: 0.8, anger: 0.1, sadness: 0.1 }
+
+  // Urgência detectada
+  urgency      String? // low, medium, high, critical
+  urgencyScore Float?  @map("urgency_score")
+
+  // Intenção principal
+  intent          String? // question, complaint, purchase, support, etc
+  intentConfidence Float? @map("intent_confidence")
+
+  // Palavras-chave detectadas
+  keywords String[]
+
+  // Mensagem analisada
+  messageId String @map("message_id")
+
+  ticketId String @map("ticket_id")
+
+  companyId String @map("company_id")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([ticketId])
+  @@index([companyId, sentiment])
+  @@map("ai_sentiment_analyses")
 }

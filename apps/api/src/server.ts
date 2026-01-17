@@ -24,6 +24,7 @@ import { pushRouter } from './routes/push.routes';
 import { knowledgeRouter } from './routes/knowledge.routes';
 import { faqRouter } from './routes/faq.routes';
 import { publicRouter } from './routes/public.routes';
+import aiAssistantRouter from './routes/ai-assistant.routes';
 import { setupSocketHandlers } from './sockets/index';
 import { startWorkers, stopWorkers } from './jobs/index';
 import { prisma } from './config/database';
@@ -135,6 +136,7 @@ app.use('/api/push', pushRouter);
 app.use('/api/knowledge', knowledgeRouter);
 app.use('/api/faq', faqRouter);
 app.use('/api/public', publicRouter);
+app.use('/api/ai-assistant', aiAssistantRouter);
 app.use('/webhooks', webhookRouter);
 
 // Serve uploaded files statically
