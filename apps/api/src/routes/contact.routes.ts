@@ -439,8 +439,44 @@ router.post('/import', authenticate, requireAdmin, ensureTenant, async (req, res
 });
 
 // Get messaging window status for a contact (Meta Cloud API 24-hour rule)
+// Only applies to META_CLOUD connections - Baileys doesn't have this restriction
 router.get('/:id/messaging-window', authenticate, ensureTenant, async (req, res, next) => {
   try {
+    // ticketId is optional - if provided, we check the connection type
+    const ticketId = req.query.ticketId as string | undefined;
+
+    // If ticketId is provided, check connection type first
+    if (ticketId) {
+      const ticket = await prisma.ticket.findFirst({
+        where: {
+          id: ticketId,
+          companyId: req.user!.companyId,
+        },
+        include: {
+          connection: {
+            select: {
+              id: true,
+              type: true,
+            },
+          },
+        },
+      });
+
+      // If connection is not META_CLOUD, return that window rules don't apply
+      if (ticket && ticket.connection.type !== 'META_CLOUD') {
+        return res.json({
+          contactId: req.params.id,
+          connectionType: ticket.connection.type,
+          isOpen: true, // Baileys doesn't have window restrictions
+          expiresAt: null,
+          hoursRemaining: null,
+          lastMessageAt: null,
+          requiresTemplate: false, // Baileys doesn't require templates
+          windowApplies: false, // Flag to indicate this connection doesn't have window rules
+        });
+      }
+    }
+
     const contact = await prisma.contact.findFirst({
       where: {
         id: req.params.id,
@@ -461,7 +497,7 @@ router.get('/:id/messaging-window', authenticate, ensureTenant, async (req, res,
     // The window is open if the contact sent us a message in the last 24 hours
     const WINDOW_DURATION_MS = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
     const now = new Date();
-    
+
     let isOpen = false;
     let expiresAt: Date | null = null;
     let hoursRemaining: number | null = null;
@@ -469,7 +505,7 @@ router.get('/:id/messaging-window', authenticate, ensureTenant, async (req, res,
     if (contact.lastMessageAt) {
       const windowEnd = new Date(contact.lastMessageAt.getTime() + WINDOW_DURATION_MS);
       isOpen = windowEnd > now;
-      
+
       if (isOpen) {
         expiresAt = windowEnd;
         hoursRemaining = Math.max(0, Math.round((windowEnd.getTime() - now.getTime()) / (60 * 60 * 1000)));
@@ -479,11 +515,13 @@ router.get('/:id/messaging-window', authenticate, ensureTenant, async (req, res,
     res.json({
       contactId: contact.id,
       phone: contact.phone,
+      connectionType: 'META_CLOUD', // Only reach here for META_CLOUD or when no ticketId provided
       isOpen,
       expiresAt: expiresAt?.toISOString() || null,
       hoursRemaining,
       lastMessageAt: contact.lastMessageAt?.toISOString() || null,
       requiresTemplate: !isOpen,
+      windowApplies: true, // META_CLOUD has window rules
     });
   } catch (error) {
     next(error);
