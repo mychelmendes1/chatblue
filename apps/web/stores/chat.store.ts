@@ -88,6 +88,7 @@ interface ChatState {
     departmentId?: string;
     assignedToId?: string;
     search?: string;
+    isAIHandled?: boolean;
   };
   setTickets: (tickets: Ticket[]) => void;
   addTicket: (ticket: Ticket) => void;
