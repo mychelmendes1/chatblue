@@ -1,13 +1,11 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { randomUUID } from 'crypto';
 import { prisma } from '../config/database.js';
 import { authenticate } from '../middlewares/auth.middleware.js';
 import { ensureTenant } from '../middlewares/tenant.middleware.js';
 import { NotFoundError, ForbiddenError } from '../middlewares/error.middleware.js';
 import { generateProtocol } from '../utils/protocol.js';
 import { logger } from '../config/logger.js';
-import { WhatsAppService } from '../services/whatsapp/whatsapp.service.js';
 
 const router = Router();
 
@@ -29,7 +27,6 @@ router.get('/', authenticate, ensureTenant, async (req, res, next) => {
       isAIHandled,
       search,
       hideResolved,
-      mentionedUserId,
       page = '1',
       limit = '20',
     } = req.query;
@@ -62,92 +59,11 @@ router.get('/', authenticate, ensureTenant, async (req, res, next) => {
       ...(priority && { priority: priority as string }),
       ...(isAIHandled !== undefined && { isAIHandled: isAIHandled === 'true' }),
       // Hide resolved/closed tickets by default (unless specific status is requested)
+      // Note: SNOOZED tickets are shown but at the bottom of the list
       ...(hideResolved === 'true' && !status && {
         status: { notIn: ['RESOLVED', 'CLOSED'] },
       }),
     };
-
-    // If filtering by mentions, we need to find tickets with active mentions
-    // "Active mentions" = mentions made AFTER the current conversation started
-    // Current conversation starts when: ticket was created OR was last reopened
-    let ticketIdsWithActiveMentions: string[] | null = null;
-
-    if (mentionedUserId) {
-      // First, get all active tickets (not RESOLVED/CLOSED) with mentions of this user
-      const ticketsWithMentions = await prisma.ticket.findMany({
-        where: {
-          companyId: req.user!.companyId,
-          status: { notIn: ['RESOLVED', 'CLOSED'] },
-        },
-        select: {
-          id: true,
-          createdAt: true,
-          messages: {
-            where: {
-              mentionedUserIds: { has: mentionedUserId as string },
-            },
-            select: {
-              id: true,
-              createdAt: true,
-            },
-            orderBy: { createdAt: 'asc' },
-          },
-        },
-      });
-
-      // For each ticket, find when the current conversation started
-      // by looking for the last SYSTEM message with "reaberto" or "Atendimento iniciado"
-      const validTicketIds: string[] = [];
-
-      for (const ticket of ticketsWithMentions) {
-        if (ticket.messages.length === 0) continue;
-
-        // Find the last "reopen" or "start" system message to determine conversation start
-        const systemMessages = await prisma.message.findMany({
-          where: {
-            ticketId: ticket.id,
-            type: 'SYSTEM',
-            OR: [
-              { content: { contains: 'reaberto' } },
-              { content: { contains: 'Atendimento iniciado' } },
-              { content: { contains: 'assumido por' } },
-            ],
-          },
-          orderBy: { createdAt: 'desc' },
-          take: 1,
-          select: { createdAt: true },
-        });
-
-        // Conversation start is either the last system message or the ticket creation
-        const conversationStartDate = systemMessages.length > 0
-          ? systemMessages[0].createdAt
-          : ticket.createdAt;
-
-        // Check if any mention was made after the conversation started
-        const hasActiveMention = ticket.messages.some(
-          msg => new Date(msg.createdAt) >= new Date(conversationStartDate)
-        );
-
-        if (hasActiveMention) {
-          validTicketIds.push(ticket.id);
-        }
-      }
-
-      ticketIdsWithActiveMentions = validTicketIds;
-
-      // If no tickets with active mentions, return empty result
-      if (ticketIdsWithActiveMentions.length === 0) {
-        return res.json({
-          tickets: [],
-          pagination: {
-            page: parseInt(page as string),
-            limit: parseInt(limit as string),
-            total: 0,
-            pages: 0,
-          },
-        });
-      }
-    }
 
     // Build search filter
     const searchConditions: any[] = [];
@@ -160,11 +76,7 @@ router.get('/', authenticate, ensureTenant, async (req, res, next) => {
     }
 
     // Non-admins can only see tickets from their departments or assigned to them
-    const where: any = {
-      ...baseWhere,
-      // Add mention filter if specified
-      ...(ticketIdsWithActiveMentions && { id: { in: ticketIdsWithActiveMentions } }),
-    };
+    const where: any = { ...baseWhere };
     
     if (!['SUPER_ADMIN', 'ADMIN'].includes(req.user!.role)) {
       const visibilityConditions: any[] = [
@@ -232,14 +144,6 @@ router.get('/', authenticate, ensureTenant, async (req, res, next) => {
             color: true,
           },
         },
-        connection: {
-          select: {
-            id: true,
-            name: true,
-            type: true,
-            instagramUsername: true,
-          },
-        },
         messages: {
           take: 1,
           orderBy: { createdAt: 'desc' },
@@ -264,10 +168,13 @@ router.get('/', authenticate, ensureTenant, async (req, res, next) => {
     });
 
     // Custom sorting:
-    // 1. Unread messages OR transferred from AI (needs human attention) - highest priority
+    // 0. Snoozed tickets that are due (snoozedUntil <= now) - HIGHEST PRIORITY
+    // 1. Unread messages OR transferred from AI (needs human attention)
     // 2. AI handled tickets (being processed by AI)
     // 3. Responded but still open
+    // 4. Snoozed tickets (not yet due) - go to the bottom
     // Within each group, sort by updatedAt desc
+    const now = new Date();
     const sortedTickets = allTickets.sort((a, b) => {
       const aUnread = a._count?.messages || 0;
       const bUnread = b._count?.messages || 0;
@@ -275,7 +182,31 @@ router.get('/', authenticate, ensureTenant, async (req, res, next) => {
       const bIsAI = b.isAIHandled;
       const aLastMessageFromMe = a.messages[0]?.isFromMe ?? false;
       const bLastMessageFromMe = b.messages[0]?.isFromMe ?? false;
-      
+
+      // Check if snoozed and if snooze time has passed
+      const aIsSnoozed = a.status === 'SNOOZED';
+      const bIsSnoozed = b.status === 'SNOOZED';
+      const aSnoozeDue = aIsSnoozed && a.snoozedUntil && new Date(a.snoozedUntil) <= now;
+      const bSnoozeDue = bIsSnoozed && b.snoozedUntil && new Date(b.snoozedUntil) <= now;
+      const aStillSnoozed = aIsSnoozed && !aSnoozeDue;
+      const bStillSnoozed = bIsSnoozed && !bSnoozeDue;
+
+      // Priority 0: Snoozed tickets that are due (back from snooze) - HIGHEST PRIORITY
+      if (aSnoozeDue && !bSnoozeDue) return -1;
+      if (bSnoozeDue && !aSnoozeDue) return 1;
+      if (aSnoozeDue && bSnoozeDue) {
+        // Both are due - sort by snooze time
+        return new Date(a.snoozedUntil!).getTime() - new Date(b.snoozedUntil!).getTime();
+      }
+
+      // Priority LAST: Snoozed tickets (still waiting) - go to the bottom
+      if (aStillSnoozed && !bStillSnoozed) return 1;
+      if (bStillSnoozed && !aStillSnoozed) return -1;
+      if (aStillSnoozed && bStillSnoozed) {
+        // Both snoozed - sort by when they'll be unsnoozed
+        return new Date(a.snoozedUntil!).getTime() - new Date(b.snoozedUntil!).getTime();
+      }
+
       // Check if ticket was recently transferred from AI (PENDING status, not AI handled, has humanTakeoverAt)
       const aTransferredFromAI = !aIsAI && a.status === 'PENDING' && a.humanTakeoverAt !== null;
       const bTransferredFromAI = !bIsAI && b.status === 'PENDING' && b.humanTakeoverAt !== null;
@@ -283,7 +214,7 @@ router.get('/', authenticate, ensureTenant, async (req, res, next) => {
       // Priority 1: Has unread client messages OR was transferred from AI (needs human attention)
       const aNeedsAttention = aUnread > 0 || aTransferredFromAI;
       const bNeedsAttention = bUnread > 0 || bTransferredFromAI;
-      
+
       if (aNeedsAttention && !bNeedsAttention) return -1;
       if (bNeedsAttention && !aNeedsAttention) return 1;
 
@@ -292,7 +223,7 @@ router.get('/', authenticate, ensureTenant, async (req, res, next) => {
         // Transferred from AI takes priority over just unread
         if (aTransferredFromAI && !bTransferredFromAI) return -1;
         if (bTransferredFromAI && !aTransferredFromAI) return 1;
-        
+
         // Both transferred or both have unread - sort by unread count then updatedAt
         if (aUnread !== bUnread) return bUnread - aUnread;
         return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
@@ -849,9 +780,13 @@ router.put('/:id/priority', authenticate, ensureTenant, async (req, res, next) =
   }
 });
 
-// Resolve ticket with AI summary
+// Resolve ticket with AI summary and optional resolution note
 router.post('/:id/resolve', authenticate, ensureTenant, async (req, res, next) => {
   try {
+    const { resolutionNote } = z.object({
+      resolutionNote: z.string().optional(),
+    }).parse(req.body || {});
+
     const ticket = await prisma.ticket.findFirst({
       where: {
         id: req.params.id,
@@ -880,7 +815,7 @@ router.post('/:id/resolve', authenticate, ensureTenant, async (req, res, next) =
       if (settings?.aiEnabled && settings?.aiApiKey) {
         const { AIService } = await import('../services/ai/ai.service.js');
         const aiService = new AIService(settings.aiProvider || 'openai', settings.aiApiKey);
-        
+
         // Prepare conversation for summary
         const conversationText = ticket.messages
           .filter(m => m.type === 'TEXT' && !m.isInternal)
@@ -899,27 +834,28 @@ router.post('/:id/resolve', authenticate, ensureTenant, async (req, res, next) =
       summary = 'Atendimento resolvido.';
     }
 
-    // Generate rating token for NPS survey
-    const ratingToken = randomUUID();
-
-    // Update ticket with resolved status and rating token
+    // Update ticket
     const updatedTicket = await prisma.ticket.update({
       where: { id: ticket.id },
       data: {
         status: 'RESOLVED',
         resolvedAt: new Date(),
-        ratingToken,
-      },
-      include: {
-        connection: true,
+        resolutionNote: resolutionNote || null,
       },
     });
+
+    // Build system message content
+    let messageContent = `✅ Atendimento resolvido por ${req.user!.name}`;
+    if (resolutionNote) {
+      messageContent += `\n\n📝 Observação: ${resolutionNote}`;
+    }
+    messageContent += `\n\n📋 Resumo: ${summary}`;
 
     // Create system message with summary
     const systemMessage = await prisma.message.create({
       data: {
         type: 'SYSTEM',
-        content: `✅ Atendimento resolvido por ${req.user!.name}\n\n📋 Resumo: ${summary}`,
+        content: messageContent,
         isFromMe: true,
         isInternal: true,
         status: 'DELIVERED',
@@ -935,42 +871,9 @@ router.post('/:id/resolve', authenticate, ensureTenant, async (req, res, next) =
         description: `Ticket resolved by ${req.user!.name}`,
         ticketId: ticket.id,
         userId: req.user!.userId,
-        metadata: { summary },
+        metadata: { summary, resolutionNote },
       },
     });
-
-    // Send NPS survey message via WhatsApp
-    try {
-      const frontendUrl = process.env.FRONTEND_URL?.split(',')[0] || 'http://localhost:3000';
-      const ratingUrl = `${frontendUrl}/rate/${ratingToken}`;
-      const contactName = ticket.contact?.name ? ticket.contact.name.split(' ')[0] : '';
-
-      const npsMessage = contactName
-        ? `Ola ${contactName}! Seu atendimento foi finalizado. Gostaríamos de saber sua opiniao!\n\nAvalie nosso atendimento de 1 a 5 estrelas:\n${ratingUrl}`
-        : `Seu atendimento foi finalizado. Gostaríamos de saber sua opiniao!\n\nAvalie nosso atendimento de 1 a 5 estrelas:\n${ratingUrl}`;
-
-      const whatsappService = new WhatsAppService(updatedTicket.connection);
-      const result = await whatsappService.sendMessage(ticket.contact.phone, npsMessage);
-
-      // Save the NPS message to database
-      await prisma.message.create({
-        data: {
-          wamid: result.messageId,
-          type: 'TEXT',
-          content: npsMessage,
-          isFromMe: true,
-          status: 'SENT',
-          sentAt: new Date(),
-          ticketId: ticket.id,
-          connectionId: ticket.connectionId,
-        },
-      });
-
-      logger.info(`NPS survey sent for ticket ${ticket.protocol}`);
-    } catch (npsError) {
-      // Don't fail the resolve if NPS fails
-      logger.error('Failed to send NPS survey:', npsError);
-    }
 
     // Emit socket events
     const io = req.app.get('io');
@@ -1141,6 +1044,208 @@ router.post('/:id/reopen', authenticate, ensureTenant, async (req, res, next) =>
     // Emit socket events
     const io = req.app.get('io');
     io.to(`company:${req.user!.companyId}`).emit('ticket:updated', updatedTicket);
+    io.to(`ticket:${ticket.id}`).emit('message:received', { message: systemMessage });
+
+    res.json(updatedTicket);
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Snooze ticket (postpone)
+router.post('/:id/snooze', authenticate, ensureTenant, async (req, res, next) => {
+  try {
+    const { reason, snoozedUntil } = z.object({
+      reason: z.string().min(1, 'Motivo é obrigatório'),
+      snoozedUntil: z.string().datetime(),
+    }).parse(req.body);
+
+    const ticket = await prisma.ticket.findFirst({
+      where: {
+        id: req.params.id,
+        companyId: req.user!.companyId,
+        status: { notIn: ['RESOLVED', 'CLOSED'] },
+      },
+      include: {
+        contact: true,
+        assignedTo: {
+          select: { id: true, name: true, avatar: true },
+        },
+        department: {
+          select: { id: true, name: true },
+        },
+      },
+    });
+
+    if (!ticket) {
+      throw new NotFoundError('Ticket not found or already resolved/closed');
+    }
+
+    const snoozedUntilDate = new Date(snoozedUntil);
+
+    // Format date for display
+    const formattedDate = snoozedUntilDate.toLocaleString('pt-BR', {
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+
+    // Update ticket
+    const updatedTicket = await prisma.ticket.update({
+      where: { id: ticket.id },
+      data: {
+        status: 'SNOOZED',
+        snoozedAt: new Date(),
+        snoozedUntil: snoozedUntilDate,
+        snoozeReason: reason,
+      },
+      include: {
+        contact: {
+          select: {
+            id: true,
+            name: true,
+            phone: true,
+            avatar: true,
+            isClient: true,
+          },
+        },
+        assignedTo: {
+          select: {
+            id: true,
+            name: true,
+            avatar: true,
+            isAI: true,
+          },
+        },
+        department: {
+          select: {
+            id: true,
+            name: true,
+            color: true,
+          },
+        },
+      },
+    });
+
+    // Create system message
+    const systemMessage = await prisma.message.create({
+      data: {
+        type: 'SYSTEM',
+        content: `⏰ Conversa adiada por ${req.user!.name}\n\n📝 Motivo: ${reason}\n\n📅 Retorno: ${formattedDate}`,
+        isFromMe: true,
+        isInternal: true,
+        status: 'DELIVERED',
+        ticketId: ticket.id,
+        connectionId: ticket.connectionId,
+      },
+    });
+
+    // Create activity
+    await prisma.activity.create({
+      data: {
+        type: 'TICKET_SNOOZED',
+        description: `Ticket snoozed by ${req.user!.name} until ${formattedDate}`,
+        ticketId: ticket.id,
+        userId: req.user!.userId,
+        metadata: { reason, snoozedUntil },
+      },
+    });
+
+    // Emit socket events
+    const io = req.app.get('io');
+    io.to(`company:${req.user!.companyId}`).emit('ticket:updated', updatedTicket);
+    io.to(`ticket:${ticket.id}`).emit('message:received', { message: systemMessage });
+
+    res.json(updatedTicket);
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Unsnooze ticket (bring back from snooze)
+router.post('/:id/unsnooze', authenticate, ensureTenant, async (req, res, next) => {
+  try {
+    const ticket = await prisma.ticket.findFirst({
+      where: {
+        id: req.params.id,
+        companyId: req.user!.companyId,
+        status: 'SNOOZED',
+      },
+    });
+
+    if (!ticket) {
+      throw new NotFoundError('Ticket not found or not snoozed');
+    }
+
+    // Update ticket
+    const updatedTicket = await prisma.ticket.update({
+      where: { id: ticket.id },
+      data: {
+        status: 'IN_PROGRESS',
+        snoozedAt: null,
+        snoozedUntil: null,
+        snoozeReason: null,
+      },
+      include: {
+        contact: {
+          select: {
+            id: true,
+            name: true,
+            phone: true,
+            avatar: true,
+            isClient: true,
+          },
+        },
+        assignedTo: {
+          select: {
+            id: true,
+            name: true,
+            avatar: true,
+            isAI: true,
+          },
+        },
+        department: {
+          select: {
+            id: true,
+            name: true,
+            color: true,
+          },
+        },
+      },
+    });
+
+    // Create system message
+    const systemMessage = await prisma.message.create({
+      data: {
+        type: 'SYSTEM',
+        content: `🔔 Conversa retomada - adiamento encerrado`,
+        isFromMe: true,
+        isInternal: true,
+        status: 'DELIVERED',
+        ticketId: ticket.id,
+        connectionId: ticket.connectionId,
+      },
+    });
+
+    // Create activity
+    await prisma.activity.create({
+      data: {
+        type: 'TICKET_UNSNOOZED',
+        description: `Ticket unsnoozed`,
+        ticketId: ticket.id,
+        userId: req.user!.userId,
+      },
+    });
+
+    // Emit socket events
+    const io = req.app.get('io');
+    io.to(`company:${req.user!.companyId}`).emit('ticket:updated', updatedTicket);
+    io.to(`company:${req.user!.companyId}`).emit('ticket:unsnoozed', {
+      ticket: updatedTicket,
+      assignedToId: ticket.assignedToId,
+    });
     io.to(`ticket:${ticket.id}`).emit('message:received', { message: systemMessage });
 
     res.json(updatedTicket);

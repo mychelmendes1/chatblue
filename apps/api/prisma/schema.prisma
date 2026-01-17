@@ -45,6 +45,7 @@ enum TicketStatus {
   PENDING
   IN_PROGRESS
   WAITING
+  SNOOZED
   RESOLVED
   CLOSED
 }
@@ -94,6 +95,8 @@ enum ActivityType {
   TICKET_RESOLVED
   TICKET_CLOSED
   TICKET_REOPENED
+  TICKET_SNOOZED
+  TICKET_UNSNOOZED
   MESSAGE_SENT
   MESSAGE_RECEIVED
   AI_TAKEOVER
@@ -382,6 +385,14 @@ model Ticket {
   aiTakeoverAt    DateTime? @map("ai_takeover_at")
   humanTakeoverAt DateTime? @map("human_takeover_at")
 
+  // Resolution notes
+  resolutionNote String? @map("resolution_note") @db.Text
+
+  // Snooze fields
+  snoozedAt    DateTime? @map("snoozed_at")
+  snoozedUntil DateTime? @map("snoozed_until")
+  snoozeReason String?   @map("snooze_reason") @db.Text
+
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
   closedAt  DateTime? @map("closed_at")
@@ -417,6 +428,7 @@ model Ticket {
   @@index([assignedToId, status])
   @@index([departmentId, status])
   @@index([contactId, status])
+  @@index([status, snoozedUntil])
   @@map("tickets")
 }
 

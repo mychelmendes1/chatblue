@@ -85,6 +85,8 @@ export function getStatusColor(status: string): string {
       return "bg-green-500";
     case "WAITING":
       return "bg-yellow-500";
+    case "SNOOZED":
+      return "bg-amber-500";
     case "RESOLVED":
       return "bg-emerald-500";
     case "CLOSED":
@@ -102,6 +104,8 @@ export function getStatusLabel(status: string): string {
       return "Em Atendimento";
     case "WAITING":
       return "Aguardando";
+    case "SNOOZED":
+      return "Adiado";
     case "RESOLVED":
       return "Resolvido";
     case "CLOSED":

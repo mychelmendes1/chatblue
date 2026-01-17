@@ -6,6 +6,7 @@ import { getSocket, disconnectSocket } from "@/lib/socket";
 import { useAuthStore } from "@/stores/auth.store";
 import { useChatStore, type Message } from "@/stores/chat.store";
 import { normalizeMediaUrl } from "@/utils/media-url.util";
+import { useToast } from "@/components/ui/use-toast";
 
 interface SocketContextType {
   socket: Socket | null;
@@ -286,11 +287,37 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
 
   const handleMessageDeleted = useCallback(({ messageId, deletedAt }: { messageId: string; deletedAt: string }) => {
     const store = useChatStore.getState();
-    store.updateMessage(messageId, { 
+    store.updateMessage(messageId, {
       deletedAt,
       content: "Esta mensagem foi apagada",
     });
   }, []);
+
+  // Toast notification hook
+  const { toast } = useToast();
+
+  const handleTicketUnsnoozed = useCallback((data: { ticket: any; assignedToId: string; contactName: string }) => {
+    console.log("[Socket] ticket:unsnoozed", data);
+    const store = useChatStore.getState();
+    const { user } = useAuthStore.getState();
+
+    // Update the ticket in store
+    store.updateTicket(data.ticket.id, {
+      ...data.ticket,
+      status: 'IN_PROGRESS',
+      snoozedAt: null,
+      snoozedUntil: null,
+    });
+
+    // Show toast notification if this ticket was assigned to the current user
+    if (data.assignedToId === user?.id) {
+      toast({
+        title: "Conversa Retomada",
+        description: `A conversa com ${data.contactName} voltou do adiamento e está aguardando sua atenção.`,
+        duration: 10000, // 10 seconds
+      });
+    }
+  }, [toast]);
 
   useEffect(() => {
     if (!accessToken) {
@@ -332,6 +359,7 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
     socketInstance.on("ticket:assigned", handleTicketAssigned);
     socketInstance.on("ticket:transferred", handleTicketTransferred);
     socketInstance.on("ticket:statusChanged", handleTicketStatusChanged);
+    socketInstance.on("ticket:unsnoozed", handleTicketUnsnoozed);
 
     return () => {
       socketInstance.off("connect");
@@ -348,6 +376,7 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
       socketInstance.off("ticket:assigned", handleTicketAssigned);
       socketInstance.off("ticket:transferred", handleTicketTransferred);
       socketInstance.off("ticket:statusChanged", handleTicketStatusChanged);
+      socketInstance.off("ticket:unsnoozed", handleTicketUnsnoozed);
     };
   }, [
     accessToken,
@@ -362,6 +391,7 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
     handleTicketAssigned,
     handleTicketTransferred,
     handleTicketStatusChanged,
+    handleTicketUnsnoozed,
   ]);
 
   return (

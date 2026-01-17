@@ -273,4 +273,18 @@ process.on('SIGTERM', async () => {
   });
 });
 
+// Global io getter for use in background jobs
+let globalIo: SocketServer | null = null;
+
+export function setGlobalIo(socketIo: SocketServer) {
+  globalIo = socketIo;
+}
+
+export function getGlobalIo(): SocketServer | null {
+  return globalIo;
+}
+
+// Set the io globally
+setGlobalIo(io);
+
 export { app, io };
