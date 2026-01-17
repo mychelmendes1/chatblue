@@ -30,6 +30,7 @@ enum UserRole {
 enum ConnectionType {
   BAILEYS
   META_CLOUD
+  INSTAGRAM
 }
 
 enum ConnectionStatus {
@@ -286,11 +287,15 @@ model WhatsAppConnection {
   qrCode      String? @map("qr_code")
   sessionData Json?   @map("session_data")
 
-  // Meta Cloud API specific
+  // Meta Cloud API specific (WhatsApp)
   accessToken   String? @map("access_token")
   phoneNumberId String? @map("phone_number_id")
   businessId    String? @map("business_id")
   webhookToken  String? @map("webhook_token")
+
+  // Instagram specific
+  instagramAccountId String? @map("instagram_account_id")
+  instagramUsername  String? @map("instagram_username")
 
   isDefault     Boolean   @default(false) @map("is_default")
   isActive      Boolean   @default(true) @map("is_active")
@@ -318,6 +323,9 @@ model Contact {
   // WhatsApp LID (Linked ID) - used when user has phone privacy enabled
   // This allows us to associate LIDs with real phone numbers
   lidId String? @map("lid_id")
+
+  // Instagram Scoped ID (IGSID) - used for Instagram DM conversations
+  instagramId String? @map("instagram_id")
 
   // Dados do Notion
   notionPageId String?   @map("notion_page_id")

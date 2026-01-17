@@ -6,6 +6,7 @@ import { ensureTenant } from '../middlewares/tenant.middleware.js';
 import { NotFoundError } from '../middlewares/error.middleware.js';
 import { BaileysService } from '../services/whatsapp/baileys.service.js';
 import { MetaCloudService } from '../services/whatsapp/meta-cloud.service.js';
+import { InstagramService } from '../services/instagram/instagram.service.js';
 
 const router = Router();
 
@@ -21,6 +22,15 @@ const createMetaCloudSchema = z.object({
   accessToken: z.string(),
   phoneNumberId: z.string(),
   businessId: z.string(),
+  webhookToken: z.string(),
+  companyId: z.string().cuid().optional(), // Allow admin to specify company
+});
+
+const createInstagramSchema = z.object({
+  name: z.string().min(2),
+  type: z.literal('INSTAGRAM'),
+  accessToken: z.string(),
+  instagramAccountId: z.string(),
   webhookToken: z.string(),
   companyId: z.string().cuid().optional(), // Allow admin to specify company
 });
@@ -65,6 +75,9 @@ router.get('/', authenticate, ensureTenant, async (req, res, next) => {
         lastConnected: true,
         createdAt: true,
         companyId: true,
+        // Instagram specific fields
+        instagramAccountId: true,
+        instagramUsername: true,
         company: {
           select: {
             id: true,
@@ -201,6 +214,67 @@ router.post('/meta-cloud', authenticate, requireAdmin, ensureTenant, async (req,
   }
 });
 
+// Create Instagram connection
+router.post('/instagram', authenticate, requireAdmin, ensureTenant, async (req, res, next) => {
+  try {
+    const data = createInstagramSchema.parse(req.body);
+
+    // Determine company ID: use provided one if super admin, otherwise use user's company
+    let targetCompanyId = req.user!.companyId;
+    if (data.companyId && req.user!.role === 'SUPER_ADMIN') {
+      // Verify company exists
+      const company = await prisma.company.findUnique({
+        where: { id: data.companyId },
+      });
+      if (!company) {
+        throw new NotFoundError('Company not found');
+      }
+      targetCompanyId = data.companyId;
+    }
+
+    const connection = await prisma.whatsAppConnection.create({
+      data: {
+        name: data.name,
+        type: 'INSTAGRAM',
+        accessToken: data.accessToken,
+        instagramAccountId: data.instagramAccountId,
+        webhookToken: data.webhookToken,
+        status: 'DISCONNECTED',
+        companyId: targetCompanyId,
+      },
+    });
+
+    // Test connection and get account info
+    const instagramService = new InstagramService(connection);
+    const isValid = await instagramService.testConnection();
+
+    let instagramUsername: string | undefined;
+    if (isValid) {
+      const accountInfo = await instagramService.getAccountInfo();
+      if (accountInfo) {
+        instagramUsername = accountInfo.username;
+
+        await prisma.whatsAppConnection.update({
+          where: { id: connection.id },
+          data: {
+            status: 'CONNECTED',
+            lastConnected: new Date(),
+            instagramUsername: accountInfo.username,
+          },
+        });
+      }
+    }
+
+    res.status(201).json({
+      ...connection,
+      status: isValid ? 'CONNECTED' : 'DISCONNECTED',
+      instagramUsername,
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
 // Get QR Code for Baileys connection
 router.get('/:id/qr', authenticate, ensureTenant, async (req, res, next) => {
   try {
@@ -265,9 +339,19 @@ router.post('/:id/connect', authenticate, requireAdmin, ensureTenant, async (req
     if (connection.type === 'BAILEYS') {
       const baileysService = BaileysService.getInstance(connection.id);
       await baileysService.connect();
-    } else {
+    } else if (connection.type === 'META_CLOUD') {
       const metaService = new MetaCloudService(connection);
       await metaService.testConnection();
+    } else if (connection.type === 'INSTAGRAM') {
+      const instagramService = new InstagramService(connection);
+      const isValid = await instagramService.testConnection();
+      if (isValid) {
+        await prisma.whatsAppConnection.update({
+          where: { id: connection.id },
+          data: { status: 'CONNECTED', lastConnected: new Date() },
+        });
+        return res.json({ message: 'Connected' });
+      }
     }
 
     await prisma.whatsAppConnection.update({
