@@ -89,6 +89,7 @@ interface ChatState {
     assignedToId?: string;
     search?: string;
     isAIHandled?: boolean;
+    mentionedUserId?: string;
   };
   setTickets: (tickets: Ticket[]) => void;
   addTicket: (ticket: Ticket) => void;

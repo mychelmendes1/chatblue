@@ -117,6 +117,7 @@ export function ChatSidebar() {
       if (filters.departmentId) params.set("departmentId", filters.departmentId);
       if (filters.assignedToId) params.set("assignedToId", filters.assignedToId);
       if (filters.isAIHandled !== undefined) params.set("isAIHandled", String(filters.isAIHandled));
+      if (filters.mentionedUserId) params.set("mentionedUserId", filters.mentionedUserId);
       if (search) params.set("search", search);
       if (!showResolved) params.set("hideResolved", "true");
 
@@ -368,28 +369,28 @@ export function ChatSidebar() {
         </form>
 
         {/* Quick Filters */}
-        <div className="flex gap-1.5 md:gap-2 mt-2 md:mt-3">
+        <div className="flex gap-1.5 md:gap-2 mt-2 md:mt-3 flex-wrap">
           <Button
-            variant={!filters.status && !filters.assignedToId && filters.isAIHandled === undefined ? "default" : "outline"}
+            variant={!filters.status && !filters.assignedToId && filters.isAIHandled === undefined && !filters.mentionedUserId ? "default" : "outline"}
             size="sm"
             className="text-xs md:text-sm px-2 md:px-3 h-7 md:h-8"
-            onClick={() => setFilters({ status: undefined, assignedToId: undefined, isAIHandled: undefined })}
+            onClick={() => setFilters({ status: undefined, assignedToId: undefined, isAIHandled: undefined, mentionedUserId: undefined })}
           >
             Todos
           </Button>
           <Button
-            variant={filters.status === "PENDING" && !filters.assignedToId && filters.isAIHandled === undefined ? "default" : "outline"}
+            variant={filters.status === "PENDING" && !filters.assignedToId && filters.isAIHandled === undefined && !filters.mentionedUserId ? "default" : "outline"}
             size="sm"
             className="text-xs md:text-sm px-2 md:px-3 h-7 md:h-8"
-            onClick={() => setFilters({ status: "PENDING", assignedToId: undefined, isAIHandled: undefined })}
+            onClick={() => setFilters({ status: "PENDING", assignedToId: undefined, isAIHandled: undefined, mentionedUserId: undefined })}
           >
             Fila
           </Button>
           <Button
-            variant={filters.assignedToId === user?.id && filters.isAIHandled === undefined ? "default" : "outline"}
+            variant={filters.assignedToId === user?.id && filters.isAIHandled === undefined && !filters.mentionedUserId ? "default" : "outline"}
             size="sm"
             className="text-xs md:text-sm px-2 md:px-3 h-7 md:h-8"
-            onClick={() => setFilters({ status: undefined, assignedToId: user?.id, isAIHandled: undefined })}
+            onClick={() => setFilters({ status: undefined, assignedToId: user?.id, isAIHandled: undefined, mentionedUserId: undefined })}
           >
             Meus
           </Button>
@@ -397,9 +398,17 @@ export function ChatSidebar() {
             variant={filters.isAIHandled === true ? "default" : "outline"}
             size="sm"
             className="text-xs md:text-sm px-2 md:px-3 h-7 md:h-8"
-            onClick={() => setFilters({ status: undefined, assignedToId: undefined, isAIHandled: true })}
+            onClick={() => setFilters({ status: undefined, assignedToId: undefined, isAIHandled: true, mentionedUserId: undefined })}
           >
             🤖 IA
+          </Button>
+          <Button
+            variant={filters.mentionedUserId === user?.id ? "default" : "outline"}
+            size="sm"
+            className="text-xs md:text-sm px-2 md:px-3 h-7 md:h-8"
+            onClick={() => setFilters({ status: undefined, assignedToId: undefined, isAIHandled: undefined, mentionedUserId: user?.id })}
+          >
+            @ Menções
           </Button>
         </div>
 
