@@ -15,7 +15,6 @@ import {
   AtSign,
   MessageSquare,
   CheckCircle,
-  XCircle,
   Loader2,
   Clock,
   AlertCircle,
@@ -34,11 +33,23 @@ import {
   Square,
   FileText,
   ArrowLeft,
+  CalendarClock,
+  Calendar,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Label } from "@/components/ui/label";
 import { cn, formatPhone, getStatusLabel } from "@/lib/utils";
 import { useChatStore } from "@/stores/chat.store";
 import { useSocket } from "@/components/providers/socket-provider";
@@ -709,12 +720,27 @@ export function ChatWindow({ ticket, onShowContactInfo, onMobileBack }: ChatWind
 
   const [isClosing, setIsClosing] = useState(false);
 
-  async function handleResolve() {
+  // Modal states for resolve and snooze
+  const [showResolveModal, setShowResolveModal] = useState(false);
+  const [showSnoozeModal, setShowSnoozeModal] = useState(false);
+  const [resolutionNote, setResolutionNote] = useState("");
+  const [snoozeReason, setSnoozeReason] = useState("");
+  const [snoozeDate, setSnoozeDate] = useState("");
+
+  function handleResolve() {
+    setShowResolveModal(true);
+  }
+
+  async function handleConfirmResolve() {
     if (isClosing) return;
     setIsClosing(true);
     try {
-      await api.post(`/tickets/${ticket.id}/resolve`);
+      await api.post(`/tickets/${ticket.id}/resolve`, {
+        resolutionNote: resolutionNote.trim() || undefined,
+      });
       // The server will generate the AI summary and emit socket events
+      setShowResolveModal(false);
+      setResolutionNote("");
     } catch (error) {
       console.error("Failed to resolve ticket:", error);
     } finally {
@@ -722,14 +748,28 @@ export function ChatWindow({ ticket, onShowContactInfo, onMobileBack }: ChatWind
     }
   }
 
-  async function handleClose() {
-    if (isClosing) return;
+  function handleSnooze() {
+    // Set default date to tomorrow
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    tomorrow.setHours(9, 0, 0, 0);
+    setSnoozeDate(tomorrow.toISOString().slice(0, 16));
+    setShowSnoozeModal(true);
+  }
+
+  async function handleConfirmSnooze() {
+    if (isClosing || !snoozeReason.trim() || !snoozeDate) return;
     setIsClosing(true);
     try {
-      await api.post(`/tickets/${ticket.id}/close`);
-      // The server will generate the AI summary and emit socket events
+      await api.post(`/tickets/${ticket.id}/snooze`, {
+        reason: snoozeReason.trim(),
+        snoozedUntil: new Date(snoozeDate).toISOString(),
+      });
+      setShowSnoozeModal(false);
+      setSnoozeReason("");
+      setSnoozeDate("");
     } catch (error) {
-      console.error("Failed to close ticket:", error);
+      console.error("Failed to snooze ticket:", error);
     } finally {
       setIsClosing(false);
     }
@@ -830,9 +870,9 @@ export function ChatWindow({ ticket, onShowContactInfo, onMobileBack }: ChatWind
             </Button>
           ) : (
             <>
-              <Button 
-                onClick={handleResolve} 
-                variant="outline" 
+              <Button
+                onClick={handleResolve}
+                variant="outline"
                 size="sm"
                 disabled={isClosing}
                 className="text-green-600 border-green-600 hover:bg-green-50 hover:text-green-700 h-7 md:h-8 px-2 md:px-3 text-xs md:text-sm"
@@ -845,20 +885,20 @@ export function ChatWindow({ ticket, onShowContactInfo, onMobileBack }: ChatWind
                 <span className="hidden md:inline">Resolver</span>
                 <span className="md:hidden">OK</span>
               </Button>
-              {/* Encerrar - hidden on mobile */}
-              <Button 
-                onClick={handleClose} 
-                variant="outline" 
+              {/* Adiar - hidden on mobile */}
+              <Button
+                onClick={handleSnooze}
+                variant="outline"
                 size="sm"
                 disabled={isClosing}
-                className="hidden md:inline-flex text-red-600 border-red-600 hover:bg-red-50 hover:text-red-700"
+                className="hidden md:inline-flex text-amber-600 border-amber-600 hover:bg-amber-50 hover:text-amber-700"
               >
                 {isClosing ? (
                   <Loader2 className="w-4 h-4 mr-2 animate-spin" />
                 ) : (
-                  <XCircle className="w-4 h-4 mr-2" />
+                  <CalendarClock className="w-4 h-4 mr-2" />
                 )}
-                Encerrar
+                Adiar
               </Button>
             </>
           )}
@@ -1169,6 +1209,122 @@ export function ChatWindow({ ticket, onShowContactInfo, onMobileBack }: ChatWind
           </Button>
         </form>
       </div>
+
+      {/* Resolve Modal */}
+      <Dialog open={showResolveModal} onOpenChange={setShowResolveModal}>
+        <DialogContent className="sm:max-w-[425px]">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <CheckCircle className="w-5 h-5 text-green-600" />
+              Resolver Conversa
+            </DialogTitle>
+            <DialogDescription>
+              Adicione uma observação sobre a resolução desta conversa. Esta informação ficará salva como registro.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-4">
+            <div className="grid gap-2">
+              <Label htmlFor="resolution-note">Observação da Resolução</Label>
+              <Textarea
+                id="resolution-note"
+                placeholder="Descreva como foi resolvido o atendimento..."
+                value={resolutionNote}
+                onChange={(e) => setResolutionNote(e.target.value)}
+                rows={4}
+                className="resize-none"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setShowResolveModal(false);
+                setResolutionNote("");
+              }}
+            >
+              Cancelar
+            </Button>
+            <Button
+              onClick={handleConfirmResolve}
+              disabled={isClosing}
+              className="bg-green-600 hover:bg-green-700"
+            >
+              {isClosing ? (
+                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+              ) : (
+                <CheckCircle className="w-4 h-4 mr-2" />
+              )}
+              Resolver
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Snooze Modal */}
+      <Dialog open={showSnoozeModal} onOpenChange={setShowSnoozeModal}>
+        <DialogContent className="sm:max-w-[425px]">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <CalendarClock className="w-5 h-5 text-amber-600" />
+              Adiar Conversa
+            </DialogTitle>
+            <DialogDescription>
+              Informe o motivo do adiamento e quando deseja que a conversa volte ao topo da lista.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-4">
+            <div className="grid gap-2">
+              <Label htmlFor="snooze-reason">Motivo do Adiamento *</Label>
+              <Textarea
+                id="snooze-reason"
+                placeholder="Por que está adiando esta conversa?"
+                value={snoozeReason}
+                onChange={(e) => setSnoozeReason(e.target.value)}
+                rows={3}
+                className="resize-none"
+              />
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="snooze-date">Data de Retorno *</Label>
+              <Input
+                id="snooze-date"
+                type="datetime-local"
+                value={snoozeDate}
+                onChange={(e) => setSnoozeDate(e.target.value)}
+                min={new Date().toISOString().slice(0, 16)}
+              />
+              <p className="text-xs text-muted-foreground">
+                A conversa voltará ao topo da lista nesta data e você será notificado.
+              </p>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setShowSnoozeModal(false);
+                setSnoozeReason("");
+                setSnoozeDate("");
+              }}
+            >
+              Cancelar
+            </Button>
+            <Button
+              onClick={handleConfirmSnooze}
+              disabled={isClosing || !snoozeReason.trim() || !snoozeDate}
+              className="bg-amber-600 hover:bg-amber-700"
+            >
+              {isClosing ? (
+                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+              ) : (
+                <CalendarClock className="w-4 h-4 mr-2" />
+              )}
+              Adiar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

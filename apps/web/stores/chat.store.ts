@@ -55,6 +55,10 @@ export interface Ticket {
   isAIHandled: boolean;
   slaDeadline?: string;
   humanTakeoverAt?: string | null;
+  // Snooze fields
+  snoozedAt?: string | null;
+  snoozedUntil?: string | null;
+  snoozeReason?: string | null;
   createdAt: string;
   updatedAt: string;
   contact: Contact;
@@ -224,9 +228,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
       });
 
       // Sort tickets:
-      // 1. Unread messages OR transferred from AI (needs human attention) - highest priority
+      // 0. Snoozed tickets that are due (snoozedUntil <= now) - HIGHEST PRIORITY
+      // 1. Unread messages OR transferred from AI (needs human attention)
       // 2. AI handled tickets (being processed by AI)
       // 3. Responded but still open
+      // 4. Snoozed tickets (not yet due) - go to the bottom
+      const now = new Date();
       const sortedTickets = updatedTickets.sort((a, b) => {
         const aUnread = a._count?.messages || 0;
         const bUnread = b._count?.messages || 0;
@@ -234,7 +241,31 @@ export const useChatStore = create<ChatState>((set, get) => ({
         const bIsAI = b.isAIHandled;
         const aLastMessageFromMe = a.lastMessage?.isFromMe ?? (a.messages?.[0]?.isFromMe ?? false);
         const bLastMessageFromMe = b.lastMessage?.isFromMe ?? (b.messages?.[0]?.isFromMe ?? false);
-        
+
+        // Check if snoozed and if snooze time has passed
+        const aIsSnoozed = a.status === 'SNOOZED';
+        const bIsSnoozed = b.status === 'SNOOZED';
+        const aSnoozeDue = aIsSnoozed && a.snoozedUntil && new Date(a.snoozedUntil) <= now;
+        const bSnoozeDue = bIsSnoozed && b.snoozedUntil && new Date(b.snoozedUntil) <= now;
+        const aStillSnoozed = aIsSnoozed && !aSnoozeDue;
+        const bStillSnoozed = bIsSnoozed && !bSnoozeDue;
+
+        // Priority 0: Snoozed tickets that are due (back from snooze) - HIGHEST PRIORITY
+        if (aSnoozeDue && !bSnoozeDue) return -1;
+        if (bSnoozeDue && !aSnoozeDue) return 1;
+        if (aSnoozeDue && bSnoozeDue) {
+          // Both are due - sort by snooze time
+          return new Date(a.snoozedUntil!).getTime() - new Date(b.snoozedUntil!).getTime();
+        }
+
+        // Priority LAST: Snoozed tickets (still waiting) - go to the bottom
+        if (aStillSnoozed && !bStillSnoozed) return 1;
+        if (bStillSnoozed && !aStillSnoozed) return -1;
+        if (aStillSnoozed && bStillSnoozed) {
+          // Both snoozed - sort by when they'll be unsnoozed
+          return new Date(a.snoozedUntil!).getTime() - new Date(b.snoozedUntil!).getTime();
+        }
+
         // Check if ticket was transferred from AI (PENDING, not AI handled, has humanTakeoverAt)
         const aTransferredFromAI = !aIsAI && a.status === 'PENDING' && a.humanTakeoverAt !== null;
         const bTransferredFromAI = !bIsAI && b.status === 'PENDING' && b.humanTakeoverAt !== null;
@@ -242,7 +273,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         // Priority 1: Has unread client messages OR was transferred from AI (needs human attention)
         const aNeedsAttention = aUnread > 0 || aTransferredFromAI;
         const bNeedsAttention = bUnread > 0 || bTransferredFromAI;
-        
+
         if (aNeedsAttention && !bNeedsAttention) return -1;
         if (bNeedsAttention && !aNeedsAttention) return 1;
 
@@ -251,7 +282,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
           // Transferred from AI takes priority over just unread
           if (aTransferredFromAI && !bTransferredFromAI) return -1;
           if (bTransferredFromAI && !aTransferredFromAI) return 1;
-          
+
           // Both transferred or both have unread - sort by unread count then updatedAt
           if (aUnread !== bUnread) return bUnread - aUnread;
           return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();

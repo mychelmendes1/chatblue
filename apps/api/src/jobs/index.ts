@@ -5,6 +5,7 @@ import { slaCheckProcessor } from "./processors/sla-check.processor";
 import { notificationProcessor } from "./processors/notification.processor";
 import { notionSyncProcessor } from "./processors/notion-sync.processor";
 import { ticketCleanupProcessor } from "./processors/ticket-cleanup.processor";
+import { snoozeCheckProcessor } from "./processors/snooze-check.processor";
 
 // Queue definitions
 export const slaCheckQueue = new Queue("sla-check", {
@@ -46,11 +47,25 @@ export const ticketCleanupQueue = new Queue("ticket-cleanup", {
   },
 });
 
+export const snoozeCheckQueue = new Queue("snooze-check", {
+  connection: redis,
+  defaultJobOptions: {
+    removeOnComplete: 100,
+    removeOnFail: 500,
+    attempts: 3,
+    backoff: {
+      type: "exponential",
+      delay: 1000,
+    },
+  },
+});
+
 // Workers
 let slaWorker: Worker | null = null;
 let notificationWorker: Worker | null = null;
 let notionSyncWorker: Worker | null = null;
 let ticketCleanupWorker: Worker | null = null;
+let snoozeCheckWorker: Worker | null = null;
 
 export async function startWorkers() {
   logger.info("Starting background job workers...");
@@ -111,6 +126,20 @@ export async function startWorkers() {
     logger.error(`Ticket cleanup job ${job?.id} failed:`, error);
   });
 
+  // Snooze Check Worker
+  snoozeCheckWorker = new Worker("snooze-check", snoozeCheckProcessor, {
+    connection: redis,
+    concurrency: 1,
+  });
+
+  snoozeCheckWorker.on("completed", (job: Job) => {
+    logger.debug(`Snooze check job ${job.id} completed`);
+  });
+
+  snoozeCheckWorker.on("failed", (job: Job | undefined, error: Error) => {
+    logger.error(`Snooze check job ${job?.id} failed:`, error);
+  });
+
   // Schedule recurring jobs
   await scheduleRecurringJobs();
 
@@ -140,13 +169,24 @@ async function scheduleRecurringJobs() {
     }
   );
 
+  // Check snoozed tickets every minute
+  await snoozeCheckQueue.add(
+    "check-snoozed-tickets",
+    {},
+    {
+      repeat: {
+        every: 60000, // Every minute
+      },
+    }
+  );
+
   logger.info("Recurring jobs scheduled");
 }
 
 export async function stopWorkers() {
   logger.info("Stopping background job workers...");
 
-  const workers = [slaWorker, notificationWorker, notionSyncWorker, ticketCleanupWorker];
+  const workers = [slaWorker, notificationWorker, notionSyncWorker, ticketCleanupWorker, snoozeCheckWorker];
 
   await Promise.all(
     workers.filter(Boolean).map((worker) => worker?.close())
