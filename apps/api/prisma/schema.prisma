@@ -174,6 +174,8 @@ model Company {
   slaConfigs     SLAConfig[]
   knowledgeBase  KnowledgeBase[]
   faqs           FAQ[]
+  metricGoals    MetricGoal[]
+  metricAlerts   MetricAlert[]
 
   // AI Assistant relations
   aiDataSources  AIDataSource[]
@@ -207,6 +209,7 @@ model User {
   tickets          Ticket[]         @relation("AssignedTickets")
   messages         Message[]
   activities       Activity[]
+  metricGoals      MetricGoal[]
 
   // AI Assistant relations
   aiQueries AIAssistantQuery[]
@@ -258,6 +261,7 @@ model Department {
   slaConfig     SLAConfig?
   knowledgeBase KnowledgeBase[]
   faqs          FAQ[]
+  metricGoals   MetricGoal[]
 
   // AI Assistant relations
   aiDocuments AIDocument[]
@@ -998,4 +1002,58 @@ model AISentimentAnalysis {
   @@index([ticketId])
   @@index([companyId, sentiment])
   @@map("ai_sentiment_analyses")
+}
+
+// ============================================
+// METRICS DASHBOARD MODELS
+// ============================================
+
+/// Metas de Métricas
+model MetricGoal {
+  id        String   @id @default(cuid())
+  name      String
+  metric    String   // nps, slaCompliance, avgResponseTime, fcr, etc.
+  target    Float    // Valor alvo
+  period    String   @default("monthly") // daily, weekly, monthly, quarterly
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  companyId String  @map("company_id")
+  company   Company @relation(fields: [companyId], references: [id])
+
+  departmentId String?     @map("department_id")
+  department   Department? @relation(fields: [departmentId], references: [id])
+
+  userId String? @map("user_id")
+  user   User?   @relation(fields: [userId], references: [id])
+
+  @@map("metric_goals")
+}
+
+/// Alertas de Métricas
+model MetricAlert {
+  id          String   @id @default(cuid())
+  name        String
+  metric      String   // Métrica a monitorar
+  condition   String   // below, above, equals
+  threshold   Float    // Valor de threshold
+  isActive    Boolean  @default(true) @map("is_active")
+
+  // Notificações
+  notifyEmail    Boolean @default(true) @map("notify_email")
+  notifyInApp    Boolean @default(true) @map("notify_in_app")
+  notifyWebhook  String? @map("notify_webhook")
+
+  // Última vez que foi disparado
+  lastTriggeredAt DateTime? @map("last_triggered_at")
+  triggerCount    Int       @default(0) @map("trigger_count")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  companyId String  @map("company_id")
+  company   Company @relation(fields: [companyId], references: [id])
+
+  @@map("metric_alerts")
 }
