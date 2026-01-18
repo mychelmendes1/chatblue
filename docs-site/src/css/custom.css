@@ -1,0 +1,298 @@
+/**
+ * ChatBlue Documentation - Custom CSS
+ * Based on Infima CSS framework
+ */
+
+/* Light Mode - ChatBlue Brand Colors */
+:root {
+  --ifm-color-primary: #3b82f6;
+  --ifm-color-primary-dark: #2563eb;
+  --ifm-color-primary-darker: #1d4ed8;
+  --ifm-color-primary-darkest: #1e40af;
+  --ifm-color-primary-light: #60a5fa;
+  --ifm-color-primary-lighter: #93c5fd;
+  --ifm-color-primary-lightest: #bfdbfe;
+
+  --ifm-background-color: #ffffff;
+  --ifm-background-surface-color: #f8fafc;
+
+  --ifm-code-font-size: 95%;
+  --docusaurus-highlighted-code-line-bg: rgba(59, 130, 246, 0.1);
+
+  --ifm-font-family-base: 'Inter', system-ui, -apple-system, sans-serif;
+  --ifm-heading-font-family: 'Inter', system-ui, -apple-system, sans-serif;
+
+  --ifm-navbar-height: 4rem;
+  --ifm-footer-background-color: #1e293b;
+
+  /* Custom ChatBlue colors */
+  --chatblue-whatsapp: #25D366;
+  --chatblue-success: #22c55e;
+  --chatblue-warning: #f59e0b;
+  --chatblue-error: #ef4444;
+  --chatblue-info: #0ea5e9;
+}
+
+/* Dark Mode */
+[data-theme='dark'] {
+  --ifm-color-primary: #60a5fa;
+  --ifm-color-primary-dark: #3b82f6;
+  --ifm-color-primary-darker: #2563eb;
+  --ifm-color-primary-darkest: #1d4ed8;
+  --ifm-color-primary-light: #93c5fd;
+  --ifm-color-primary-lighter: #bfdbfe;
+  --ifm-color-primary-lightest: #dbeafe;
+
+  --ifm-background-color: #0f172a;
+  --ifm-background-surface-color: #1e293b;
+
+  --docusaurus-highlighted-code-line-bg: rgba(96, 165, 250, 0.15);
+
+  --ifm-footer-background-color: #020617;
+}
+
+/* Navbar */
+.navbar {
+  box-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.1);
+}
+
+.navbar__title {
+  font-weight: 700;
+  color: var(--ifm-color-primary);
+}
+
+[data-theme='dark'] .navbar {
+  background-color: var(--ifm-background-surface-color);
+}
+
+/* Sidebar */
+.theme-doc-sidebar-container {
+  border-right: 1px solid var(--ifm-toc-border-color);
+}
+
+.menu__link {
+  border-radius: 0.375rem;
+  transition: all 0.2s ease;
+}
+
+.menu__link:hover {
+  background-color: var(--ifm-background-surface-color);
+}
+
+.menu__link--active {
+  background-color: rgba(59, 130, 246, 0.1);
+  color: var(--ifm-color-primary);
+  font-weight: 600;
+}
+
+/* Code blocks */
+.prism-code {
+  border-radius: 0.5rem;
+}
+
+code {
+  border-radius: 0.25rem;
+  padding: 0.125rem 0.375rem;
+}
+
+/* Tables */
+table {
+  display: table;
+  width: 100%;
+  border-collapse: collapse;
+}
+
+th {
+  background-color: var(--ifm-background-surface-color);
+  font-weight: 600;
+}
+
+td, th {
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--ifm-toc-border-color);
+}
+
+tr:hover td {
+  background-color: var(--ifm-background-surface-color);
+}
+
+/* Admonitions */
+.admonition {
+  border-radius: 0.5rem;
+  border-left-width: 4px;
+}
+
+.admonition-heading {
+  font-weight: 600;
+}
+
+/* Cards */
+.card {
+  border-radius: 0.75rem;
+  box-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.1);
+  transition: box-shadow 0.2s ease;
+}
+
+.card:hover {
+  box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1);
+}
+
+/* TOC */
+.table-of-contents {
+  font-size: 0.875rem;
+}
+
+.table-of-contents__link {
+  color: var(--ifm-font-color-secondary);
+}
+
+.table-of-contents__link--active {
+  color: var(--ifm-color-primary);
+  font-weight: 500;
+}
+
+/* Search */
+.DocSearch-Button {
+  border-radius: 0.5rem !important;
+}
+
+/* Badges */
+.badge {
+  border-radius: 0.375rem;
+  padding: 0.25rem 0.5rem;
+  font-size: 0.75rem;
+  font-weight: 500;
+}
+
+.badge--primary {
+  background-color: var(--ifm-color-primary);
+  color: white;
+}
+
+.badge--secondary {
+  background-color: var(--ifm-background-surface-color);
+  color: var(--ifm-font-color-base);
+}
+
+.badge--success {
+  background-color: var(--chatblue-success);
+  color: white;
+}
+
+.badge--warning {
+  background-color: var(--chatblue-warning);
+  color: white;
+}
+
+.badge--danger {
+  background-color: var(--chatblue-error);
+  color: white;
+}
+
+/* Custom status badges */
+.status-connected {
+  color: var(--chatblue-success);
+}
+
+.status-disconnected {
+  color: var(--chatblue-error);
+}
+
+.status-connecting {
+  color: var(--chatblue-warning);
+}
+
+/* ASCII diagrams */
+pre.ascii-diagram {
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 0.8rem;
+  line-height: 1.4;
+  overflow-x: auto;
+}
+
+/* Footer */
+.footer {
+  padding-top: 3rem;
+  padding-bottom: 2rem;
+}
+
+.footer__title {
+  font-weight: 600;
+  margin-bottom: 0.75rem;
+}
+
+.footer__link-item {
+  color: #94a3b8;
+  transition: color 0.2s ease;
+}
+
+.footer__link-item:hover {
+  color: white;
+  text-decoration: none;
+}
+
+/* Mobile responsiveness */
+@media (max-width: 768px) {
+  .navbar__title {
+    font-size: 1rem;
+  }
+
+  table {
+    font-size: 0.875rem;
+  }
+
+  td, th {
+    padding: 0.5rem;
+  }
+}
+
+/* Print styles */
+@media print {
+  .navbar,
+  .theme-doc-sidebar-container,
+  .pagination-nav,
+  .footer {
+    display: none !important;
+  }
+
+  .theme-doc-markdown {
+    max-width: 100% !important;
+  }
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background-color: var(--ifm-color-emphasis-300);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background-color: var(--ifm-color-emphasis-400);
+}
+
+[data-theme='dark'] ::-webkit-scrollbar-thumb {
+  background-color: var(--ifm-color-emphasis-500);
+}
+
+/* Animation for loading states */
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
+.loading {
+  animation: pulse 2s ease-in-out infinite;
+}
