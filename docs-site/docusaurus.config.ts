@@ -11,8 +11,8 @@ const config: Config = {
     v4: true,
   },
 
-  url: 'https://docs.chatblue.com.br',
-  baseUrl: '/',
+  url: 'https://chat.grupoblue.com.br',
+  baseUrl: '/docs/',
 
   organizationName: 'chatblue',
   projectName: 'chatblue',
