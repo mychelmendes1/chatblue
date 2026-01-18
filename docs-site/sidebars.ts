@@ -250,6 +250,71 @@ const sidebars: SidebarsConfig = {
     },
   ],
 
+  trainingSidebar: [
+    'treinamento/introducao',
+    {
+      type: 'category',
+      label: 'Manual do Atendente',
+      collapsed: false,
+      items: [
+        'treinamento/atendente/primeiros-passos',
+        'treinamento/atendente/interface-chat',
+        'treinamento/atendente/enviando-mensagens',
+        'treinamento/atendente/gerenciando-tickets',
+        'treinamento/atendente/trabalhando-com-ia',
+      ],
+    },
+    {
+      type: 'category',
+      label: 'Manual do Supervisor',
+      collapsed: true,
+      items: [
+        'treinamento/supervisor/visao-geral',
+        'treinamento/supervisor/dashboard',
+        'treinamento/supervisor/gestao-equipe',
+        'treinamento/supervisor/sla-qualidade',
+        'treinamento/supervisor/relatorios',
+      ],
+    },
+    {
+      type: 'category',
+      label: 'Manual do Administrador',
+      collapsed: true,
+      items: [
+        'treinamento/administrador/painel-controle',
+        'treinamento/administrador/configurando-whatsapp',
+        'treinamento/administrador/usuarios-departamentos',
+        'treinamento/administrador/configuracoes-avancadas',
+        'treinamento/administrador/integracoes',
+      ],
+    },
+    {
+      type: 'category',
+      label: 'Configurando a IA',
+      collapsed: true,
+      items: [
+        'treinamento/ia/configuracao-basica',
+        'treinamento/ia/escolhendo-provedor',
+        'treinamento/ia/personalidade',
+        'treinamento/ia/base-conhecimento',
+        'treinamento/ia/ajuste-fino',
+      ],
+    },
+    {
+      type: 'category',
+      label: 'Boas Praticas',
+      collapsed: true,
+      items: [
+        'treinamento/boas-praticas/comunicacao',
+        'treinamento/boas-praticas/eficiencia',
+        'treinamento/boas-praticas/qualidade',
+        'treinamento/boas-praticas/seguranca',
+      ],
+    },
+    'treinamento/faq',
+    'treinamento/glossario',
+  ],
+
   guidesSidebar: [
     'guias/introducao',
     {

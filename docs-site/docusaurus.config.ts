@@ -81,6 +81,12 @@ const config: Config = {
           label: 'Guias',
         },
         {
+          type: 'docSidebar',
+          sidebarId: 'trainingSidebar',
+          position: 'left',
+          label: 'Treinamento',
+        },
+        {
           href: 'https://github.com/chatblue/chatblue',
           label: 'GitHub',
           position: 'right',
@@ -138,6 +144,23 @@ const config: Config = {
             {
               label: 'Deploy',
               to: '/deploy/producao',
+            },
+          ],
+        },
+        {
+          title: 'Treinamento',
+          items: [
+            {
+              label: 'Manual do Atendente',
+              to: '/treinamento/atendente/primeiros-passos',
+            },
+            {
+              label: 'Manual do Supervisor',
+              to: '/treinamento/supervisor/visao-geral',
+            },
+            {
+              label: 'Manual do Administrador',
+              to: '/treinamento/administrador/painel-controle',
             },
           ],
         },
