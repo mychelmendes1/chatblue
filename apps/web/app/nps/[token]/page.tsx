@@ -19,7 +19,7 @@ export default function NPSPage() {
   const [submitted, setSubmitted] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [alreadyAnswered, setAlreadyAnswered] = useState(false);
-  const [surveyData, setSurveyData] = useState<{ ticket?: any } | null>(null);
+  const [surveyData, setSurveyData] = useState<{ valid: boolean; ticket?: any; alreadyAnswered?: boolean } | null>(null);
 
   useEffect(() => {
     if (!token) return;
@@ -28,12 +28,12 @@ export default function NPSPage() {
     api
       .get(`/public/nps/${token}`)
       .then((response) => {
-        const data = response.data;
+        const data = response.data as { valid: boolean; ticket?: any; alreadyAnswered?: boolean };
         setSurveyData(data);
         
         if (data.alreadyAnswered) {
           setAlreadyAnswered(true);
-          if (data.ticket?.npsScore !== null) {
+          if (data.ticket?.npsScore !== null && data.ticket?.npsScore !== undefined) {
             setScore(data.ticket.npsScore);
             setComment(data.ticket.npsComment || "");
             setSubmitted(true);
