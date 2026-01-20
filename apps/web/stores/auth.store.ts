@@ -31,6 +31,7 @@ interface AuthState {
   refreshToken: string | null;
   isLoading: boolean;
   isSwitchingCompany: boolean;
+  isCheckingAuth: boolean;
   login: (email: string, password: string, companyId?: string) => Promise<void>;
   logout: () => Promise<void>;
   checkAuth: () => Promise<void>;
@@ -46,6 +47,7 @@ export const useAuthStore = create<AuthState>()(
       refreshToken: null,
       isLoading: true,
       isSwitchingCompany: false,
+      isCheckingAuth: false,
 
       login: async (email, password, companyId) => {
         const response = await api.post<{
@@ -84,12 +86,19 @@ export const useAuthStore = create<AuthState>()(
       },
 
       checkAuth: async () => {
-        const { accessToken } = get();
+        const { accessToken, isCheckingAuth } = get();
+
+        // Prevent multiple simultaneous calls
+        if (isCheckingAuth) {
+          return;
+        }
 
         if (!accessToken) {
           set({ isLoading: false });
           return;
         }
+
+        set({ isCheckingAuth: true });
 
         try {
           const [userResponse, companiesResponse] = await Promise.all([
@@ -119,14 +128,28 @@ export const useAuthStore = create<AuthState>()(
             },
             companies: companiesWithUnread,
             isLoading: false,
+            isCheckingAuth: false,
           });
-        } catch (error) {
+        } catch (error: any) {
+          // Handle 429 (Too Many Requests) - don't clear auth, just wait
+          if (error?.message?.includes('429') || error?.message?.includes('Too Many Requests')) {
+            console.warn('Rate limit reached, will retry later');
+            set({ 
+              isLoading: false,
+              isCheckingAuth: false,
+            });
+            // Don't clear auth state on rate limit
+            return;
+          }
+
+          // For other errors, clear auth state
           set({
             user: null,
             companies: [],
             accessToken: null,
             refreshToken: null,
             isLoading: false,
+            isCheckingAuth: false,
           });
         }
       },

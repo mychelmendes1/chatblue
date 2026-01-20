@@ -41,6 +41,15 @@ class ApiClient {
     });
 
     if (!response.ok) {
+      // Handle 429 (Too Many Requests) specifically
+      if (response.status === 429) {
+        const error = await response.json().catch(() => ({}));
+        const errorMessage = error.message || error.error || "Too many requests. Please wait a moment and try again.";
+        const rateLimitError = new Error(errorMessage);
+        (rateLimitError as any).status = 429;
+        throw rateLimitError;
+      }
+
       const error = await response.json().catch(() => ({}));
       throw new Error(error.message || error.error || "Request failed");
     }

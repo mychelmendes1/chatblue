@@ -52,7 +52,16 @@ export class NPSService {
 
       // Generate unique token for NPS survey
       const token = crypto.randomBytes(32).toString('hex');
-      const baseUrl = process.env.FRONTEND_URL || process.env.WEB_URL || 'https://chat.grupoblue.com.br';
+      
+      // Get base URL from environment, but always use production URL if localhost is detected
+      let baseUrl = process.env.FRONTEND_URL || process.env.WEB_URL || 'https://chat.grupoblue.com.br';
+      
+      // Always replace localhost with production URL (for security and correctness)
+      if (baseUrl.includes('localhost') || baseUrl.includes('127.0.0.1')) {
+        baseUrl = 'https://chat.grupoblue.com.br';
+        logger.warn(`NPS: Replaced localhost URL with production URL. Original: ${process.env.FRONTEND_URL || process.env.WEB_URL}`);
+      }
+      
       const npsUrl = `${baseUrl}/nps/${token}`;
 
       // Update ticket with NPS token
