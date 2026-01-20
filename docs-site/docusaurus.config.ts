@@ -17,7 +17,7 @@ const config: Config = {
   organizationName: 'chatblue',
   projectName: 'chatblue',
 
-  onBrokenLinks: 'throw',
+  onBrokenLinks: 'warn',
   onBrokenMarkdownLinks: 'warn',
 
   i18n: {

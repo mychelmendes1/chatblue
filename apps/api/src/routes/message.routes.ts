@@ -7,8 +7,89 @@ import { NotFoundError } from '../middlewares/error.middleware.js';
 import { WhatsAppService } from '../services/whatsapp/whatsapp.service.js';
 import { logger } from '../config/logger.js';
 import { normalizeMediaUrl } from '../utils/media-url.util.js';
+import { translateMetaError, getErrorSuggestion } from '../utils/meta-error-translator.js';
 
 const router = Router();
+
+/**
+ * Helper function to get an active connected WhatsApp connection for a ticket
+ * If the ticket's connection is not connected, finds and updates to an active one
+ */
+async function getActiveConnectionForTicket(ticket: any): Promise<{ connection: any; updated: boolean }> {
+  // Get companyId from ticket (may come from ticket.companyId or ticket.company.id)
+  const companyId = ticket.companyId || ticket.company?.id;
+  
+  if (!companyId) {
+    logger.error(`Ticket ${ticket.id} has no companyId`);
+    throw new Error('Ticket não possui empresa associada.');
+  }
+
+  // Reload ticket connection to get latest status
+  const currentConnection = await prisma.whatsAppConnection.findUnique({
+    where: { id: ticket.connectionId },
+  });
+
+  if (!currentConnection) {
+    logger.error(`Ticket ${ticket.id} has invalid connectionId: ${ticket.connectionId}`);
+    throw new Error('Conexão WhatsApp não encontrada para este ticket.');
+  }
+
+  // Check if current connection is connected
+  if (currentConnection.status === 'CONNECTED' && currentConnection.isActive) {
+    return { connection: currentConnection, updated: false };
+  }
+
+  logger.warn(`Ticket ${ticket.id} connection ${currentConnection.id} (${currentConnection.name}) is not connected (status: ${currentConnection.status}, isActive: ${currentConnection.isActive}). Looking for active connection...`);
+
+  // Find an active and connected connection from the same company
+  // Prefer same type (BAILEYS or META_CLOUD)
+  let activeConnection = await prisma.whatsAppConnection.findFirst({
+    where: {
+      companyId: companyId,
+      status: 'CONNECTED',
+      isActive: true,
+      type: currentConnection.type,
+    },
+    orderBy: [
+      { isDefault: 'desc' }, // Prefer default connection
+      { lastConnected: 'desc' }, // Then most recently connected
+    ],
+  });
+
+  // If no connection of same type found, try any active connection
+  if (!activeConnection) {
+    activeConnection = await prisma.whatsAppConnection.findFirst({
+      where: {
+        companyId: companyId,
+        status: 'CONNECTED',
+        isActive: true,
+      },
+      orderBy: [
+        { isDefault: 'desc' },
+        { lastConnected: 'desc' },
+      ],
+    });
+  }
+
+  if (!activeConnection) {
+    const availableConnections = await prisma.whatsAppConnection.findMany({
+      where: { companyId: companyId },
+      select: { id: true, name: true, status: true, isActive: true, type: true },
+    });
+    logger.error(`No active connection found for company ${companyId}. Available connections:`, availableConnections);
+    throw new Error('WhatsApp não conectado. Por favor, conecte o WhatsApp primeiro escaneando o QR Code.');
+  }
+
+  logger.info(`Found active connection ${activeConnection.id} (${activeConnection.name}, type: ${activeConnection.type}) for ticket ${ticket.id}. Updating ticket to use new connection.`);
+
+  // Update ticket to use the new connection
+  await prisma.ticket.update({
+    where: { id: ticket.id },
+    data: { connectionId: activeConnection.id },
+  });
+
+  return { connection: activeConnection, updated: true };
+}
 
 // Get messages for a ticket (including history from previous tickets)
 router.get('/ticket/:ticketId', authenticate, ensureTenant, async (req, res, next) => {
@@ -33,7 +114,7 @@ router.get('/ticket/:ticketId', authenticate, ensureTenant, async (req, res, nex
     // Collect all ticket IDs for history (current + previous tickets)
     const ticketIds: string[] = [req.params.ticketId];
     
-    if (includeHistory === 'true') {
+    if (includeHistory) {
       // Walk back through the ticket chain to get all previous tickets
       let currentTicket = ticket;
       while (currentTicket.previousTicketId) {
@@ -190,37 +271,114 @@ router.post('/ticket/:ticketId', authenticate, ensureTenant, async (req, res, ne
       // Log contact phone for debugging
       logger.debug(`Sending message to contact phone: ${ticket.contact.phone} (ticket: ${ticket.id}, contact: ${ticket.contact.id})`);
 
-      // Send via WhatsApp
-      const whatsappService = new WhatsAppService(ticket.connection);
-      const result = await whatsappService.sendMessage(ticket.contact.phone, formattedContent, type);
+      // Get active connection for ticket (will find and update if needed)
+      const { connection: connectionToUse, updated: connectionUpdated } = await getActiveConnectionForTicket(ticket);
 
-      // Update message with WhatsApp ID and SENT status
-      updatedMessage = await prisma.message.update({
-        where: { id: message.id },
-        data: {
-          wamid: result.messageId,
-          status: 'SENT',
-          sentAt: new Date(),
-        },
-        include: {
-          sender: {
-            select: {
-              id: true,
-              name: true,
-              avatar: true,
-              isAI: true,
+      // Update message connectionId if ticket was updated to use new connection
+      if (connectionUpdated) {
+        await prisma.message.update({
+          where: { id: message.id },
+          data: { connectionId: connectionToUse.id },
+        });
+      }
+
+      // Send via WhatsApp
+      const whatsappService = new WhatsAppService(connectionToUse);
+      // Note: sendMessage only accepts text, type is used to determine message type in DB
+      
+      try {
+        const result = await whatsappService.sendMessage(ticket.contact.phone, formattedContent);
+
+        // Update message with WhatsApp ID and SENT status
+        updatedMessage = await prisma.message.update({
+          where: { id: message.id },
+          data: {
+            wamid: result.messageId,
+            status: 'SENT',
+            sentAt: new Date(),
+          },
+          include: {
+            sender: {
+              select: {
+                id: true,
+                name: true,
+                avatar: true,
+                isAI: true,
+              },
+            },
+            quoted: {
+              select: {
+                id: true,
+                content: true,
+                type: true,
+                isFromMe: true,
+              },
             },
           },
-          quoted: {
-            select: {
-              id: true,
-              content: true,
-              type: true,
-              isFromMe: true,
+        });
+      } catch (sendError: any) {
+        // Translate error to Portuguese
+        const errorMessage = sendError.message || 'Erro desconhecido';
+        const translatedError = translateMetaError(errorMessage);
+        const suggestion = getErrorSuggestion(errorMessage);
+        
+        logger.error('Message send failed:', { 
+          ticketId: ticket.id, 
+          messageId: message.id, 
+          error: errorMessage,
+          translatedError 
+        });
+        
+        // Update message with FAILED status and translated error
+        updatedMessage = await prisma.message.update({
+          where: { id: message.id },
+          data: {
+            status: 'FAILED',
+            failedReason: errorMessage,
+          },
+          include: {
+            sender: {
+              select: {
+                id: true,
+                name: true,
+                avatar: true,
+                isAI: true,
+              },
+            },
+            quoted: {
+              select: {
+                id: true,
+                content: true,
+                type: true,
+                isFromMe: true,
+              },
             },
           },
-        },
-      });
+        });
+        
+        // Emit socket event with error for real-time feedback
+        const io = req.app.get('io');
+        io.to(`ticket:${ticket.id}`).emit('message:error', {
+          messageId: message.id,
+          error: translatedError,
+          suggestion: suggestion,
+          originalError: errorMessage,
+        });
+        
+        // Also emit the updated message so UI can show FAILED status
+        io.to(`ticket:${ticket.id}`).emit('message:sent', {
+          ...updatedMessage,
+          translatedError,
+          suggestion,
+        });
+        
+        // Don't throw - we want to return the failed message to the client
+        return res.status(200).json({
+          ...updatedMessage,
+          translatedError,
+          suggestion,
+        });
+      }
 
       // Update ticket - auto-assign to agent if no one is assigned
       const shouldAssign = !ticket.assignedToId;
@@ -323,6 +481,41 @@ router.post('/ticket/:ticketId', authenticate, ensureTenant, async (req, res, ne
     // Notify mentioned users
     if (mentionedUserIds && mentionedUserIds.length > 0) {
       for (const userId of mentionedUserIds) {
+        // Create notification in database
+        await prisma.notification.create({
+          data: {
+            type: 'mention',
+            title: 'Você foi mencionado',
+            message: `${sender?.name || 'Alguém'} mencionou você na conversa com ${ticket.contact?.name || 'cliente'}`,
+            userId,
+            ticketId: ticket.id,
+            companyId: req.user!.companyId,
+            metadata: {
+              protocol: ticket.protocol,
+              contactName: ticket.contact?.name,
+              fromUser: sender?.name,
+              messageId: message.id,
+            },
+          },
+        });
+
+        // Send real-time notification via Socket.io
+        io.to(`user:${userId}`).emit('notification', {
+          type: 'mention',
+          title: 'Você foi mencionado',
+          message: `${sender?.name || 'Alguém'} mencionou você na conversa com ${ticket.contact?.name || 'cliente'}`,
+          ticketId: ticket.id,
+          metadata: {
+            protocol: ticket.protocol,
+            contactName: ticket.contact?.name,
+            fromUser: sender?.name,
+            messageId: message.id,
+          },
+          createdAt: new Date().toISOString(),
+          read: false,
+        });
+
+        // Also emit mention event for backward compatibility
         io.to(`user:${userId}`).emit('mention:received', {
           ticketId: ticket.id,
           message: normalizedUpdatedMessage,
@@ -356,6 +549,11 @@ router.post('/ticket/:ticketId/media', authenticate, ensureTenant, async (req, r
       include: {
         contact: true,
         connection: true,
+        company: {
+          select: {
+            id: true,
+          },
+        },
       },
     });
 
@@ -377,12 +575,23 @@ router.post('/ticket/:ticketId/media', authenticate, ensureTenant, async (req, r
       },
     });
 
+    // Get active connection for ticket (will find and update if needed)
+    const { connection: connectionToUse, updated: connectionUpdated } = await getActiveConnectionForTicket(ticket);
+
+    // Update message connectionId if ticket was updated to use new connection
+    if (connectionUpdated) {
+      await prisma.message.update({
+        where: { id: message.id },
+        data: { connectionId: connectionToUse.id },
+      });
+    }
+
     // Send via WhatsApp
     // Normalize URL to HTTPS before sending - Baileys needs to download the file
     const normalizedMediaUrl = normalizeMediaUrl(mediaUrl) || mediaUrl;
     const originalMediaUrl = message.mediaUrl; // Store original URL for comparison
     
-    const whatsappService = new WhatsAppService(ticket.connection);
+    const whatsappService = new WhatsAppService(connectionToUse);
     const result = await whatsappService.sendMedia(
       ticket.contact.phone,
       normalizedMediaUrl,
@@ -489,6 +698,11 @@ router.post('/template', authenticate, ensureTenant, async (req, res, next) => {
       include: {
         contact: true,
         connection: true,
+        company: {
+          select: {
+            id: true,
+          },
+        },
       },
     });
 
@@ -509,8 +723,10 @@ router.post('/template', authenticate, ensureTenant, async (req, res, next) => {
       select: { name: true },
     });
 
-    // Build template content preview (for the message record)
-    const templateContent = `[Template: ${templateName}]`;
+    // Get real template content from Meta API
+    const { MetaCloudService } = await import('../services/whatsapp/meta-cloud.service.js');
+    const metaService = new MetaCloudService(ticket.connection);
+    const templateContent = await metaService.getTemplateContent(templateName, languageCode, components);
 
     // Create message in database
     const message = await prisma.message.create({
@@ -543,33 +759,103 @@ router.post('/template', authenticate, ensureTenant, async (req, res, next) => {
     });
 
     // Send via WhatsApp
-    const whatsappService = new WhatsAppService(ticket.connection);
-    const result = await whatsappService.sendTemplate(
-      ticket.contact.phone,
-      templateName,
-      languageCode,
-      components
-    );
+    // Get active connection for ticket (will find and update if needed)
+    const { connection: connectionToUse, updated: connectionUpdated } = await getActiveConnectionForTicket(ticket);
 
-    // Update message with WhatsApp ID and SENT status
-    const updatedMessage = await prisma.message.update({
-      where: { id: message.id },
-      data: {
-        wamid: result.messageId,
-        status: 'SENT',
-        sentAt: new Date(),
-      },
-      include: {
-        sender: {
-          select: {
-            id: true,
-            name: true,
-            avatar: true,
-            isAI: true,
+    // Update message connectionId if ticket was updated to use new connection
+    if (connectionUpdated) {
+      await prisma.message.update({
+        where: { id: message.id },
+        data: { connectionId: connectionToUse.id },
+      });
+    }
+
+    const whatsappService = new WhatsAppService(connectionToUse);
+    
+    let updatedMessage;
+    try {
+      const result = await whatsappService.sendTemplate(
+        ticket.contact.phone,
+        templateName,
+        languageCode,
+        components
+      );
+
+      // Update message with WhatsApp ID and SENT status
+      updatedMessage = await prisma.message.update({
+        where: { id: message.id },
+        data: {
+          wamid: result.messageId,
+          status: 'SENT',
+          sentAt: new Date(),
+        },
+        include: {
+          sender: {
+            select: {
+              id: true,
+              name: true,
+              avatar: true,
+              isAI: true,
+            },
           },
         },
-      },
-    });
+      });
+    } catch (sendError: any) {
+      // Translate error to Portuguese
+      const errorMessage = sendError.message || 'Erro desconhecido';
+      const translatedError = translateMetaError(errorMessage);
+      const suggestion = getErrorSuggestion(errorMessage);
+      
+      logger.error('Template send failed:', { 
+        ticketId: ticket.id, 
+        messageId: message.id, 
+        templateName,
+        error: errorMessage,
+        translatedError 
+      });
+      
+      // Update message with FAILED status and translated error
+      updatedMessage = await prisma.message.update({
+        where: { id: message.id },
+        data: {
+          status: 'FAILED',
+          failedReason: errorMessage,
+        },
+        include: {
+          sender: {
+            select: {
+              id: true,
+              name: true,
+              avatar: true,
+              isAI: true,
+            },
+          },
+        },
+      });
+      
+      // Emit socket event with error for real-time feedback
+      const io = req.app.get('io');
+      io.to(`ticket:${ticket.id}`).emit('message:error', {
+        messageId: message.id,
+        error: translatedError,
+        suggestion: suggestion,
+        originalError: errorMessage,
+      });
+      
+      // Also emit the updated message so UI can show FAILED status
+      io.to(`ticket:${ticket.id}`).emit('message:sent', {
+        ...updatedMessage,
+        translatedError,
+        suggestion,
+      });
+      
+      // Return the failed message to the client
+      return res.status(200).json({
+        ...updatedMessage,
+        translatedError,
+        suggestion,
+      });
+    }
 
     // Update ticket - auto-assign to agent if no one is assigned
     const shouldAssign = !ticket.assignedToId;

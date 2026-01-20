@@ -308,7 +308,10 @@ export class DataSourceSyncService {
 
     try {
       // Import Google APIs dynamically
-      const { google } = await import('googleapis');
+      // @ts-ignore - googleapis may not be installed
+      const { google } = await import('googleapis').catch(() => {
+        throw new Error('googleapis module not installed. Run: npm install googleapis');
+      });
 
       const oauth2Client = new google.auth.OAuth2(
         config.credentials.client_id,
@@ -475,7 +478,7 @@ export class DataSourceSyncService {
         throw new Error(`Confluence API error: ${response.statusText}`);
       }
 
-      const data = await response.json();
+      const data: any = await response.json();
       const pages = data.results || [];
 
       const existingDocs = await prisma.aIDocument.findMany({

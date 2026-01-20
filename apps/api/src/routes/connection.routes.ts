@@ -75,7 +75,6 @@ router.get('/', authenticate, ensureTenant, async (req, res, next) => {
         lastConnected: true,
         createdAt: true,
         companyId: true,
-        // Instagram specific fields
         instagramAccountId: true,
         instagramUsername: true,
         company: {

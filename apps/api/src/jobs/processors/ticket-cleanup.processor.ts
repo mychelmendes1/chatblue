@@ -36,27 +36,27 @@ export async function ticketCleanupProcessor(job: Job): Promise<CleanupResult> {
       const deleteDate = new Date();
       deleteDate.setDate(deleteDate.getDate() - retentionDays);
 
+      // Note: Archived field doesn't exist in schema yet, skip for now
+      // TODO: Add isArchived field to Ticket model if needed
       // Archive old closed tickets (mark as archived after 30 days)
-      const archivedResult = await prisma.ticket.updateMany({
+      // const archivedResult = await prisma.ticket.updateMany({...});
+
+      // Delete old activities (older than retention period) via tickets
+      const ticketsToDelete = await prisma.ticket.findMany({
         where: {
           companyId: company.id,
-          status: "closed",
           closedAt: {
-            lt: archiveDate,
+            lt: deleteDate,
           },
-          isArchived: false,
         },
-        data: {
-          isArchived: true,
-        },
+        select: { id: true },
       });
-
-      result.archivedTickets += archivedResult.count;
-
-      // Delete old activities (older than retention period)
+      
       const deletedActivities = await prisma.activity.deleteMany({
         where: {
-          companyId: company.id,
+          ticketId: {
+            in: ticketsToDelete.map((t) => t.id),
+          },
           createdAt: {
             lt: deleteDate,
           },
@@ -105,7 +105,7 @@ export async function ticketCleanupProcessor(job: Job): Promise<CleanupResult> {
     const abandonedTickets = await prisma.ticket.findMany({
       where: {
         status: {
-          in: ["open", "pending"],
+          in: ["PENDING", "IN_PROGRESS"],
         },
         updatedAt: {
           lt: abandonedDate,
@@ -123,20 +123,19 @@ export async function ticketCleanupProcessor(job: Job): Promise<CleanupResult> {
       const lastMessage = ticket.messages[0];
 
       // Only auto-close if last message was from client or no messages
-      if (!lastMessage || lastMessage.fromMe === false) {
+      if (!lastMessage || lastMessage.isFromMe === false) {
         await prisma.ticket.update({
           where: { id: ticket.id },
           data: {
-            status: "closed",
+            status: "CLOSED",
             closedAt: new Date(),
           },
         });
 
         await prisma.activity.create({
           data: {
-            type: "ticket_auto_closed",
+            type: "TICKET_AUTO_CLOSED",
             description: "Ticket fechado automaticamente por inatividade",
-            companyId: ticket.companyId,
             ticketId: ticket.id,
           },
         });

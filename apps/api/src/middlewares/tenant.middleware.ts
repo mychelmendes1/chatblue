@@ -69,7 +69,7 @@ export const getTenantPrisma = (companyId: string) => {
           return result;
         },
         async create({ args, query }) {
-          args.data = { ...args.data, companyId };
+          args.data = { ...args.data, companyId } as any;
           return query(args);
         },
         async update({ args, query }) {

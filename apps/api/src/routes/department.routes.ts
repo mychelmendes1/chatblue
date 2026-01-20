@@ -147,8 +147,8 @@ router.post('/', authenticate, requireAdmin, ensureTenant, async (req, res, next
     const department = await prisma.department.create({
       data: {
         ...data,
-        companyId: req.user!.companyId,
-      },
+        company: { connect: { id: req.user!.companyId } },
+      } as any,
     });
 
     res.status(201).json(department);

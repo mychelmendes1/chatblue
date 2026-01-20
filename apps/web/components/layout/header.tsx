@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import { Notifications } from "./notifications";
 
 export function Header() {
   const { user, companies, switchCompany, isSwitchingCompany } = useAuthStore();
@@ -130,6 +131,7 @@ export function Header() {
       </div>
 
       <div className="flex items-center gap-2 md:gap-3 flex-shrink-0">
+        <Notifications />
         <div className="text-right hidden md:block">
           <p className="text-sm font-medium">{user.name}</p>
           <p className="text-xs text-muted-foreground">{user.email}</p>

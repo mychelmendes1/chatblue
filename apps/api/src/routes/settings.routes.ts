@@ -7,8 +7,35 @@ import { NotionService } from '../services/notion/notion.service.js';
 
 const router = Router();
 
-// Get settings
-router.get('/', authenticate, requireAdmin, ensureTenant, async (req, res, next) => {
+// Get settings (public - returns only safe non-sensitive settings)
+router.get('/', authenticate, ensureTenant, async (req, res, next) => {
+  try {
+    let settings = await prisma.companySettings.findUnique({
+      where: { companyId: req.user!.companyId },
+    });
+
+    if (!settings) {
+      settings = await prisma.companySettings.create({
+        data: { companyId: req.user!.companyId },
+      });
+    }
+
+    // Hide sensitive data
+    const safeSettings = {
+      ...settings,
+      notionApiKey: settings.notionApiKey ? '••••••••' : null,
+      aiApiKey: settings.aiApiKey ? '••••••••' : null,
+      whisperApiKey: settings.whisperApiKey ? '••••••••' : null,
+    };
+
+    res.json(safeSettings);
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Get settings (admin only - returns full settings)
+router.get('/admin', authenticate, requireAdmin, ensureTenant, async (req, res, next) => {
   try {
     let settings = await prisma.companySettings.findUnique({
       where: { companyId: req.user!.companyId },
@@ -115,6 +142,8 @@ router.put('/ai', authenticate, requireAdmin, ensureTenant, async (req, res, nex
       aiUseEmojis: z.boolean().optional(),
       aiUseClientName: z.boolean().optional(),
       aiGuardrailsEnabled: z.boolean().optional(),
+      // Blue Mascot
+      blueEnabled: z.boolean().optional(),
     }).parse(req.body);
 
     const settings = await prisma.companySettings.upsert({
@@ -179,8 +208,8 @@ router.post('/sla', authenticate, requireAdmin, ensureTenant, async (req, res, n
     const config = await prisma.sLAConfig.create({
       data: {
         ...data,
-        companyId: req.user!.companyId,
-      },
+        company: { connect: { id: req.user!.companyId } },
+      } as any,
     });
 
     res.status(201).json(config);

@@ -171,6 +171,12 @@ export class BaileysService extends EventEmitter {
       const sessionsDir = getSessionsDir();
       const sessionPath = path.join(sessionsDir, this.connectionId);
       
+      // Ensure session directory exists before using it
+      if (!fs.existsSync(sessionPath)) {
+        fs.mkdirSync(sessionPath, { recursive: true });
+        logger.info(`Created session directory: ${sessionPath}`);
+      }
+      
       logger.info(`Using sessions directory: ${sessionsDir}`);
       logger.info(`Session path for ${this.connectionId}: ${sessionPath}`);
       
@@ -294,6 +300,52 @@ export class BaileysService extends EventEmitter {
             // Reconnect after a delay
             logger.info(`Reconnecting WhatsApp: ${this.connectionId}`);
             setTimeout(() => this.connect(), 5000);
+          } else if (reason === 428 || errorMessage.includes('Connection Terminated by Server')) {
+            // Error 428: Connection Terminated by Server
+            // This usually happens when WhatsApp detects suspicious activity or multiple connections
+            // Wait longer before reconnecting to avoid rate limiting
+            logger.warn(`Connection terminated by server (428) for: ${this.connectionId}. This may indicate multiple connections or suspicious activity. Waiting before reconnect...`);
+            
+            // Clear the session
+            const sessionPath = path.join(getSessionsDir(), this.connectionId);
+            if (fs.existsSync(sessionPath)) {
+              fs.rmSync(sessionPath, { recursive: true, force: true });
+            }
+            
+            await this.safeUpdateConnection({ 
+              status: 'DISCONNECTED', 
+              sessionData: Prisma.DbNull, 
+              qrCode: null 
+            });
+            
+            if (!this.isDeleted) {
+              // Wait longer (30-60 seconds) before reconnecting to avoid rate limiting
+              const delay = 30000 + Math.random() * 30000; // 30-60 seconds
+              logger.info(`Will attempt to reconnect ${this.connectionId} in ${Math.round(delay/1000)} seconds...`);
+              setTimeout(() => {
+                if (!this.isDeleted) {
+                  logger.info(`Attempting to reconnect after 428 error: ${this.connectionId}`);
+                  this.connect();
+                }
+              }, delay);
+            }
+          } else {
+            // Unknown error - log and mark as disconnected
+            logger.error(`Unknown disconnect reason (${reason}) for: ${this.connectionId}, message: ${errorMessage}`);
+            await this.safeUpdateConnection({ 
+              status: 'DISCONNECTED', 
+              qrCode: null 
+            });
+            
+            // Try to reconnect after a delay for unknown errors
+            if (!this.isDeleted && wasConnected) {
+              logger.info(`Attempting to reconnect after unknown error: ${this.connectionId}`);
+              setTimeout(() => {
+                if (!this.isDeleted) {
+                  this.connect();
+                }
+              }, 10000);
+            }
           }
         }
 
@@ -703,7 +755,11 @@ export class BaileysService extends EventEmitter {
     to: string,
     mediaUrl: string,
     mediaType: string,
-    caption?: string
+    caption?: string,
+    options?: {
+      filename?: string;
+      mimetype?: string;
+    }
   ): Promise<{ messageId: string; finalMediaUrl?: string }> {
     // Normalize media URL to HTTPS - Baileys needs to download the file
     // Always log original URL for debugging
@@ -924,7 +980,49 @@ export class BaileysService extends EventEmitter {
         }
         break;
       case 'DOCUMENT':
-        message = { document: { url: normalizedUrl }, caption };
+        // Extract filename from URL or use provided filename
+        let filename = options?.filename;
+        if (!filename && normalizedUrl) {
+          try {
+            // Try to extract filename from URL
+            const urlPath = new URL(normalizedUrl).pathname;
+            const urlFilename = path.basename(urlPath);
+            // Remove UUID prefix if present (format: uuid-filename.ext)
+            filename = urlFilename.includes('-') ? urlFilename.split('-').slice(1).join('-') : urlFilename;
+          } catch (e) {
+            // If URL parsing fails, try simple extraction
+            const urlParts = normalizedUrl.split('/');
+            const lastPart = urlParts[urlParts.length - 1];
+            filename = lastPart.includes('-') ? lastPart.split('-').slice(1).join('-') : lastPart;
+          }
+        }
+        
+        // Determine mimetype from filename or use provided
+        let documentMimetype = options?.mimetype || 'application/pdf';
+        if (filename) {
+          const ext = path.extname(filename).toLowerCase();
+          const mimetypeMap: Record<string, string> = {
+            '.pdf': 'application/pdf',
+            '.doc': 'application/msword',
+            '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            '.xls': 'application/vnd.ms-excel',
+            '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            '.txt': 'text/plain',
+            '.csv': 'text/csv',
+          };
+          documentMimetype = mimetypeMap[ext] || documentMimetype;
+        }
+        
+        // Baileys requires filename and mimetype for documents
+        message = { 
+          document: { 
+            url: normalizedUrl,
+            fileName: filename || 'document.pdf',
+            mimetype: documentMimetype
+          }, 
+          caption 
+        };
+        logger.info(`Sending document: filename=${filename || 'document.pdf'}, mimetype=${documentMimetype}, url=${normalizedUrl}`);
         break;
       default:
         throw new Error(`Unsupported media type: ${mediaType}`);

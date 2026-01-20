@@ -12,7 +12,7 @@ import { cn } from "@/lib/utils";
 function ChatPageContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
-  const { selectedTicket, selectTicket, tickets, setTickets } = useChatStore();
+  const { selectedTicket, selectTicket, tickets, setTickets, updateSelectedTicket } = useChatStore();
   const [showContactInfo, setShowContactInfo] = useState(false);
   const [isLoadingTicket, setIsLoadingTicket] = useState(false);
   // Mobile: track if we're viewing a conversation
@@ -109,6 +109,28 @@ function ChatPageContent() {
         <ContactInfo
           ticket={selectedTicket}
           onClose={() => setShowContactInfo(false)}
+          onTicketUpdate={(updatedTicket) => {
+            try {
+              // Update ticket in store
+              if (updatedTicket && updatedTicket.id) {
+                // Preserve the selected ticket reference to avoid losing messages
+                const updatedTickets = tickets.map(t => 
+                  t.id === updatedTicket.id ? { ...t, ...updatedTicket } : t
+                );
+                setTickets(updatedTickets);
+                
+                // Only update selected ticket if it's the same ticket
+                if (selectedTicket?.id === updatedTicket.id) {
+                  // Use updateSelectedTicket instead of selectTicket to preserve messages
+                  updateSelectedTicket(updatedTicket);
+                }
+              }
+            } catch (error) {
+              console.error("Error updating ticket:", error);
+              // Reload page as fallback
+              window.location.reload();
+            }
+          }}
         />
       )}
     </div>

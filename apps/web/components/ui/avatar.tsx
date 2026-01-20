@@ -22,13 +22,26 @@ Avatar.displayName = AvatarPrimitive.Root.displayName;
 const AvatarImage = React.forwardRef<
   React.ElementRef<typeof AvatarPrimitive.Image>,
   React.ComponentPropsWithoutRef<typeof AvatarPrimitive.Image>
->(({ className, ...props }, ref) => (
-  <AvatarPrimitive.Image
-    ref={ref}
-    className={cn("aspect-square h-full w-full", className)}
-    {...props}
-  />
-));
+>(({ className, onError, ...props }, ref) => {
+  const handleError = (e: React.SyntheticEvent<HTMLImageElement, Event>) => {
+    // Silently handle image load errors (404, expired URLs, etc.)
+    // The AvatarFallback will be shown automatically by Radix UI
+    // Prevent error from bubbling to console
+    e.preventDefault();
+    if (onError) {
+      onError(e);
+    }
+  };
+
+  return (
+    <AvatarPrimitive.Image
+      ref={ref}
+      className={cn("aspect-square h-full w-full", className)}
+      onError={handleError}
+      {...props}
+    />
+  );
+});
 AvatarImage.displayName = AvatarPrimitive.Image.displayName;
 
 const AvatarFallback = React.forwardRef<

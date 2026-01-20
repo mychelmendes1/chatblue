@@ -121,7 +121,7 @@ export function ChatWindow({ ticket, onShowContactInfo, onMobileBack }: ChatWind
     console.log("[ChatWindow] Messages updated, count:", messages.length, "ticketId:", ticket.id);
   }, [messages.length, ticket.id]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [newMessage, setNewMessage] = useState("");
   const [isSending, setIsSending] = useState(false);
@@ -381,9 +381,16 @@ export function ChatWindow({ ticket, onShowContactInfo, onMobileBack }: ChatWind
   }
 
   // Handle message input change
-  function handleMessageChange(e: React.ChangeEvent<HTMLInputElement>) {
+  function handleMessageChange(e: React.ChangeEvent<HTMLTextAreaElement>) {
     const value = e.target.value;
     setNewMessage(value);
+
+    // Auto-resize textarea
+    const textarea = e.target;
+    textarea.style.height = "auto";
+    const scrollHeight = textarea.scrollHeight;
+    const maxHeight = 160; // max-h-40 in pixels (10rem = 160px)
+    textarea.style.height = `${Math.min(scrollHeight, maxHeight)}px`;
 
     // Check for @ mention trigger
     const lastAtIndex = value.lastIndexOf("@");
@@ -404,6 +411,19 @@ export function ChatWindow({ ticket, onShowContactInfo, onMobileBack }: ChatWind
         setIsInternalMode(false);
       }
     }
+  }
+
+  // Handle Enter key: send message if Enter alone, new line if Shift+Enter
+  function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      handleSendMessage(e as any);
+      // Reset textarea height after sending
+      if (inputRef.current) {
+        inputRef.current.style.height = "auto";
+      }
+    }
+    // Shift+Enter will default to new line (default behavior)
   }
 
   // Select a user mention
@@ -1188,12 +1208,14 @@ export function ChatWindow({ ticket, onShowContactInfo, onMobileBack }: ChatWind
           >
             <AtSign className="w-4 h-4 md:w-5 md:h-5" />
           </Button>
-          <Input
+          <Textarea
             ref={inputRef}
             placeholder={isInternalMode ? "Interna... @mencione" : "Mensagem..."}
             value={newMessage}
             onChange={handleMessageChange}
-            className={cn("flex-1 min-w-0 h-8 md:h-10 text-sm md:text-base", isInternalMode && "border-amber-400 focus-visible:ring-amber-400")}
+            onKeyDown={handleKeyDown}
+            rows={1}
+            className={cn("flex-1 min-w-0 min-h-[32px] md:min-h-[40px] max-h-32 md:max-h-40 text-sm md:text-base resize-none", isInternalMode && "border-amber-400 focus-visible:ring-amber-400")}
           />
           <Button 
             type="submit" 
@@ -1474,9 +1496,17 @@ function MessageBubble({ message, onReply }: { message: any; onReply: () => void
         )}
 
         {messageType === "TEXT" && (
-          <p className={cn("whitespace-pre-wrap", isDeleted && "line-through text-muted-foreground")}>
-            {isDeleted ? "Esta mensagem foi apagada" : (message.content || "")}
-          </p>
+          <div>
+            <p className={cn("whitespace-pre-wrap", isDeleted && "line-through text-muted-foreground")}>
+              {isDeleted ? "Esta mensagem foi apagada" : (message.content || "")}
+            </p>
+            {message.status === "FAILED" && message.failedReason && (
+              <div className="flex items-center gap-2 text-xs text-destructive mt-2 p-2 bg-destructive/10 rounded">
+                <AlertCircle className="w-3 h-3 flex-shrink-0" />
+                <span>{(message as any).translatedError || message.failedReason}</span>
+              </div>
+            )}
+          </div>
         )}
 
         {!isDeleted && messageType === "IMAGE" && message.mediaUrl && (

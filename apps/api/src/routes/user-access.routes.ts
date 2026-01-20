@@ -460,13 +460,13 @@ router.post('/switch-company', authenticate, async (req, res, next) => {
     const accessToken = jwt.sign(
       payload,
       process.env.JWT_SECRET!,
-      { expiresIn: process.env.JWT_EXPIRES_IN || '15m' }
+      { expiresIn: (process.env.JWT_EXPIRES_IN || '15m') as any }
     );
 
     const refreshToken = jwt.sign(
       payload,
       process.env.JWT_REFRESH_SECRET!,
-      { expiresIn: process.env.JWT_REFRESH_EXPIRES_IN || '7d' }
+      { expiresIn: (process.env.JWT_REFRESH_EXPIRES_IN || '7d') as any }
     );
 
     // Store new refresh token in Redis

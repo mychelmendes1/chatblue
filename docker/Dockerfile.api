@@ -1,9 +1,12 @@
 # ==========================================
 # Stage 1: Dependencies
 # ==========================================
-FROM node:20-alpine AS deps
+FROM node:20-alpine3.18 AS deps
 
 WORKDIR /app
+
+# Install git (needed for @whiskeysockets/baileys)
+RUN apk add --no-cache git
 
 # Install pnpm
 RUN npm install -g pnpm@8
@@ -14,14 +17,17 @@ COPY apps/api/package.json ./apps/api/
 COPY apps/api/prisma ./apps/api/prisma/
 
 # Install all dependencies (including devDependencies for build)
-RUN pnpm install --frozen-lockfile
+RUN pnpm install
 
 # ==========================================
 # Stage 2: Builder
 # ==========================================
-FROM node:20-alpine AS builder
+FROM node:20-alpine3.18 AS builder
 
 WORKDIR /app
+
+# Install git (needed for @whiskeysockets/baileys)
+RUN apk add --no-cache git
 
 # Install pnpm
 RUN npm install -g pnpm@8
@@ -35,8 +41,8 @@ COPY package.json pnpm-lock.yaml* pnpm-workspace.yaml ./
 COPY apps/api ./apps/api
 COPY turbo.json ./
 
-# Generate Prisma Client
-RUN cd apps/api && npx prisma generate
+# Generate Prisma Client (use exact version to avoid auto-installing latest)
+RUN cd apps/api && npx prisma@5.22.0 generate
 
 # Build the application
 RUN pnpm --filter api build
@@ -44,9 +50,12 @@ RUN pnpm --filter api build
 # ==========================================
 # Stage 3: Production
 # ==========================================
-FROM node:20-alpine AS runner
+FROM node:20-alpine3.18 AS runner
 
 WORKDIR /app
+
+# Install git (Alpine 3.18 already has OpenSSL 1.1 for Prisma)
+RUN apk add --no-cache git openssl
 
 # Install pnpm
 RUN npm install -g pnpm@8
@@ -63,13 +72,12 @@ ENV API_PORT=3001
 COPY package.json pnpm-lock.yaml* pnpm-workspace.yaml ./
 COPY apps/api/package.json ./apps/api/
 
-# Install production dependencies only
-RUN pnpm install --frozen-lockfile --prod
+# Install dependencies (include dev deps for prisma generate)
+RUN pnpm install
 
-# Copy Prisma schema and generated client
+# Copy Prisma schema and generate client in runner (use exact version)
 COPY --from=builder /app/apps/api/prisma ./apps/api/prisma
-COPY --from=builder /app/apps/api/node_modules/.prisma ./apps/api/node_modules/.prisma
-COPY --from=builder /app/apps/api/node_modules/@prisma ./apps/api/node_modules/@prisma
+RUN cd apps/api && npx prisma@5.22.0 generate
 
 # Copy built application
 COPY --from=builder /app/apps/api/dist ./apps/api/dist

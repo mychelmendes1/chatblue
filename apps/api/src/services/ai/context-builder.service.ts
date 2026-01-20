@@ -3,6 +3,7 @@ import { logger } from '../../config/logger.js';
 import { PersonalityService, PersonalityConfig, DEFAULT_PERSONALITY } from './personality.service.js';
 import { GuardrailsService, GuardrailsConfig, DEFAULT_GUARDRAILS } from './guardrails.service.js';
 import { AIContext } from './ai.service.js';
+import { ContextRetrievalService } from '../knowledge/context-retrieval.service.js';
 
 export interface ContextBuilderConfig {
   maxHistoryMessages: number;
@@ -31,11 +32,13 @@ export class ContextBuilderService {
   private config: ContextBuilderConfig;
   private personalityService: PersonalityService;
   private guardrailsService: GuardrailsService;
+  private contextRetrieval: ContextRetrievalService;
 
   constructor(config: Partial<ContextBuilderConfig> = {}) {
     this.config = { ...DEFAULT_CONTEXT_CONFIG, ...config };
     this.personalityService = new PersonalityService(config.personalityConfig);
     this.guardrailsService = new GuardrailsService(config.guardrailsConfig);
+    this.contextRetrieval = new ContextRetrievalService();
   }
 
   /**
@@ -120,6 +123,15 @@ export class ContextBuilderService {
         userMessage
       );
 
+      // NOVO: Buscar contexto de conhecimento relevante
+      const knowledgeContext = await this.contextRetrieval.findRelevantContext(
+        company.id,
+        userMessage,
+        ticket.assignedToId || undefined,
+        settings?.aiProvider,
+        settings?.aiApiKey
+      );
+
       // Build system prompt
       const systemPrompt = this.buildSystemPrompt(
         aiAgentConfig,
@@ -127,7 +139,8 @@ export class ContextBuilderService {
         department?.name,
         knowledgeBaseContext,
         faqContext,
-        contact.name
+        contact.name,
+        knowledgeContext
       );
 
       return {
@@ -336,7 +349,8 @@ export class ContextBuilderService {
     departmentName: string | undefined,
     knowledgeBaseContext: string,
     faqContext: string,
-    contactName: string | null
+    contactName: string | null,
+    knowledgeContext?: { context: any; sources: any[]; content: string } | null
   ): string {
     const agentName = aiAgentConfig?.name || 'Assistente Virtual';
     const baseSystemPrompt = aiAgentConfig?.systemPrompt || '';
@@ -373,6 +387,18 @@ export class ContextBuilderService {
       systemPrompt += `\n\nPERGUNTAS FREQUENTES RELACIONADAS:\n${faqContext}`;
     }
 
+    // NOVO: Adicionar contexto de conhecimento especializado
+    if (knowledgeContext) {
+      systemPrompt += `\n\nCONTEXTO ESPECIALIZADO: ${knowledgeContext.context.name}`;
+      if (knowledgeContext.context.description) {
+        systemPrompt += `\n${knowledgeContext.context.description}`;
+      }
+      if (knowledgeContext.context.systemPrompt) {
+        systemPrompt += `\n\nINSTRUÇÕES DO CONTEXTO:\n${knowledgeContext.context.systemPrompt}`;
+      }
+      systemPrompt += `\n\nBASE DE CONHECIMENTO DO CONTEXTO:\n${knowledgeContext.content}`;
+    }
+
     // Add guardrails
     systemPrompt += guardrailsInstructions;
 
@@ -404,6 +430,8 @@ export class ContextBuilderService {
     };
   }
 }
+
+
 
 
 

@@ -420,9 +420,9 @@ Tenha campos padronizados no Notion:
 ### 2. Use Relacoes
 
 Conecte databases relacionadas:
-- Contatos <-> Empresas
-- Contatos <-> Tickets
-- Empresas <-> Planos
+- Contatos ↔ Empresas
+- Contatos ↔ Tickets
+- Empresas ↔ Planos
 
 ### 3. Mantenha Dados Atualizados
 

@@ -44,3 +44,8 @@ docker exec chatblue_postgres psql -U chatblue -d chatblue -c "SELECT id, email,
 
 
 
+
+
+
+
+

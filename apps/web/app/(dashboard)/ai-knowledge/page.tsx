@@ -491,12 +491,12 @@ export default function AIKnowledgePage() {
                 className="pl-10"
               />
             </div>
-            <Select value={selectedType || ""} onValueChange={(v) => setSelectedType(v || null)}>
+            <Select value={selectedType || "all"} onValueChange={(v) => setSelectedType(v === "all" ? null : v)}>
               <SelectTrigger className="w-48">
                 <SelectValue placeholder="Todas as fontes" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="">Todas as fontes</SelectItem>
+                <SelectItem value="all">Todas as fontes</SelectItem>
                 {SOURCE_TYPES.map((type) => (
                   <SelectItem key={type.id} value={type.id}>
                     {type.name}

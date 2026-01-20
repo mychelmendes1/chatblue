@@ -56,6 +56,34 @@ export class MessageProcessor {
   }
 
   /**
+   * Extract email address from text using regex
+   * Returns the first valid email found, or null if none found
+   */
+  private static extractEmailFromText(text: string): string | null {
+    if (!text) return null;
+    
+    // Email regex pattern - matches most common email formats
+    const emailRegex = /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b/gi;
+    const matches = text.match(emailRegex);
+    
+    if (matches && matches.length > 0) {
+      // Return the first valid email found
+      // Clean up common false positives (like URLs with @)
+      const email = matches[0].trim();
+      
+      // Basic validation - should not be too short or contain suspicious patterns
+      if (email.length >= 5 && 
+          !email.startsWith('@') && 
+          !email.endsWith('@') &&
+          email.split('@').length === 2) {
+        return email.toLowerCase();
+      }
+    }
+    
+    return null;
+  }
+
+  /**
    * Check if a phone number appears to be a LID (Linked ID)
    * LIDs are used by WhatsApp when users have phone number privacy enabled
    * They are typically 15+ digits and don't follow standard phone number patterns
@@ -295,7 +323,13 @@ export class MessageProcessor {
               department: null, // No department - goes to Triage
               createdAt: ticket.createdAt,
               updatedAt: ticket.updatedAt,
-              contact: ticket.contact,
+              contactId: ticket.contactId,
+              contact: (ticket as any).contact ? {
+                id: (ticket as any).contact.id,
+                name: (ticket as any).contact.name,
+                phone: (ticket as any).contact.phone,
+                avatar: (ticket as any).contact.avatar,
+              } : null,
               assignedTo: ticket.assignedTo ? {
                 id: ticket.assignedTo.id,
                 name: ticket.assignedTo.name,
@@ -379,22 +413,72 @@ export class MessageProcessor {
         // Emit socket event for new ticket
         const io = (global as any).io;
         if (io) {
-          io.to(`company:${companyId}`).emit('ticket:created', {
-            id: ticket.id,
-            protocol: ticket.protocol,
-            status: ticket.status,
-            priority: 'MEDIUM',
-            isAIHandled: ticket.isAIHandled,
-            createdAt: ticket.createdAt,
-            updatedAt: ticket.updatedAt,
-            contact: {
-              id: contact.id,
-              name: contact.name,
-              phone: contact.phone,
-            },
-            assignedTo: ticket.assignedTo,
-          });
-          logger.info(`Emitted ticket:created for ticket ${ticket.id}`);
+          // Get full ticket data for socket event
+          try {
+            const fullTicket = await prisma.ticket.findUnique({
+              where: { id: ticket.id },
+              include: {
+                contact: {
+                  select: { id: true, name: true, phone: true, avatar: true, isClient: true },
+                },
+                assignedTo: {
+                  select: { id: true, name: true, avatar: true, isAI: true },
+                },
+                department: {
+                  select: { id: true, name: true, color: true },
+                },
+                _count: {
+                  select: {
+                    messages: { where: { isFromMe: false, readAt: null } },
+                  },
+                },
+              },
+            });
+            
+            if (fullTicket) {
+              io.to(`company:${companyId}`).emit('ticket:created', {
+                ...fullTicket,
+                lastMessage: null,
+              });
+              logger.info(`Emitted ticket:created for ticket ${ticket.id} with full data`);
+            } else {
+              // Fallback if query fails
+              io.to(`company:${companyId}`).emit('ticket:created', {
+                id: ticket.id,
+                protocol: ticket.protocol,
+                status: ticket.status,
+                priority: 'MEDIUM',
+                isAIHandled: ticket.isAIHandled,
+                createdAt: ticket.createdAt,
+                updatedAt: ticket.updatedAt,
+                contact: {
+                  id: contact.id,
+                  name: contact.name,
+                  phone: contact.phone,
+                },
+                assignedTo: ticket.assignedTo,
+              });
+              logger.info(`Emitted ticket:created for ticket ${ticket.id} with fallback data`);
+            }
+          } catch (error) {
+            logger.error(`Error fetching full ticket data for socket event: ${error}`);
+            // Fallback emit
+            io.to(`company:${companyId}`).emit('ticket:created', {
+              id: ticket.id,
+              protocol: ticket.protocol,
+              status: ticket.status,
+              priority: 'MEDIUM',
+              isAIHandled: ticket.isAIHandled,
+              createdAt: ticket.createdAt,
+              updatedAt: ticket.updatedAt,
+              contact: {
+                id: contact.id,
+                name: contact.name,
+                phone: contact.phone,
+              },
+              assignedTo: ticket.assignedTo,
+            });
+          }
         }
       }
 
@@ -444,6 +528,24 @@ export class MessageProcessor {
           createdAt: timestamp,
         },
       });
+
+      // Extract email from message content if contact doesn't have email
+      if (messageContent && !contact.email) {
+        const extractedEmail = this.extractEmailFromText(messageContent);
+        if (extractedEmail) {
+          try {
+            await prisma.contact.update({
+              where: { id: contact.id },
+              data: { email: extractedEmail },
+            });
+            logger.info(`Email extracted and saved for contact ${contact.id}: ${extractedEmail}`);
+            // Update contact object for socket emission
+            contact.email = extractedEmail;
+          } catch (error) {
+            logger.error(`Failed to update contact email: ${error}`);
+          }
+        }
+      }
 
       // Update contact's lastMessageAt for 24-hour messaging window tracking (Meta Cloud API)
       await prisma.contact.update({
@@ -503,6 +605,7 @@ export class MessageProcessor {
               id: contact.id,
               name: contact.name,
               phone: contact.phone,
+              email: contact.email,
             },
           },
         });
@@ -512,7 +615,7 @@ export class MessageProcessor {
           where: { id: ticket.id },
           include: {
             contact: {
-              select: { id: true, name: true, phone: true, avatar: true, isClient: true },
+              select: { id: true, name: true, phone: true, email: true, avatar: true, isClient: true },
             },
             assignedTo: {
               select: { id: true, name: true, avatar: true, isAI: true },
@@ -531,11 +634,20 @@ export class MessageProcessor {
         // Emit message:new to ticket room for real-time chat updates
         const ticketRoom = `ticket:${ticket.id}`;
         logger.info(`[Socket] Preparing to emit message:new to room ${ticketRoom} for message ${normalizedMessage.id}`);
+        
+        // Emit to ticket room (for users viewing this specific ticket)
         io.to(ticketRoom).emit('message:new', {
           ...normalizedMessage,
           ticketId: ticket.id,
         });
-        logger.info(`[Socket] message:new emitted for message ${normalizedMessage.id} to ticket ${ticket.id} in room ${ticketRoom}`);
+        
+        // Also emit to company room as fallback (for sidebar updates)
+        io.to(`company:${companyId}`).emit('message:new', {
+          ...normalizedMessage,
+          ticketId: ticket.id,
+        });
+        
+        logger.info(`[Socket] message:new emitted for message ${normalizedMessage.id} to ticket ${ticket.id} in room ${ticketRoom} and company:${companyId}`);
 
         // Emit ticket updated with full data to refresh and reorder the sidebar
         io.to(`company:${companyId}`).emit('ticket:updated', {
@@ -702,9 +814,22 @@ export class MessageProcessor {
         where: { companyId },
       });
 
-      if (!settings?.aiEnabled || !settings?.aiApiKey) {
+      if (!settings) {
+        logger.warn(`AI: CompanySettings não encontrado para companyId ${companyId}`);
         return;
       }
+
+      if (!settings.aiEnabled) {
+        logger.debug(`AI: IA não está habilitada para companyId ${companyId}`);
+        return;
+      }
+
+      if (!settings.aiApiKey) {
+        logger.warn(`AI: API Key não configurada para companyId ${companyId}. Configure em Settings > AI`);
+        return;
+      }
+
+      logger.debug(`AI: Configurações OK - provider=${settings.aiProvider}, hasApiKey=${!!settings.aiApiKey}`);
 
       const ticket = await prisma.ticket.findUnique({
         where: { id: ticketId },
@@ -720,9 +845,22 @@ export class MessageProcessor {
         },
       });
 
-      if (!ticket || !ticket.assignedTo?.aiConfig) {
+      if (!ticket) {
+        logger.warn(`AI: Ticket ${ticketId} não encontrado`);
         return;
       }
+
+      if (!ticket.assignedTo) {
+        logger.warn(`AI: Ticket ${ticketId} não está atribuído a nenhum usuário`);
+        return;
+      }
+
+      if (!ticket.assignedTo.aiConfig) {
+        logger.warn(`AI: Ticket ${ticketId} atribuído a ${ticket.assignedTo.name} (${ticket.assignedTo.id}) mas usuário não tem aiConfig. ${ticket.assignedTo.isAI ? 'Usuário é marcado como IA mas sem configuração.' : 'Usuário não é IA.'}`);
+        return;
+      }
+
+      logger.debug(`AI: Processando mensagem do ticket ${ticketId} com usuário IA ${ticket.assignedTo.name}`);
 
       const aiConfig = ticket.assignedTo.aiConfig as any;
 

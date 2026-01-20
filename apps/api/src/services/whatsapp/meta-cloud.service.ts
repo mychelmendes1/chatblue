@@ -741,6 +741,55 @@ export class MetaCloudService {
   }
 
   /**
+   * Get a specific template by name and build its content with provided parameters
+   */
+  async getTemplateContent(templateName: string, languageCode: string, components?: any[]): Promise<string> {
+    try {
+      const templates = await this.getTemplates();
+      const template = templates.find(
+        (t: any) => t.name === templateName && t.language === languageCode
+      ) || templates.find((t: any) => t.name === templateName);
+
+      if (!template) {
+        logger.warn(`Template ${templateName} not found`);
+        return `[Template: ${templateName}]`;
+      }
+
+      // Extract text from template components
+      let content = '';
+      
+      for (const component of template.components || []) {
+        if (component.type === 'HEADER' && component.format === 'TEXT') {
+          content += `*${component.text}*\n\n`;
+        } else if (component.type === 'BODY') {
+          let bodyText = component.text || '';
+          
+          // Replace variables {{1}}, {{2}}, etc. with provided values
+          if (components) {
+            const bodyComponent = components.find((c: any) => c.type === 'body');
+            if (bodyComponent?.parameters) {
+              bodyComponent.parameters.forEach((param: any, index: number) => {
+                const placeholder = `{{${index + 1}}}`;
+                const value = param.text || param.parameter_name || '';
+                bodyText = bodyText.replace(placeholder, value);
+              });
+            }
+          }
+          
+          content += bodyText;
+        } else if (component.type === 'FOOTER') {
+          content += `\n\n_${component.text}_`;
+        }
+      }
+
+      return content || `[Template: ${templateName}]`;
+    } catch (error) {
+      logger.error('Error getting template content:', error);
+      return `[Template: ${templateName}]`;
+    }
+  }
+
+  /**
    * Get WhatsApp Business Account ID
    */
   private async getWABAId(): Promise<string | null> {

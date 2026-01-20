@@ -57,7 +57,7 @@ WORKDIR /app
 
 # Create non-root user for security
 RUN addgroup --system --gid 1001 nodejs
-RUN adduser --system --uid 1001 nextjs
+RUN adduser --system --uid 1001 --ingroup nodejs nextjs
 
 # Set environment variables
 ENV NODE_ENV=production
@@ -82,5 +82,5 @@ EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
   CMD wget --no-verbose --tries=1 --spider http://localhost:3000/ || exit 1
 
-# Start the server
+# Start the server (monorepo: server.js is in apps/web/)
 CMD ["node", "apps/web/server.js"]

@@ -1,7 +1,7 @@
 import { Job } from "bullmq";
 import { prisma } from "../../config/database";
 import { logger } from "../../config/logger";
-import { io } from "../../sockets";
+import { getIO } from "../../sockets";
 
 interface NotificationData {
   type: "sla_warning" | "sla_breach" | "new_ticket" | "ticket_assigned" | "mention";
@@ -34,11 +34,11 @@ export async function notificationProcessor(job: Job<NotificationData>) {
     }
 
     // Create activity log for the notification
+    // Note: Activity model doesn't have companyId, it's inferred from ticket/user relation
     await prisma.activity.create({
       data: {
-        type: `notification_${type}`,
+        type: `NOTIFICATION_${type.toUpperCase().replace('-', '_')}` as any,
         description: message,
-        companyId: user.companyId,
         userId: user.id,
         ticketId: ticketId || undefined,
         metadata: metadata || {},
@@ -46,6 +46,7 @@ export async function notificationProcessor(job: Job<NotificationData>) {
     });
 
     // Send real-time notification via Socket.io
+    const io = getIO();
     io?.to(`user:${userId}`).emit("notification", {
       id: job.id,
       type,
@@ -61,7 +62,7 @@ export async function notificationProcessor(job: Job<NotificationData>) {
       const admins = await prisma.user.findMany({
         where: {
           companyId: user.companyId,
-          role: "admin",
+          role: "ADMIN",
           isActive: true,
           id: { not: userId }, // Don't duplicate for the same user
         },

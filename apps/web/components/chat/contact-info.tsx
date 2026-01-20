@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   X,
   Phone,
@@ -12,6 +12,8 @@ import {
   Tag,
   MessageSquare,
   RefreshCw,
+  ArrowRight,
+  UserPlus,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -19,18 +21,32 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { formatPhone } from "@/lib/utils";
 import { api } from "@/lib/api";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 interface ContactInfoProps {
   ticket: any;
   onClose: () => void;
+  onTicketUpdate?: (updatedTicket: any) => void;
 }
 
-export function ContactInfo({ ticket, onClose }: ContactInfoProps) {
+export function ContactInfo({ ticket, onClose, onTicketUpdate }: ContactInfoProps) {
   const [isEditing, setIsEditing] = useState(false);
   const [name, setName] = useState(ticket.contact?.name || "");
   const [email, setEmail] = useState(ticket.contact?.email || "");
   const [isSaving, setIsSaving] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
+  const [departments, setDepartments] = useState<any[]>([]);
+  const [selectedDepartmentId, setSelectedDepartmentId] = useState<string>("");
+  const [users, setUsers] = useState<any[]>([]);
+  const [selectedUserId, setSelectedUserId] = useState<string>("");
+  const [isTransferring, setIsTransferring] = useState(false);
+  const [isTransferringUser, setIsTransferringUser] = useState(false);
 
   const contactName = ticket.contact?.name || formatPhone(ticket.contact?.phone);
   const initials = contactName
@@ -39,6 +55,13 @@ export function ContactInfo({ ticket, onClose }: ContactInfoProps) {
     .join("")
     .toUpperCase()
     .slice(0, 2);
+
+  // Update email when ticket.contact.email changes (from socket events)
+  useEffect(() => {
+    if (ticket.contact?.email) {
+      setEmail(ticket.contact.email);
+    }
+  }, [ticket.contact?.email]);
 
   async function handleSave() {
     setIsSaving(true);
@@ -60,6 +83,132 @@ export function ContactInfo({ ticket, onClose }: ContactInfoProps) {
       console.error("Failed to sync with Notion:", error);
     } finally {
       setIsSyncing(false);
+    }
+  }
+
+  // Fetch departments
+  useEffect(() => {
+    async function fetchDepartments() {
+      try {
+        const response = await api.get<any[]>("/departments");
+        setDepartments(response.data || []);
+      } catch (error) {
+        console.error("Failed to fetch departments:", error);
+      }
+    }
+    fetchDepartments();
+  }, []);
+
+  // Fetch users
+  useEffect(() => {
+    async function fetchUsers() {
+      try {
+        const response = await api.get<any[]>("/users?isActive=true&isAI=false");
+        setUsers(response.data || []);
+      } catch (error) {
+        console.error("Failed to fetch users:", error);
+      }
+    }
+    fetchUsers();
+  }, []);
+
+  async function handleTransferDepartment() {
+    if (!selectedDepartmentId || selectedDepartmentId === ticket.department?.id) {
+      return;
+    }
+
+    setIsTransferring(true);
+    try {
+      const response = await api.post(`/tickets/${ticket.id}/transfer`, {
+        toDepartmentId: selectedDepartmentId,
+        reason: "Transferência manual de departamento",
+      });
+      
+      // Reset selection first
+      setSelectedDepartmentId("");
+      
+      // Update ticket if callback provided
+      if (onTicketUpdate && response?.data) {
+        try {
+          // Ensure we have a valid ticket object
+          const updatedTicket = response.data as any;
+          if (updatedTicket && typeof updatedTicket === 'object' && 'id' in updatedTicket) {
+            // Ensure the ticket ID matches to preserve messages
+            if (updatedTicket.id === ticket.id) {
+              onTicketUpdate(updatedTicket);
+            } else {
+              console.warn("Ticket ID mismatch, reloading page");
+              window.location.reload();
+            }
+          } else {
+            console.warn("Invalid ticket data received, reloading page");
+            window.location.reload();
+          }
+        } catch (updateError) {
+          console.error("Error updating ticket in store:", updateError);
+          // Fallback to reload if update fails
+          window.location.reload();
+        }
+      } else {
+        // Fallback: reload page
+        window.location.reload();
+      }
+    } catch (error: any) {
+      console.error("Failed to transfer department:", error);
+      const errorMessage = error?.response?.data?.error || error?.message || "Erro ao transferir departamento";
+      alert(errorMessage);
+    } finally {
+      setIsTransferring(false);
+    }
+  }
+
+  async function handleTransferUser() {
+    if (!selectedUserId || selectedUserId === ticket.assignedTo?.id) {
+      return;
+    }
+
+    setIsTransferringUser(true);
+    try {
+      const response = await api.post(`/tickets/${ticket.id}/transfer`, {
+        toUserId: selectedUserId,
+        reason: "Transferência manual para outro atendente",
+      });
+      
+      // Reset selection first
+      setSelectedUserId("");
+      
+      // Update ticket if callback provided
+      if (onTicketUpdate && response?.data) {
+        try {
+          // Ensure we have a valid ticket object
+          const updatedTicket = response.data as any;
+          if (updatedTicket && typeof updatedTicket === 'object' && 'id' in updatedTicket) {
+            // Ensure the ticket ID matches to preserve messages
+            if (updatedTicket.id === ticket.id) {
+              onTicketUpdate(updatedTicket);
+            } else {
+              console.warn("Ticket ID mismatch, reloading page");
+              window.location.reload();
+            }
+          } else {
+            console.warn("Invalid ticket data received, reloading page");
+            window.location.reload();
+          }
+        } catch (updateError) {
+          console.error("Error updating ticket in store:", updateError);
+          // Fallback to reload if update fails
+          window.location.reload();
+        }
+      } else {
+        // Fallback: reload page
+        window.location.reload();
+      }
+    } catch (error: any) {
+      console.error("Failed to transfer user:", error);
+      const errorMessage = error?.response?.data?.error || error?.message || "Erro ao transferir para atendente";
+      alert(errorMessage);
+    } finally {
+      setIsTransferringUser(false);
     }
   }
 
@@ -139,12 +288,10 @@ export function ContactInfo({ ticket, onClose }: ContactInfoProps) {
                   <Phone className="w-4 h-4 text-muted-foreground" />
                   <span>{formatPhone(ticket.contact?.phone)}</span>
                 </div>
-                {ticket.contact?.email && (
-                  <div className="flex items-center gap-3">
-                    <Mail className="w-4 h-4 text-muted-foreground" />
-                    <span>{ticket.contact.email}</span>
-                  </div>
-                )}
+                <div className="flex items-center gap-3">
+                  <Mail className="w-4 h-4 text-muted-foreground" />
+                  <span>{ticket.contact?.email || "-"}</span>
+                </div>
                 {ticket.contact?.clientSince && (
                   <div className="flex items-center gap-3">
                     <Calendar className="w-4 h-4 text-muted-foreground" />
@@ -229,6 +376,114 @@ export function ContactInfo({ ticket, onClose }: ContactInfoProps) {
                   {new Date(ticket.createdAt).toLocaleDateString("pt-BR")}
                 </span>
               </div>
+            </div>
+          </div>
+
+          {/* Transfer Department */}
+          <div className="border-t pt-4">
+            <h5 className="font-medium mb-3">Transferir Departamento</h5>
+            <div className="space-y-3">
+              <Select
+                value={selectedDepartmentId}
+                onValueChange={setSelectedDepartmentId}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Selecione um departamento" />
+                </SelectTrigger>
+                <SelectContent>
+                  {departments
+                    .filter((dept) => dept.id !== ticket.department?.id)
+                    .map((dept) => (
+                      <SelectItem key={dept.id} value={dept.id}>
+                        <div className="flex items-center gap-2">
+                          {dept.color && (
+                            <div
+                              className="w-3 h-3 rounded-full"
+                              style={{ backgroundColor: dept.color }}
+                            />
+                          )}
+                          <span>{dept.name}</span>
+                        </div>
+                      </SelectItem>
+                    ))}
+                </SelectContent>
+              </Select>
+              <Button
+                variant="outline"
+                className="w-full"
+                onClick={handleTransferDepartment}
+                disabled={!selectedDepartmentId || isTransferring || isTransferringUser}
+              >
+                {isTransferring ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
+                    Transferindo...
+                  </>
+                ) : (
+                  <>
+                    <ArrowRight className="w-4 h-4 mr-2" />
+                    Transferir
+                  </>
+                )}
+              </Button>
+            </div>
+          </div>
+
+          {/* Transfer to User */}
+          <div className="border-t pt-4">
+            <h5 className="font-medium mb-3">Atribuir para Atendente</h5>
+            <div className="space-y-3">
+              <Select
+                value={selectedUserId}
+                onValueChange={setSelectedUserId}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Selecione um atendente" />
+                </SelectTrigger>
+                <SelectContent>
+                  {users
+                    .filter((user) => user.id !== ticket.assignedTo?.id)
+                    .map((user) => (
+                      <SelectItem key={user.id} value={user.id}>
+                        <div className="flex items-center gap-2">
+                          <Avatar className="w-5 h-5">
+                            <AvatarImage src={user.avatar} />
+                            <AvatarFallback className="text-xs">
+                              {user.name
+                                .split(" ")
+                                .map((n: string) => n[0])
+                                .join("")
+                                .toUpperCase()
+                                .slice(0, 2)}
+                            </AvatarFallback>
+                          </Avatar>
+                          <span>{user.name}</span>
+                          {user.isOnline && (
+                            <span className="text-xs text-green-600">●</span>
+                          )}
+                        </div>
+                      </SelectItem>
+                    ))}
+                </SelectContent>
+              </Select>
+              <Button
+                variant="outline"
+                className="w-full"
+                onClick={handleTransferUser}
+                disabled={!selectedUserId || isTransferringUser || isTransferring}
+              >
+                {isTransferringUser ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
+                    Transferindo...
+                  </>
+                ) : (
+                  <>
+                    <UserPlus className="w-4 h-4 mr-2" />
+                    Atribuir
+                  </>
+                )}
+              </Button>
             </div>
           </div>
 

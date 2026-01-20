@@ -6,6 +6,7 @@ import { useAuthStore } from "@/stores/auth.store";
 import { Sidebar } from "@/components/layout/sidebar";
 import { Header } from "@/components/layout/header";
 import { SocketProvider } from "@/components/providers/socket-provider";
+import { BlueMascot } from "@/components/blue/blue-mascot";
 
 export default function DashboardLayout({
   children,
@@ -43,9 +44,10 @@ export default function DashboardLayout({
         <Sidebar />
         <div className="flex-1 flex flex-col overflow-hidden min-h-0">
           <Header />
-          <main className="flex-1 overflow-hidden pb-16 md:pb-0 min-h-0">{children}</main>
+          <main className="flex-1 overflow-y-auto overflow-x-hidden pb-16 md:pb-0 min-h-0">{children}</main>
         </div>
       </div>
+      <BlueMascot />
     </SocketProvider>
   );
 }

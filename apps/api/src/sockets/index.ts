@@ -9,7 +9,10 @@ interface AuthenticatedSocket extends Socket {
   role?: string;
 }
 
+let socketIO: Server | null = null;
+
 export function setupSocketHandlers(io: Server): void {
+  socketIO = io;
   // Make io available globally for services
   (global as any).io = io;
 
@@ -44,6 +47,9 @@ export function setupSocketHandlers(io: Server): void {
     // Join company room
     socket.join(`company:${socket.companyId}`);
 
+    // Join user room for notifications
+    socket.join(`user:${socket.userId}`);
+
     // Update user online status
     await prisma.user.update({
       where: { id: socket.userId },
@@ -54,6 +60,9 @@ export function setupSocketHandlers(io: Server): void {
     socket.to(`company:${socket.companyId}`).emit('user:online', {
       userId: socket.userId,
     });
+
+    // Emit socket:ready event to notify client that socket is ready
+    socket.emit('socket:ready');
 
     // Join ticket room
     socket.on('ticket:join', (ticketId: string) => {
@@ -104,3 +113,9 @@ export function setupSocketHandlers(io: Server): void {
     });
   });
 }
+
+export function getIO(): Server | null {
+  return socketIO;
+}
+
+export { socketIO as io };

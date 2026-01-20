@@ -147,7 +147,9 @@ router.post('/query/:queryId/feedback', async (req: Request, res: Response) => {
     await aiAssistantService.submitFeedback({
       queryId,
       ...data,
-    });
+      wasUsed: data.wasUsed ?? false,
+      wasEdited: data.wasEdited ?? false,
+    } as any);
 
     res.json({ success: true });
   } catch (error: any) {
@@ -298,8 +300,8 @@ router.post('/data-sources', async (req: Request, res: Response) => {
     const dataSource = await prisma.aIDataSource.create({
       data: {
         ...data,
-        companyId,
-      },
+        company: { connect: { id: companyId } },
+      } as any,
     });
 
     res.status(201).json(dataSource);
@@ -527,9 +529,9 @@ router.post('/documents', async (req: Request, res: Response) => {
     const document = await prisma.aIDocument.create({
       data: {
         ...data,
-        companyId,
+        company: { connect: { id: companyId } },
         status: 'PENDING',
-      },
+      } as any,
     });
 
     // Trigger indexing
@@ -723,14 +725,14 @@ router.post('/agent-configs', async (req: Request, res: Response) => {
     const config = await prisma.aIAgentConfig.create({
       data: {
         ...configData,
-        companyId,
+        company: { connect: { id: companyId } },
         dataSources: {
           create: dataSourceIds.map((dsId, index) => ({
             dataSourceId: dsId,
             weight: dataSourceIds.length - index, // Higher weight for first items
           })),
         },
-      },
+      } as any,
       include: {
         dataSources: {
           include: {

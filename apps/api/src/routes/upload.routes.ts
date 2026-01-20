@@ -229,9 +229,10 @@ router.post(
         return res.status(404).json({ error: "Ticket not found" });
       }
 
-      // Get file URL
+      // Get file URL - use correct folder based on file type
       const fileType = UploadService.getFileType(req.file.mimetype);
-      const url = UploadService.getFileUrl(req.file.filename, "media");
+      const folder = fileType === "document" ? "documents" : "media";
+      const url = UploadService.getFileUrl(req.file.filename, folder);
 
       // Determine message type
       let messageType = mediaType || fileType.toUpperCase();
@@ -285,11 +286,19 @@ router.post(
         // Baileys needs to download the file, so it must be accessible via HTTPS
         const normalizedUrl = normalizeMediaUrl(url) || url;
         
+        // Extract filename from original file
+        const filename = req.file.originalname;
+        const mimetype = req.file.mimetype;
+        
         const result = await whatsappService.sendMedia(
           ticket.contact.phone,
           normalizedUrl,
           messageType,
-          formattedCaption
+          formattedCaption,
+          {
+            filename,
+            mimetype,
+          }
         );
 
         // Update message with WhatsApp ID and converted media URL (for audio)

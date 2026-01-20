@@ -107,7 +107,7 @@ router.post('/login', async (req, res, next) => {
 
     // Determine which company to use for this session
     let activeCompanyId = user.companyId;
-    let activeRole = user.role;
+    let activeRole: string = user.role; // Allow both UserRole and UserCompanyRole
 
     if (requestedCompanyId && requestedCompanyId !== user.companyId) {
       // Check if user has access to requested company
@@ -142,13 +142,13 @@ router.post('/login', async (req, res, next) => {
     const accessToken = jwt.sign(
       payload,
       process.env.JWT_SECRET!,
-      { expiresIn: process.env.JWT_EXPIRES_IN || '15m' }
+      { expiresIn: (process.env.JWT_EXPIRES_IN || '15m') as any }
     );
 
     const refreshToken = jwt.sign(
       payload,
       process.env.JWT_REFRESH_SECRET!,
-      { expiresIn: process.env.JWT_REFRESH_EXPIRES_IN || '7d' }
+      { expiresIn: (process.env.JWT_REFRESH_EXPIRES_IN || '7d') as any }
     );
 
     // Store refresh token in Redis (keyed by user + company for multi-company support)
@@ -210,7 +210,7 @@ router.post('/refresh', async (req, res, next) => {
         role: decoded.role,
       },
       process.env.JWT_SECRET!,
-      { expiresIn: process.env.JWT_EXPIRES_IN || '15m' }
+      { expiresIn: (process.env.JWT_EXPIRES_IN || '15m') as any }
     );
 
     res.json({ accessToken });

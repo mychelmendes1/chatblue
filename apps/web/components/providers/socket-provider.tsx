@@ -204,8 +204,31 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
 
   const handleTicketCreated = useCallback((ticket: any) => {
     console.log("[Socket] ticket:created", ticket);
-    const store = useChatStore.getState();
-    store.addTicket(ticket);
+    try {
+      const store = useChatStore.getState();
+      
+      // Ensure ticket has all required fields
+      const fullTicket = {
+        ...ticket,
+        contact: ticket.contact || {},
+        assignedTo: ticket.assignedTo || null,
+        department: ticket.department || null,
+        lastMessage: ticket.lastMessage || null,
+        _count: ticket._count || { messages: 0 },
+      };
+      
+      // Add ticket to the list (will not duplicate if already exists)
+      store.addTicket(fullTicket);
+      
+      // If tickets list is empty or we're on first page, refresh to get proper ordering
+      if (store.tickets.length === 0 || store.tickets.length < 10) {
+        // Trigger a refresh by updating the ticket list
+        // The ticket will appear at the top after refresh
+        console.log("[Socket] New ticket created, should appear in sidebar");
+      }
+    } catch (error) {
+      console.error("[Socket] ticket:created - Error processing ticket:", error);
+    }
   }, []);
 
   const handleTicketUpdated = useCallback((data: any) => {
@@ -293,6 +316,30 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
     });
   }, []);
 
+  // Handle message error - show translated error in the conversation
+  const handleMessageError = useCallback((data: { 
+    messageId: string; 
+    error: string; 
+    suggestion?: string; 
+    originalError?: string;
+    wamid?: string;
+  }) => {
+    try {
+      console.log("[Socket] message:error", data);
+      const store = useChatStore.getState();
+      
+      // Update the message with the error
+      store.updateMessage(data.messageId, {
+        status: 'FAILED',
+        failedReason: data.originalError || data.error,
+        translatedError: data.error,
+        suggestion: data.suggestion,
+      } as any);
+    } catch (error) {
+      console.error("[Socket] message:error - Error processing:", error);
+    }
+  }, []);
+
   // Toast notification hook
   const { toast } = useToast();
 
@@ -335,15 +382,33 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
       setIsConnected(true);
     });
 
-    socketInstance.on("disconnect", () => {
-      console.log("[Socket] Disconnected");
+    socketInstance.on("disconnect", (reason) => {
+      console.log("[Socket] Disconnected, reason:", reason);
       setIsConnected(false);
     });
-    
-    // Debug: Log all incoming events
-    socketInstance.onAny((eventName, ...args) => {
-      console.log(`[Socket] Event received: ${eventName}`, args);
+
+    socketInstance.on("reconnect", (attemptNumber) => {
+      console.log("[Socket] Reconnected after", attemptNumber, "attempts");
+      setIsConnected(true);
     });
+    
+    // Handle socket ready event (after connect or reconnect)
+    socketInstance.on("socket:ready", () => {
+      console.log("[Socket] Socket ready, rejoining ticket room if needed");
+      // Rejoin ticket room if a ticket is selected
+      const store = useChatStore.getState();
+      if (store.selectedTicket && socketInstance.connected) {
+        console.log("[Socket] Rejoining ticket room:", store.selectedTicket.id);
+        socketInstance.emit("ticket:join", store.selectedTicket.id);
+      }
+    });
+    
+    // Debug: Log all incoming events (only in development)
+    if (process.env.NODE_ENV === 'development') {
+      socketInstance.onAny((eventName, ...args) => {
+        console.log(`[Socket] Event received: ${eventName}`, args);
+      });
+    }
 
     // Message events
     socketInstance.on("message:received", handleMessageReceived);
@@ -352,6 +417,7 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
     socketInstance.on("message:status", handleMessageStatus);
     socketInstance.on("message:reaction", handleMessageReaction);
     socketInstance.on("message:deleted", handleMessageDeleted);
+    socketInstance.on("message:error", handleMessageError);
 
     // Ticket events
     socketInstance.on("ticket:created", handleTicketCreated);
@@ -364,13 +430,18 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
     return () => {
       socketInstance.off("connect");
       socketInstance.off("disconnect");
-      socketInstance.offAny();
+      socketInstance.off("reconnect");
+      socketInstance.off("socket:ready");
+      if (process.env.NODE_ENV === 'development') {
+        socketInstance.offAny();
+      }
       socketInstance.off("message:received", handleMessageReceived);
       socketInstance.off("message:sent", handleMessageSent);
       socketInstance.off("message:new", handleMessageNew);
       socketInstance.off("message:status", handleMessageStatus);
       socketInstance.off("message:reaction", handleMessageReaction);
       socketInstance.off("message:deleted", handleMessageDeleted);
+      socketInstance.off("message:error", handleMessageError);
       socketInstance.off("ticket:created", handleTicketCreated);
       socketInstance.off("ticket:updated", handleTicketUpdated);
       socketInstance.off("ticket:assigned", handleTicketAssigned);

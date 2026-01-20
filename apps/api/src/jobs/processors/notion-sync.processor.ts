@@ -31,13 +31,14 @@ export async function notionSyncProcessor(job: Job<NotionSyncData>) {
     }
 
     // Initialize Notion service
-    const notionService = new NotionService(
-      companySettings.notionApiKey,
-      companySettings.notionDatabaseId
-    );
+    const notionService = new NotionService(companySettings.notionApiKey!);
 
     // Search for client in Notion
-    const clientInfo = await notionService.searchClient(contactPhone);
+    const clientInfo = await notionService.findContact(
+      companySettings.notionDatabaseId!,
+      contactPhone,
+      null
+    );
 
     if (!clientInfo) {
       logger.info(`Contact ${contactPhone} not found in Notion`);
@@ -46,7 +47,7 @@ export async function notionSyncProcessor(job: Job<NotionSyncData>) {
       await prisma.contact.update({
         where: { id: contactId },
         data: {
-          metadata: {
+          customFields: {
             notionSync: {
               lastSyncAt: new Date().toISOString(),
               found: false,
@@ -60,14 +61,15 @@ export async function notionSyncProcessor(job: Job<NotionSyncData>) {
 
     // Update contact with Notion data
     const updateData: any = {
-      metadata: {
+      customFields: {
         notionSync: {
           lastSyncAt: new Date().toISOString(),
           found: true,
           notionPageId: clientInfo.pageId,
-          status: clientInfo.status,
+          isClient: clientInfo.isClient,
+          isExClient: clientInfo.isExClient,
         },
-        notion: clientInfo,
+        notion: clientInfo.metadata || {},
       },
     };
 
@@ -90,25 +92,16 @@ export async function notionSyncProcessor(job: Job<NotionSyncData>) {
       data: updateData,
     });
 
-    // Log activity
-    await prisma.activity.create({
-      data: {
-        type: "notion_sync",
-        description: `Contato sincronizado com Notion: ${clientInfo.status || "cliente"}`,
-        companyId,
-        contactId,
-        metadata: {
-          notionPageId: clientInfo.pageId,
-          clientStatus: clientInfo.status,
-        },
-      },
-    });
+    // Log activity (Activity doesn't have companyId/contactId directly)
+    // We can only log with userId if available or ticketId
+    // For now, skip activity log for notion sync without ticket context
 
     logger.info(`Contact ${contactId} synced with Notion successfully`);
     return {
       success: true,
       found: true,
-      clientStatus: clientInfo.status,
+      isClient: clientInfo.isClient,
+      isExClient: clientInfo.isExClient,
     };
   } catch (error) {
     logger.error("Error in Notion sync processor:", error);

@@ -1,7 +1,7 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
-  // output: 'standalone', // Desabilitado para usar next start
+  output: 'standalone', // Enabled for Docker builds
   images: {
     domains: ['localhost'],
     remotePatterns: [

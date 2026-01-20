@@ -20,6 +20,7 @@ import {
   Check,
   FolderTree,
   Mic,
+  Bot,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -84,6 +85,8 @@ interface CompanySettings {
   aiUseEmojis?: boolean;
   aiUseClientName?: boolean;
   aiGuardrailsEnabled?: boolean;
+  // Blue Mascot
+  blueEnabled?: boolean;
   // Default transfer department
   defaultTransferDepartmentId?: string | null;
 }
@@ -207,6 +210,8 @@ export default function SettingsPage() {
     aiUseEmojis: true,
     aiUseClientName: true,
     aiGuardrailsEnabled: true,
+    // Blue Mascot
+    blueEnabled: true,
   });
 
   // Department states
@@ -297,6 +302,7 @@ export default function SettingsPage() {
         aiUseEmojis: data.aiUseEmojis ?? true,
         aiUseClientName: data.aiUseClientName ?? true,
         aiGuardrailsEnabled: data.aiGuardrailsEnabled ?? true,
+        blueEnabled: data.blueEnabled ?? true,
       });
     } catch (error) {
       toast({
@@ -1107,6 +1113,52 @@ export default function SettingsPage() {
                       }
                     />
                   </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Blue Mascot Card */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Bot className="w-5 h-5" />
+                  Blue Assistente
+                </CardTitle>
+                <CardDescription>
+                  Configure o mascote Blue que ajuda atendentes com dicas e suporte
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-6">
+                <div className="flex items-center justify-between">
+                  <div className="space-y-0.5">
+                    <Label>Habilitar Blue Mascot</Label>
+                    <p className="text-sm text-muted-foreground">
+                      Exibe o mascote Blue na tela para ajudar atendentes com dicas contextuais e suporte
+                    </p>
+                  </div>
+                  <Switch
+                    checked={aiForm.blueEnabled}
+                    onCheckedChange={(checked) =>
+                      setAiForm((prev) => ({ ...prev, blueEnabled: checked }))
+                    }
+                    disabled={!aiForm.aiEnabled}
+                  />
+                </div>
+                {!aiForm.aiEnabled && (
+                  <div className="p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
+                    <p className="text-sm text-yellow-800">
+                      <strong>⚠️ Atenção:</strong> A IA precisa estar habilitada para usar o Blue Mascot.
+                    </p>
+                  </div>
+                )}
+                <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
+                  <h4 className="font-medium mb-2 text-blue-900">Funcionalidades do Blue</h4>
+                  <ul className="text-sm text-blue-800 space-y-1">
+                    <li>• Dicas contextuais baseadas na página atual</li>
+                    <li>• Chat interativo para tirar dúvidas sobre o sistema</li>
+                    <li>• Acesso ao código-fonte e documentação via RAG</li>
+                    <li>• Posicionamento personalizado (arraste o mascote)</li>
+                  </ul>
                 </div>
               </CardContent>
             </Card>

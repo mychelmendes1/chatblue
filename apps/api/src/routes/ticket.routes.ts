@@ -27,8 +27,9 @@ router.get('/', authenticate, ensureTenant, async (req, res, next) => {
       isAIHandled,
       search,
       hideResolved,
+      hasMentions,
       page = '1',
-      limit = '20',
+      limit = '100',
     } = req.query;
 
     // Get user's departments for visibility
@@ -65,6 +66,17 @@ router.get('/', authenticate, ensureTenant, async (req, res, next) => {
       }),
     };
 
+    // Filter by mentions - tickets where user was mentioned
+    if (hasMentions === 'true') {
+      baseWhere.messages = {
+        some: {
+          mentionedUserIds: {
+            has: req.user!.userId,
+          },
+        },
+      };
+    }
+
     // Build search filter
     const searchConditions: any[] = [];
     if (search) {
@@ -75,45 +87,117 @@ router.get('/', authenticate, ensureTenant, async (req, res, next) => {
       );
     }
 
-    // Non-admins can only see tickets from their departments or assigned to them
+    // Build visibility filter based on user role and filters
     const where: any = { ...baseWhere };
+    const isAdmin = ['SUPER_ADMIN', 'ADMIN'].includes(req.user!.role);
     
-    if (!['SUPER_ADMIN', 'ADMIN'].includes(req.user!.role)) {
-      const visibilityConditions: any[] = [
-        { assignedToId: req.user!.userId },
-      ];
+    // Determine filter mode based on query parameters
+    const isMentionsFilter = hasMentions === 'true';
+    const isMyTicketsFilter = assignedToId === req.user!.userId;
+    const isQueueFilter = status === 'PENDING' && !assignedToId && !isMentionsFilter;
+    const isAllFilter = !status && !assignedToId && !isMentionsFilter;
 
-      // Add department visibility if user has departments
-      if (visibleDeptIds.size > 0) {
-        visibilityConditions.push({ departmentId: { in: Array.from(visibleDeptIds) } });
-      } else {
-        // If user has no departments, they can see unassigned tickets from their company
-        // This allows agents without departments to see and pick up tickets
-        visibilityConditions.push({ assignedToId: null });
-      }
-
-      // If there's a search, combine with visibility conditions using AND
+    if (isAdmin) {
+      // Admin and Super Admin can see everything - no visibility restrictions
       if (searchConditions.length > 0) {
         where.AND = [
-          {
-            OR: visibilityConditions,
-          },
+          baseWhere,
           {
             OR: searchConditions,
           },
         ];
-      } else {
-        // No search - just visibility conditions
-        where.OR = visibilityConditions;
       }
-    } else if (searchConditions.length > 0) {
-      // Admin with search - combine base filters with search using AND
-      where.AND = [
-        baseWhere,
-        {
-          OR: searchConditions,
-        },
-      ];
+    } else {
+      // Non-admins have visibility restrictions based on filter mode
+      
+      if (isMentionsFilter) {
+        // @Menções: Tickets where user was mentioned (already filtered in baseWhere)
+        // No additional visibility restrictions needed - mentions filter is already applied
+        if (searchConditions.length > 0) {
+          where.AND = [
+            baseWhere,
+            {
+              OR: searchConditions,
+            },
+          ];
+        }
+      } else if (isMyTicketsFilter) {
+        // MEUS: Tickets assigned to the user
+        // No additional restrictions - already filtered by assignedToId
+        if (searchConditions.length > 0) {
+          where.AND = [
+            baseWhere,
+            {
+              OR: searchConditions,
+            },
+          ];
+        }
+      } else if (isQueueFilter) {
+        // FILA: Tickets from user's departments that are not assigned (PENDING and unassigned)
+        // Build queue filter: status PENDING AND department in user's departments AND not assigned
+        const queueFilter: any = {
+          ...baseWhere, // Includes status: 'PENDING' and companyId
+          assignedToId: null, // Not assigned
+        };
+        
+        if (visibleDeptIds.size > 0) {
+          // User has departments - show unassigned tickets from their departments
+          queueFilter.departmentId = { in: Array.from(visibleDeptIds) };
+        }
+        // If user has no departments, show all unassigned PENDING tickets from company
+
+        if (searchConditions.length > 0) {
+          where.AND = [
+            queueFilter,
+            {
+              OR: searchConditions,
+            },
+          ];
+        } else {
+          Object.assign(where, queueFilter);
+        }
+      } else if (isAllFilter) {
+        // TODOS: Show all tickets from all departments (no visibility restrictions)
+        // Just apply company filter and search if present
+        if (searchConditions.length > 0) {
+          where.AND = [
+            baseWhere,
+            {
+              OR: searchConditions,
+            },
+          ];
+        }
+      } else {
+        // Other filters (status, departmentId, etc.) - apply department visibility
+        const visibilityConditions: any[] = [
+          { assignedToId: req.user!.userId },
+        ];
+
+        if (visibleDeptIds.size > 0) {
+          visibilityConditions.push({ departmentId: { in: Array.from(visibleDeptIds) } });
+        } else {
+          visibilityConditions.push({ assignedToId: null });
+        }
+
+        if (searchConditions.length > 0) {
+          where.AND = [
+            baseWhere,
+            {
+              OR: visibilityConditions,
+            },
+            {
+              OR: searchConditions,
+            },
+          ];
+        } else {
+          where.AND = [
+            baseWhere,
+            {
+              OR: visibilityConditions,
+            },
+          ];
+        }
+      }
     }
 
     // Fetch tickets without pagination first for proper sorting
@@ -523,6 +607,47 @@ router.post('/:id/assign', authenticate, ensureTenant, async (req, res, next) =>
       },
     });
 
+    // Get ticket details for notification
+    const ticketWithDetails = await prisma.ticket.findUnique({
+      where: { id: ticket.id },
+      include: {
+        contact: { select: { name: true } },
+      },
+    });
+
+    // Create notification for assigned user
+    if (userId && userId !== req.user!.userId) {
+      await prisma.notification.create({
+        data: {
+          type: 'ticket_assigned',
+          title: 'Nova conversa atribuída',
+          message: `Uma conversa com ${ticketWithDetails?.contact?.name || 'cliente'} foi atribuída a você`,
+          userId,
+          ticketId: ticket.id,
+          companyId: req.user!.companyId,
+          metadata: {
+            protocol: ticketWithDetails?.protocol,
+            contactName: ticketWithDetails?.contact?.name,
+          },
+        },
+      });
+
+      // Send real-time notification via Socket.io
+      const io = req.app.get('io');
+      io.to(`user:${userId}`).emit('notification', {
+        type: 'ticket_assigned',
+        title: 'Nova conversa atribuída',
+        message: `Uma conversa com ${ticketWithDetails?.contact?.name || 'cliente'} foi atribuída a você`,
+        ticketId: ticket.id,
+        metadata: {
+          protocol: ticketWithDetails?.protocol,
+          contactName: ticketWithDetails?.contact?.name,
+        },
+        createdAt: new Date().toISOString(),
+        read: false,
+      });
+    }
+
     // Emit socket event
     const io = req.app.get('io');
     io.to(`company:${req.user!.companyId}`).emit('ticket:assigned', {
@@ -544,20 +669,78 @@ router.post('/:id/takeover', authenticate, ensureTenant, async (req, res, next) 
         id: req.params.id,
         companyId: req.user!.companyId,
       },
+      include: {
+        department: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
+      },
     });
 
     if (!ticket) {
       throw new NotFoundError('Ticket not found');
     }
 
+    // Check if ticket is in Triagem and get user's departments
+    let newDepartmentId: string | undefined = undefined;
+    const isInTriagem = ticket.department?.name?.toLowerCase() === 'triagem' || 
+                        ticket.departmentId === 'triagem-dept' ||
+                        ticket.department?.id === 'triagem-dept';
+
+    if (isInTriagem) {
+      // Get user's departments
+      const userDepartments = await prisma.userDepartment.findMany({
+        where: {
+          userId: req.user!.userId,
+        },
+        include: {
+          department: {
+            select: {
+              id: true,
+              name: true,
+              isActive: true,
+              order: true,
+            },
+          },
+        },
+      });
+
+      // Sort by order and get the first active department
+      const sortedDepartments = userDepartments
+        .filter(ud => ud.department.isActive)
+        .sort((a, b) => a.department.order - b.department.order);
+
+      if (sortedDepartments.length > 0) {
+        newDepartmentId = sortedDepartments[0].departmentId;
+        logger.info(`Moving ticket ${ticket.id} from Triagem to department ${sortedDepartments[0].department.name} (${newDepartmentId})`);
+      }
+    }
+
     // Update ticket
+    const updateData: any = {
+      assignedToId: req.user!.userId,
+      isAIHandled: false,
+      humanTakeoverAt: new Date(),
+      status: 'IN_PROGRESS',
+    };
+
+    // Only update department if moving from Triagem
+    if (newDepartmentId) {
+      updateData.departmentId = newDepartmentId;
+    }
+
     const updatedTicket = await prisma.ticket.update({
       where: { id: ticket.id },
-      data: {
-        assignedToId: req.user!.userId,
-        isAIHandled: false,
-        humanTakeoverAt: new Date(),
-        status: 'IN_PROGRESS',
+      data: updateData,
+      include: {
+        department: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
       },
     });
 
@@ -569,6 +752,8 @@ router.post('/:id/takeover', authenticate, ensureTenant, async (req, res, next) 
         toUserId: req.user!.userId,
         transferType: 'AI_TO_HUMAN',
         reason: 'Agent takeover',
+        fromDeptId: ticket.departmentId,
+        toDeptId: newDepartmentId || ticket.departmentId,
       },
     });
 
@@ -576,17 +761,23 @@ router.post('/:id/takeover', authenticate, ensureTenant, async (req, res, next) 
     await prisma.activity.create({
       data: {
         type: 'HUMAN_TAKEOVER',
-        description: 'Human agent took over from AI',
+        description: newDepartmentId 
+          ? `Human agent took over from AI. Moved from Triagem to ${updatedTicket.department?.name || 'department'}`
+          : 'Human agent took over from AI',
         ticketId: ticket.id,
         userId: req.user!.userId,
       },
     });
 
     // Create system message
+    const systemMessageContent = newDepartmentId
+      ? `Atendimento assumido por ${req.user!.name} - Movido para ${updatedTicket.department?.name || 'departamento'}`
+      : `Atendimento assumido por ${req.user!.name}`;
+
     const systemMessage = await prisma.message.create({
       data: {
         type: 'SYSTEM',
-        content: `Atendimento assumido por ${req.user!.name}`,
+        content: systemMessageContent,
         isFromMe: true,
         status: 'DELIVERED',
         ticketId: ticket.id,
@@ -637,6 +828,32 @@ router.post('/:id/transfer', authenticate, ensureTenant, async (req, res, next) 
         ...(toUserId && { assignedToId: toUserId }),
         status: 'PENDING',
       },
+      include: {
+        contact: {
+          select: {
+            id: true,
+            name: true,
+            phone: true,
+            avatar: true,
+            isClient: true,
+          },
+        },
+        assignedTo: {
+          select: {
+            id: true,
+            name: true,
+            avatar: true,
+            isAI: true,
+          },
+        },
+        department: {
+          select: {
+            id: true,
+            name: true,
+            color: true,
+          },
+        },
+      },
     });
 
     // Create transfer record
@@ -684,6 +901,41 @@ router.post('/:id/transfer', authenticate, ensureTenant, async (req, res, next) 
         connectionId: ticket.connectionId,
       },
     });
+
+    // Create notification for assigned user if transferred to user
+    if (toUserId && toUserId !== req.user!.userId) {
+      await prisma.notification.create({
+        data: {
+          type: 'ticket_assigned',
+          title: 'Nova conversa atribuída',
+          message: `Uma conversa com ${updatedTicket.contact?.name || 'cliente'} foi transferida para você`,
+          userId: toUserId,
+          ticketId: ticket.id,
+          companyId: req.user!.companyId,
+          metadata: {
+            protocol: updatedTicket.protocol,
+            contactName: updatedTicket.contact?.name,
+            fromUser: req.user!.name,
+          },
+        },
+      });
+
+      // Send real-time notification via Socket.io
+      const io = req.app.get('io');
+      io.to(`user:${toUserId}`).emit('notification', {
+        type: 'ticket_assigned',
+        title: 'Nova conversa atribuída',
+        message: `Uma conversa com ${updatedTicket.contact?.name || 'cliente'} foi transferida para você`,
+        ticketId: ticket.id,
+        metadata: {
+          protocol: updatedTicket.protocol,
+          contactName: updatedTicket.contact?.name,
+          fromUser: req.user!.name,
+        },
+        createdAt: new Date().toISOString(),
+        read: false,
+      });
+    }
 
     // Emit socket event
     const io = req.app.get('io');
@@ -747,6 +999,19 @@ router.put('/:id/status', authenticate, ensureTenant, async (req, res, next) => 
       // Emit message event
       const io = req.app.get('io');
       io.to(`ticket:${ticket.id}`).emit('message:received', { message: systemMessage });
+
+      // Send NPS survey automatically
+      try {
+        const { NPSService } = await import('../services/nps/nps.service.js');
+        // Use setImmediate to send NPS after response is sent (non-blocking)
+        setImmediate(() => {
+          NPSService.sendNPSSurvey(ticket.id).catch((err) => {
+            logger.error(`Error sending NPS survey for ticket ${ticket.id}:`, err);
+          });
+        });
+      } catch (npsError) {
+        logger.error('Error importing NPS service:', npsError);
+      }
     }
 
     // Emit socket event
@@ -880,6 +1145,19 @@ router.post('/:id/resolve', authenticate, ensureTenant, async (req, res, next) =
     io.to(`company:${req.user!.companyId}`).emit('ticket:updated', updatedTicket);
     io.to(`ticket:${ticket.id}`).emit('message:received', { message: systemMessage });
 
+    // Send NPS survey automatically
+    try {
+      const { NPSService } = await import('../services/nps/nps.service.js');
+      // Use setImmediate to send NPS after response is sent (non-blocking)
+      setImmediate(() => {
+        NPSService.sendNPSSurvey(ticket.id).catch((err) => {
+          logger.error(`Error sending NPS survey for ticket ${ticket.id}:`, err);
+        });
+      });
+    } catch (npsError) {
+      logger.error('Error importing NPS service:', npsError);
+    }
+
     res.json(updatedTicket);
   } catch (error) {
     next(error);
@@ -973,6 +1251,19 @@ router.post('/:id/close', authenticate, ensureTenant, async (req, res, next) => 
     const io = req.app.get('io');
     io.to(`company:${req.user!.companyId}`).emit('ticket:updated', updatedTicket);
     io.to(`ticket:${ticket.id}`).emit('message:received', { message: systemMessage });
+
+    // Send NPS survey automatically
+    try {
+      const { NPSService } = await import('../services/nps/nps.service.js');
+      // Use setImmediate to send NPS after response is sent (non-blocking)
+      setImmediate(() => {
+        NPSService.sendNPSSurvey(ticket.id).catch((err) => {
+          logger.error(`Error sending NPS survey for ticket ${ticket.id}:`, err);
+        });
+      });
+    } catch (npsError) {
+      logger.error('Error importing NPS service:', npsError);
+    }
 
     res.json(updatedTicket);
   } catch (error) {

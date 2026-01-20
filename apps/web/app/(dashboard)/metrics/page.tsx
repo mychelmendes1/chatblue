@@ -512,24 +512,48 @@ export default function MetricsPage() {
 
   async function handleExport(format: 'json' | 'csv') {
     try {
-      const response = await api.get(`/metrics/export?period=${period}&format=${format}`, {
-        responseType: format === 'csv' ? 'blob' : 'json',
+      // For file downloads, we need to use fetch directly to handle blobs
+      const token = localStorage.getItem("chatblue-auth");
+      let accessToken = null;
+      if (token) {
+        try {
+          const { state } = JSON.parse(token);
+          accessToken = state?.accessToken;
+        } catch {}
+      }
+
+      const headers: Record<string, string> = {};
+      if (accessToken) {
+        headers["Authorization"] = `Bearer ${accessToken}`;
+      }
+
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001"}/api/metrics/export?period=${period}&format=${format}`, {
+        method: 'GET',
+        headers,
       });
 
+      if (!response.ok) {
+        throw new Error('Failed to export metrics');
+      }
+
       if (format === 'csv') {
-        const blob = new Blob([response.data], { type: 'text/csv' });
+        const text = await response.text();
+        const blob = new Blob([text], { type: 'text/csv' });
         const url = window.URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
         a.download = `metricas_${new Date().toISOString().split('T')[0]}.csv`;
         a.click();
+        window.URL.revokeObjectURL(url);
       } else {
-        const blob = new Blob([JSON.stringify(response.data, null, 2)], { type: 'application/json' });
+        const data = await response.json();
+        const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
         const url = window.URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
         a.download = `metricas_${new Date().toISOString().split('T')[0]}.json`;
         a.click();
+        window.URL.revokeObjectURL(url);
       }
 
       toast({ title: "Exportado", description: "Relatório exportado com sucesso!" });

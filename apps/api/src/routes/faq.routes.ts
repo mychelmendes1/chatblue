@@ -14,7 +14,7 @@ const createFAQSchema = z.object({
   answer: z.string().min(1, 'Answer is required'),
   keywords: z.array(z.string()).optional(),
   category: z.string().optional(),
-  departmentId: z.string().cuid().optional().nullable(),
+  departmentId: z.union([z.string().cuid(), z.null()]).optional(),
   order: z.number().optional(),
   isActive: z.boolean().optional(),
 });
@@ -123,7 +123,18 @@ router.get('/:id', authenticate, ensureTenant, async (req, res, next) => {
 // Create FAQ item
 router.post('/', authenticate, requireAdmin, ensureTenant, async (req, res, next) => {
   try {
-    const data = createFAQSchema.parse(req.body);
+    // Normalize body: convert empty strings to null/undefined
+    const body = { ...req.body };
+    if (body.departmentId === '' || body.departmentId === undefined || body.departmentId === '_all') {
+      body.departmentId = null;
+    }
+    if (body.category === '') {
+      body.category = undefined;
+    }
+
+    logger.debug('Creating FAQ with body:', JSON.stringify(body));
+    const data = createFAQSchema.parse(body);
+    logger.debug('Parsed FAQ data:', JSON.stringify(data));
 
     // Verify department belongs to company if provided
     if (data.departmentId) {
@@ -144,10 +155,19 @@ router.post('/', authenticate, requireAdmin, ensureTenant, async (req, res, next
       data.keywords = extractKeywords(data.question);
     }
 
+    // Ensure keywords is always an array
+    const keywords = Array.isArray(data.keywords) ? data.keywords : [];
+
     const item = await prisma.fAQ.create({
       data: {
-        ...data,
+        question: data.question,
+        answer: data.answer,
+        keywords: keywords,
+        category: data.category || null,
+        order: data.order ?? 0,
+        isActive: data.isActive ?? true,
         companyId: req.user!.companyId,
+        departmentId: data.departmentId || null,
       },
       include: {
         department: {
@@ -162,9 +182,17 @@ router.post('/', authenticate, requireAdmin, ensureTenant, async (req, res, next
 
     logger.info(`FAQ item created: ${item.id}`);
     res.status(201).json(item);
-  } catch (error) {
+  } catch (error: any) {
+    logger.error('Error creating FAQ:', {
+      error: error?.message,
+      stack: error?.stack,
+      body: req.body,
+      zodError: error instanceof z.ZodError ? error.errors : null,
+    });
+    
     if (error instanceof z.ZodError) {
-      next(new ValidationError(error.errors[0]?.message || 'Validation failed'));
+      const errorMessage = error.errors.map(e => `${e.path.join('.')}: ${e.message}`).join(', ');
+      next(new ValidationError(errorMessage || 'Validation failed'));
     } else {
       next(error);
     }
@@ -174,7 +202,16 @@ router.post('/', authenticate, requireAdmin, ensureTenant, async (req, res, next
 // Update FAQ item
 router.put('/:id', authenticate, requireAdmin, ensureTenant, async (req, res, next) => {
   try {
-    const data = updateFAQSchema.parse(req.body);
+    // Normalize body: convert empty strings to null/undefined
+    const body = { ...req.body };
+    if (body.departmentId === '' || body.departmentId === undefined || body.departmentId === '_all') {
+      body.departmentId = null;
+    }
+    if (body.category === '') {
+      body.category = undefined;
+    }
+    
+    const data = updateFAQSchema.parse(body);
 
     // Check if item exists and belongs to company
     const existing = await prisma.fAQ.findFirst({
@@ -202,9 +239,22 @@ router.put('/:id', authenticate, requireAdmin, ensureTenant, async (req, res, ne
       }
     }
 
+    // Ensure keywords is always an array if provided
+    const updateData: any = {
+      ...data,
+      departmentId: data.departmentId || null,
+    };
+    
+    if (data.keywords !== undefined) {
+      updateData.keywords = Array.isArray(data.keywords) ? data.keywords : [];
+    }
+    if (data.category !== undefined) {
+      updateData.category = data.category || null;
+    }
+
     const item = await prisma.fAQ.update({
       where: { id: req.params.id },
-      data,
+      data: updateData,
       include: {
         department: {
           select: {
@@ -400,6 +450,12 @@ function extractKeywords(text: string): string[] {
 }
 
 export { router as faqRouter };
+
+
+
+
+
+
 
 
 

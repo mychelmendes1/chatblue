@@ -131,8 +131,8 @@ router.post('/', authenticate, requireAdmin, ensureTenant, async (req, res, next
     const item = await prisma.knowledgeBase.create({
       data: {
         ...data,
-        companyId: req.user!.companyId,
-      },
+        company: { connect: { id: req.user!.companyId } },
+      } as any,
       include: {
         department: {
           select: {
@@ -285,9 +285,9 @@ router.post('/import-pdf', authenticate, requireAdmin, ensureTenant, async (req,
     const item = await prisma.knowledgeBase.create({
       data: {
         ...data,
-        companyId: req.user!.companyId,
+        company: { connect: { id: req.user!.companyId } },
         tags: ['imported', 'pdf'],
-      },
+      } as any,
       include: {
         department: {
           select: {
@@ -311,6 +311,12 @@ router.post('/import-pdf', authenticate, requireAdmin, ensureTenant, async (req,
 });
 
 export { router as knowledgeRouter };
+
+
+
+
+
+
 
 
 

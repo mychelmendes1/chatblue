@@ -59,6 +59,8 @@ export class WhatsAppService {
     caption?: string,
     options?: {
       quotedMessageId?: string;
+      filename?: string;
+      mimetype?: string;
     }
   ): Promise<{ messageId: string; finalMediaUrl?: string }> {
     const formattedNumber = this.formatPhoneNumber(to);
@@ -68,7 +70,11 @@ export class WhatsAppService {
         formattedNumber,
         mediaUrl,
         mediaType,
-        caption
+        caption,
+        {
+          filename: options?.filename,
+          mimetype: options?.mimetype,
+        }
       );
     } else {
       const result = await this.metaService!.sendMediaMessage(

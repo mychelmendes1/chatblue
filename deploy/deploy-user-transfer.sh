@@ -1,0 +1,81 @@
+#!/usr/bin/expect -f
+
+set timeout 300
+set server "84.247.191.105"
+set user "root"
+set password "fjykwePMThmj6nav"
+set local_base "/Users/mychel/Downloads/Projetos/chatblue/chatblue"
+
+# Copy updated files
+spawn scp -o StrictHostKeyChecking=no \
+    ${local_base}/apps/web/components/chat/contact-info.tsx \
+    ${user}@${server}:/tmp/
+
+expect {
+    "password:" {
+        send "${password}\r"
+    }
+    "yes/no" {
+        send "yes\r"
+        expect "password:"
+        send "${password}\r"
+    }
+}
+
+expect eof
+
+# SSH and deploy
+spawn ssh -o StrictHostKeyChecking=no ${user}@${server}
+
+expect {
+    "password:" {
+        send "${password}\r"
+    }
+    "yes/no" {
+        send "yes\r"
+        expect "password:"
+        send "${password}\r"
+    }
+}
+
+expect "# "
+send "echo '=== Movendo arquivo atualizado ==='\r"
+expect "# "
+
+send "cp /tmp/contact-info.tsx /opt/chatblue/app/apps/web/components/chat/contact-info.tsx\r"
+expect "# "
+
+send "cd /opt/chatblue/app/apps/web\r"
+expect "# "
+
+send "echo '=== Fazendo build do frontend ==='\r"
+expect "# "
+send "pnpm build 2>&1 | tail -30\r"
+expect "# "
+
+send "echo '=== Verificando se o build foi bem-sucedido ==='\r"
+expect "# "
+send "test -f .next/BUILD_ID && echo 'Build OK' || echo 'ERRO: Build falhou'\r"
+expect "# "
+
+send "echo '=== Reiniciando frontend ==='\r"
+expect "# "
+send "pm2 reload chatblue-web --update-env\r"
+expect "# "
+
+send "sleep 5\r"
+expect "# "
+
+send "pm2 status\r"
+expect "# "
+
+send "pm2 logs chatblue-web --lines 10 --nostream | tail -10\r"
+expect "# "
+
+send "echo '=== Verificando saúde do frontend ==='\r"
+expect "# "
+send "curl -s -o /dev/null -w '%{http_code}' http://localhost:3000 && echo ' - Web OK!' || echo 'Web ainda não responde'\r"
+expect "# "
+
+send "exit\r"
+expect eof

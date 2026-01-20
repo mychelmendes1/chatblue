@@ -108,6 +108,13 @@ enum ActivityType {
   AI_SUGGESTION_USED
   AI_SUGGESTION_EDITED
   AI_SUGGESTION_DISCARDED
+  NOTIFICATION_MENTION
+  NOTIFICATION_TICKET_ASSIGNED
+  NOTIFICATION_SLA_WARNING
+  NOTIFICATION_SLA_BREACH
+  NOTIFICATION_NEW_TICKET
+  NOTION_SYNC
+  TICKET_AUTO_CLOSED
 }
 
 // AI Data Source Types
@@ -176,6 +183,10 @@ model Company {
   faqs           FAQ[]
   metricGoals    MetricGoal[]
   metricAlerts   MetricAlert[]
+  blueInteractions BlueInteraction[]
+  notifications  Notification[]
+  knowledgeContexts KnowledgeContext[]
+  knowledgeSources KnowledgeSource[]
 
   // AI Assistant relations
   aiDataSources  AIDataSource[]
@@ -197,6 +208,10 @@ model User {
   isActive  Boolean   @default(true) @map("is_active")
   isOnline  Boolean   @default(false) @map("is_online")
   lastSeen  DateTime? @map("last_seen")
+  
+  // Push notification subscription (for web push)
+  pushSubscription Json? @map("push_subscription")
+
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
 
@@ -210,6 +225,8 @@ model User {
   messages         Message[]
   activities       Activity[]
   metricGoals      MetricGoal[]
+  blueInteractions BlueInteraction[]
+  notifications    Notification[]
 
   // AI Assistant relations
   aiQueries AIAssistantQuery[]
@@ -385,6 +402,19 @@ model Ticket {
   ratedAt       DateTime? @map("rated_at")
   ratingToken   String? @unique @map("rating_token") // Token único para link de avaliação
 
+  // NPS (Net Promoter Score) - 0 a 10
+  npsScore      Int?    @map("nps_score") // 0-10: 0-6 detratores, 7-8 neutros, 9-10 promotores
+  npsComment    String? @map("nps_comment")
+  npsRatedAt    DateTime? @map("nps_rated_at")
+  npsToken      String? @unique @map("nps_token") // Token único para link de pesquisa NPS
+
+  // Métricas de qualidade
+  isFirstContactResolution Boolean @default(false) @map("is_first_contact_resolution") // FCR
+  reopenCount   Int     @default(0) @map("reopen_count") // Quantidade de reaberturas
+  reopenedAt    DateTime? @map("reopened_at") // Última reabertura
+  abandonedAt   DateTime? @map("abandoned_at") // Quando foi abandonado na fila
+  wasAbandoned  Boolean @default(false) @map("was_abandoned") // Se foi abandonado
+
   isAIHandled     Boolean   @default(false) @map("is_ai_handled")
   aiTakeoverAt    DateTime? @map("ai_takeover_at")
   humanTakeoverAt DateTime? @map("human_takeover_at")
@@ -421,9 +451,10 @@ model Ticket {
   previousTicket   Ticket?  @relation("TicketHistory", fields: [previousTicketId], references: [id])
   nextTickets      Ticket[] @relation("TicketHistory")
 
-  messages   Message[]
-  transfers  TicketTransfer[]
-  activities Activity[]
+  messages     Message[]
+  transfers    TicketTransfer[]
+  activities   Activity[]
+  notifications Notification[]
 
   // AI Assistant relations
   aiQueries AIAssistantQuery[]
@@ -587,6 +618,9 @@ model CompanySettings {
 
   // Default department for transfers when no specific department is found
   defaultTransferDepartmentId String? @map("default_transfer_department_id")
+
+  // Blue Assistant
+  blueEnabled Boolean @default(true) @map("blue_enabled")
 
   companyId String  @unique @map("company_id")
   company   Company @relation(fields: [companyId], references: [id])
@@ -1005,8 +1039,30 @@ model AISentimentAnalysis {
 }
 
 // ============================================
-// METRICS DASHBOARD MODELS
+// BLUE ASSISTANT MODELS
 // ============================================
+
+/// Interações do Blue Assistant (para analytics e histórico)
+model BlueInteraction {
+  id        String   @id @default(cuid())
+  userId    String   @map("user_id")
+  user      User     @relation(fields: [userId], references: [id])
+  companyId String   @map("company_id")
+  company   Company  @relation(fields: [companyId], references: [id])
+
+  type     String  // 'tip' | 'chat'
+  page     String? // Rota da página onde ocorreu a interação
+  context  Json    // Contexto da página (route, params, etc)
+  message  String? // Mensagem do usuário (para tipo 'chat')
+  response String  // Resposta do Blue
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([userId])
+  @@index([companyId])
+  @@index([createdAt])
+  @@map("blue_interactions")
+}
 
 /// Metas de Métricas
 model MetricGoal {
@@ -1056,4 +1112,105 @@ model MetricAlert {
   company   Company @relation(fields: [companyId], references: [id])
 
   @@map("metric_alerts")
+}
+
+// ============================================
+// NOTIFICATION MODELS
+// ============================================
+
+/// Notificações do Sistema
+model Notification {
+  id        String   @id @default(cuid())
+  type      String   // notification_mention, notification_ticket_assigned, etc.
+  title     String
+  message   String
+  read      Boolean  @default(false)
+  readAt    DateTime? @map("read_at")
+  metadata  Json?    // Dados adicionais (protocol, contactName, etc.)
+
+  userId    String   @map("user_id")
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  ticketId  String?  @map("ticket_id")
+  ticket    Ticket?  @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+
+  companyId String   @map("company_id")
+  company   Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([userId, read])
+  @@index([companyId])
+  @@map("notifications")
+}
+
+// ============================================
+// KNOWLEDGE BASE MODELS (RAG System)
+// ============================================
+
+/// Contexto de Conhecimento (agrupa fontes relacionadas)
+model KnowledgeContext {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  slug        String   // Unique slug per company (e.g., "system-code", "system-docs")
+  systemPrompt String? @db.Text @map("system_prompt") // Prompt do sistema para este contexto
+  keywords    String[] // Keywords para categorização
+  priority    Int      @default(0) // Ordem de prioridade
+
+  companyId String  @map("company_id")
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  sources KnowledgeSource[]
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@unique([companyId, slug])
+  @@index([companyId])
+  @@map("knowledge_contexts")
+}
+
+/// Fonte de Conhecimento (arquivo, URL, Notion, etc.)
+model KnowledgeSource {
+  id        String   @id @default(cuid())
+  name      String
+  type      String   // TEXT, PDF, NOTION, URL, DOCX, CSV, JSON
+  sourceUrl String?  @map("source_url") // URL original
+  filePath  String?  @map("file_path") // Caminho do arquivo
+  content   String?  @db.Text // Conteúdo direto (para TEXT)
+  status    String   @default("PENDING") // PENDING, PROCESSING, COMPLETED, FAILED
+  error     String?  @db.Text
+  metadata  Json?    // Metadados adicionais
+
+  contextId String           @map("context_id")
+  context   KnowledgeContext @relation(fields: [contextId], references: [id], onDelete: Cascade)
+
+  companyId String  @map("company_id")
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  chunks KnowledgeChunk[]
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([contextId])
+  @@index([companyId])
+  @@map("knowledge_sources")
+}
+
+/// Chunk de Conhecimento (pedaço indexado para busca semântica)
+model KnowledgeChunk {
+  id        String   @id @default(cuid())
+  content   String   @db.Text
+  embedding String?  // JSON array de floats (embedding vetorial)
+  metadata  Json?    // Metadados adicionais (page, position, etc.)
+
+  sourceId String         @map("source_id")
+  source   KnowledgeSource @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([sourceId])
+  @@map("knowledge_chunks")
 }

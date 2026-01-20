@@ -4,6 +4,8 @@ import { logger } from '../config/logger.js';
 import { MessageProcessor } from '../services/message-processor.service.js';
 import { MetaCloudService } from '../services/whatsapp/meta-cloud.service.js';
 import { InstagramService } from '../services/instagram/instagram.service.js';
+import { translateMetaError, getErrorSuggestion } from '../utils/meta-error-translator.js';
+import { getGlobalIo } from '../server.js';
 
 const router = Router();
 
@@ -305,8 +307,9 @@ router.post('/meta/:connectionId', async (req, res) => {
               }
             }
 
-            // Process status updates
-            if (value.statuses) {
+            // Process status updates (only for META_CLOUD connections)
+            // Baileys connections handle status updates via Baileys events, not Meta webhooks
+            if (value.statuses && connection.type === 'META_CLOUD') {
               for (const status of value.statuses) {
                 const statusMap: Record<string, string> = {
                   sent: 'SENT',
@@ -317,26 +320,67 @@ router.post('/meta/:connectionId', async (req, res) => {
 
                 const mappedStatus = statusMap[status.status] || status.status.toUpperCase();
 
-                await prisma.message.updateMany({
+                const errorMessage = status.errors?.[0]?.message || 'Unknown error';
+                
+                const updateResult = await prisma.message.updateMany({
                   where: { wamid: status.id },
                   data: {
                     status: mappedStatus,
                     ...(status.status === 'delivered' && { deliveredAt: new Date() }),
                     ...(status.status === 'read' && { readAt: new Date() }),
                     ...(status.status === 'failed' && {
-                      failedReason: status.errors?.[0]?.message || 'Unknown error',
+                      failedReason: errorMessage,
                     }),
                   },
                 });
 
-                // Log failures for debugging
-                if (status.status === 'failed') {
+                // If message failed, emit socket event with translated error
+                if (status.status === 'failed' && updateResult.count > 0) {
+                  const translatedError = translateMetaError(errorMessage);
+                  const suggestion = getErrorSuggestion(errorMessage);
+                  
                   logger.error('Message delivery failed:', {
                     messageId: status.id,
                     errors: status.errors,
+                    translatedError,
                   });
+                  
+                  // Find the message to get ticketId
+                  const failedMessage = await prisma.message.findFirst({
+                    where: { wamid: status.id },
+                    select: { id: true, ticketId: true },
+                  });
+                  
+                  if (failedMessage) {
+                    const io = getGlobalIo();
+                    if (io) {
+                      // Emit error event to the ticket room
+                      io.to(`ticket:${failedMessage.ticketId}`).emit('message:error', {
+                        messageId: failedMessage.id,
+                        wamid: status.id,
+                        error: translatedError,
+                        suggestion: suggestion,
+                        originalError: errorMessage,
+                      });
+                      
+                      // Also emit status update
+                      io.to(`ticket:${failedMessage.ticketId}`).emit('message:status', {
+                        messageId: failedMessage.id,
+                        wamid: status.id,
+                        status: 'FAILED',
+                        translatedError,
+                        suggestion,
+                      });
+                    }
+                  }
+                } else if (status.status === 'failed' && updateResult.count === 0) {
+                  // Message not found - might be from a different connection type (e.g., Baileys)
+                  logger.debug(`Message status update skipped: message ${status.id} not found (might be Baileys message)`);
                 }
               }
+            } else if (value.statuses && connection.type === 'BAILEYS') {
+              // Ignore Meta status updates for Baileys connections
+              logger.debug(`Ignoring Meta webhook status updates for Baileys connection: ${connection.id}`);
             }
           }
         }
@@ -644,7 +688,7 @@ router.post('/instagram/:connectionId', async (req, res) => {
                   platform: 'instagram',
                   storyMention: extracted.storyMention,
                   storyReply: extracted.storyReply,
-                },
+                } as any,
               });
             } else if (event.read) {
               // Message read receipt
@@ -677,8 +721,8 @@ router.post('/instagram/:connectionId', async (req, res) => {
                     type: 'postback',
                     payload,
                     title,
-                  },
-                },
+                  } as any,
+                } as any,
               });
             } else if (event.referral) {
               // User came from an ad, link, or other referral
