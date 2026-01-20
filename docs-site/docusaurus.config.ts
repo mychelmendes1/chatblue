@@ -5,7 +5,7 @@ import type * as Preset from '@docusaurus/preset-classic';
 const config: Config = {
   title: 'ChatBlue',
   tagline: 'Plataforma Multi-tenant de Atendimento ao Cliente via WhatsApp',
-  favicon: 'img/favicon.ico',
+  favicon: 'img/favicon.png',
 
   future: {
     v4: true,
@@ -14,7 +14,7 @@ const config: Config = {
   url: 'https://chat.grupoblue.com.br',
   baseUrl: '/docs/',
 
-  organizationName: 'chatblue',
+  organizationName: 'grupoblue',
   projectName: 'chatblue',
 
   onBrokenLinks: 'throw',
@@ -32,7 +32,7 @@ const config: Config = {
         docs: {
           sidebarPath: './sidebars.ts',
           routeBasePath: '/',
-          editUrl: 'https://github.com/chatblue/chatblue/tree/main/docs-site/',
+          // Removido editUrl para esconder botão "Editar essa página"
         },
         blog: false,
         theme: {
@@ -43,7 +43,7 @@ const config: Config = {
   ],
 
   themeConfig: {
-    image: 'img/chatblue-social-card.jpg',
+    image: 'img/favicon.png',
     colorMode: {
       defaultMode: 'light',
       disableSwitch: false,
@@ -59,7 +59,7 @@ const config: Config = {
       title: 'ChatBlue',
       logo: {
         alt: 'ChatBlue Logo',
-        src: 'img/logo.svg',
+        src: 'img/favicon.png',
       },
       items: [
         {
@@ -87,8 +87,8 @@ const config: Config = {
           label: 'Treinamento',
         },
         {
-          href: 'https://github.com/chatblue/chatblue',
-          label: 'GitHub',
+          href: 'https://chat.grupoblue.com.br',
+          label: 'Voltar ao Sistema',
           position: 'right',
         },
       ],
@@ -164,17 +164,8 @@ const config: Config = {
             },
           ],
         },
-        {
-          title: 'Mais',
-          items: [
-            {
-              label: 'GitHub',
-              href: 'https://github.com/chatblue/chatblue',
-            },
-          ],
-        },
       ],
-      copyright: `Copyright © ${new Date().getFullYear()} ChatBlue. Documentacao construida com Docusaurus.`,
+      copyright: `Copyright © ${new Date().getFullYear()} Grupo Blue. Todos os direitos reservados.`,
     },
     prism: {
       theme: prismThemes.github,

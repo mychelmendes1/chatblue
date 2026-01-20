@@ -158,6 +158,7 @@ const sidebars: SidebarsConfig = {
         'api/conexoes/conectar',
         'api/conexoes/desconectar',
         'api/conexoes/webhooks',
+        'api/conexoes/listar-templates',
       ],
     },
     {
@@ -182,6 +183,7 @@ const sidebars: SidebarsConfig = {
         'api/mensagens/listar',
         'api/mensagens/enviar-texto',
         'api/mensagens/enviar-midia',
+        'api/mensagens/enviar-template',
         'api/mensagens/reagir',
         'api/mensagens/deletar',
       ],
@@ -195,6 +197,7 @@ const sidebars: SidebarsConfig = {
         'api/contatos/detalhes',
         'api/contatos/atualizar',
         'api/contatos/sincronizar-notion',
+        'api/contatos/verificar-janela',
       ],
     },
     {

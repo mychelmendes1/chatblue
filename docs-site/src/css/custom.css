@@ -1,31 +1,34 @@
 /**
  * ChatBlue Documentation - Custom CSS
- * Based on Infima CSS framework
+ * Cores baseadas no sistema principal
+ * Primary: hsl(199, 100%, 40%) = #0099cc
  */
 
 /* Light Mode - ChatBlue Brand Colors */
 :root {
-  --ifm-color-primary: #3b82f6;
-  --ifm-color-primary-dark: #2563eb;
-  --ifm-color-primary-darker: #1d4ed8;
-  --ifm-color-primary-darkest: #1e40af;
-  --ifm-color-primary-light: #60a5fa;
-  --ifm-color-primary-lighter: #93c5fd;
-  --ifm-color-primary-lightest: #bfdbfe;
+  /* Primary color: hsl(199, 100%, 40%) */
+  --ifm-color-primary: #0099cc;
+  --ifm-color-primary-dark: #008ab8;
+  --ifm-color-primary-darker: #0082ad;
+  --ifm-color-primary-darkest: #006b8f;
+  --ifm-color-primary-light: #00a8e0;
+  --ifm-color-primary-lighter: #00b7eb;
+  --ifm-color-primary-lightest: #33c4f0;
 
   --ifm-background-color: #ffffff;
   --ifm-background-surface-color: #f8fafc;
 
   --ifm-code-font-size: 95%;
-  --docusaurus-highlighted-code-line-bg: rgba(59, 130, 246, 0.1);
+  --docusaurus-highlighted-code-line-bg: rgba(0, 153, 204, 0.1);
 
-  --ifm-font-family-base: 'Inter', system-ui, -apple-system, sans-serif;
-  --ifm-heading-font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  --ifm-font-family-base: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --ifm-heading-font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
 
-  --ifm-navbar-height: 4rem;
-  --ifm-footer-background-color: #1e293b;
+  --ifm-navbar-height: 3.5rem;
+  --ifm-footer-background-color: #0f172a;
 
   /* Custom ChatBlue colors */
+  --chatblue-primary: #0099cc;
   --chatblue-whatsapp: #25D366;
   --chatblue-success: #22c55e;
   --chatblue-warning: #f59e0b;
@@ -35,34 +38,54 @@
 
 /* Dark Mode */
 [data-theme='dark'] {
-  --ifm-color-primary: #60a5fa;
-  --ifm-color-primary-dark: #3b82f6;
-  --ifm-color-primary-darker: #2563eb;
-  --ifm-color-primary-darkest: #1d4ed8;
-  --ifm-color-primary-light: #93c5fd;
-  --ifm-color-primary-lighter: #bfdbfe;
-  --ifm-color-primary-lightest: #dbeafe;
+  --ifm-color-primary: #33c4f0;
+  --ifm-color-primary-dark: #0099cc;
+  --ifm-color-primary-darker: #008ab8;
+  --ifm-color-primary-darkest: #006b8f;
+  --ifm-color-primary-light: #5cd0f5;
+  --ifm-color-primary-lighter: #85dcf8;
+  --ifm-color-primary-lightest: #ade8fb;
 
   --ifm-background-color: #0f172a;
   --ifm-background-surface-color: #1e293b;
 
-  --docusaurus-highlighted-code-line-bg: rgba(96, 165, 250, 0.15);
+  --docusaurus-highlighted-code-line-bg: rgba(51, 196, 240, 0.15);
 
   --ifm-footer-background-color: #020617;
 }
 
-/* Navbar */
+/* Navbar - estilo similar ao sistema */
 .navbar {
   box-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.1);
+  background-color: #ffffff;
 }
 
 .navbar__title {
-  font-weight: 700;
+  font-weight: 600;
   color: var(--ifm-color-primary);
 }
 
+.navbar__logo {
+  height: 32px;
+  width: 32px;
+}
+
 [data-theme='dark'] .navbar {
-  background-color: var(--ifm-background-surface-color);
+  background-color: #1e293b;
+}
+
+/* Link "Voltar ao Sistema" destacado */
+.navbar__item[href="https://chat.grupoblue.com.br"] {
+  background-color: var(--ifm-color-primary);
+  color: white !important;
+  border-radius: 0.375rem;
+  padding: 0.5rem 1rem !important;
+  font-weight: 500;
+}
+
+.navbar__item[href="https://chat.grupoblue.com.br"]:hover {
+  background-color: var(--ifm-color-primary-dark);
+  color: white !important;
 }
 
 /* Sidebar */
@@ -72,17 +95,22 @@
 
 .menu__link {
   border-radius: 0.375rem;
-  transition: all 0.2s ease;
+  transition: all 0.15s ease;
+  font-size: 0.9rem;
 }
 
 .menu__link:hover {
-  background-color: var(--ifm-background-surface-color);
+  background-color: rgba(0, 153, 204, 0.08);
 }
 
 .menu__link--active {
-  background-color: rgba(59, 130, 246, 0.1);
+  background-color: rgba(0, 153, 204, 0.12);
   color: var(--ifm-color-primary);
   font-weight: 600;
+}
+
+.menu__list-item-collapsible:hover {
+  background-color: rgba(0, 153, 204, 0.05);
 }
 
 /* Code blocks */
@@ -93,6 +121,7 @@
 code {
   border-radius: 0.25rem;
   padding: 0.125rem 0.375rem;
+  background-color: rgba(0, 153, 204, 0.08);
 }
 
 /* Tables */
@@ -103,7 +132,7 @@ table {
 }
 
 th {
-  background-color: var(--ifm-background-surface-color);
+  background-color: rgba(0, 153, 204, 0.08);
   font-weight: 600;
 }
 
@@ -113,7 +142,7 @@ td, th {
 }
 
 tr:hover td {
-  background-color: var(--ifm-background-surface-color);
+  background-color: rgba(0, 153, 204, 0.04);
 }
 
 /* Admonitions */
@@ -124,17 +153,6 @@ tr:hover td {
 
 .admonition-heading {
   font-weight: 600;
-}
-
-/* Cards */
-.card {
-  border-radius: 0.75rem;
-  box-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.1);
-  transition: box-shadow 0.2s ease;
-}
-
-.card:hover {
-  box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1);
 }
 
 /* TOC */
@@ -149,11 +167,6 @@ tr:hover td {
 .table-of-contents__link--active {
   color: var(--ifm-color-primary);
   font-weight: 500;
-}
-
-/* Search */
-.DocSearch-Button {
-  border-radius: 0.5rem !important;
 }
 
 /* Badges */
@@ -202,28 +215,21 @@ tr:hover td {
   color: var(--chatblue-warning);
 }
 
-/* ASCII diagrams */
-pre.ascii-diagram {
-  font-family: 'JetBrains Mono', 'Fira Code', monospace;
-  font-size: 0.8rem;
-  line-height: 1.4;
-  overflow-x: auto;
-}
-
 /* Footer */
 .footer {
-  padding-top: 3rem;
-  padding-bottom: 2rem;
+  padding-top: 2.5rem;
+  padding-bottom: 1.5rem;
 }
 
 .footer__title {
   font-weight: 600;
   margin-bottom: 0.75rem;
+  color: #e2e8f0;
 }
 
 .footer__link-item {
   color: #94a3b8;
-  transition: color 0.2s ease;
+  transition: color 0.15s ease;
 }
 
 .footer__link-item:hover {
@@ -231,18 +237,48 @@ pre.ascii-diagram {
   text-decoration: none;
 }
 
+.footer__copyright {
+  color: #64748b;
+  font-size: 0.875rem;
+}
+
+/* Pagination */
+.pagination-nav__link {
+  border-radius: 0.5rem;
+  border-color: var(--ifm-toc-border-color);
+}
+
+.pagination-nav__link:hover {
+  border-color: var(--ifm-color-primary);
+}
+
+/* Breadcrumbs */
+.breadcrumbs__link {
+  border-radius: 0.25rem;
+}
+
 /* Mobile responsiveness */
 @media (max-width: 768px) {
   .navbar__title {
-    font-size: 1rem;
+    font-size: 0.9rem;
+  }
+
+  .navbar__logo {
+    height: 28px;
+    width: 28px;
   }
 
   table {
-    font-size: 0.875rem;
+    font-size: 0.8rem;
   }
 
   td, th {
     padding: 0.5rem;
+  }
+
+  .navbar__item[href="https://chat.grupoblue.com.br"] {
+    padding: 0.4rem 0.75rem !important;
+    font-size: 0.85rem;
   }
 }
 
@@ -262,8 +298,8 @@ pre.ascii-diagram {
 
 /* Scrollbar */
 ::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 6px;
+  height: 6px;
 }
 
 ::-webkit-scrollbar-track {
@@ -271,28 +307,59 @@ pre.ascii-diagram {
 }
 
 ::-webkit-scrollbar-thumb {
-  background-color: var(--ifm-color-emphasis-300);
-  border-radius: 4px;
+  background-color: rgba(0, 0, 0, 0.2);
+  border-radius: 3px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background-color: var(--ifm-color-emphasis-400);
+  background-color: rgba(0, 0, 0, 0.3);
 }
 
 [data-theme='dark'] ::-webkit-scrollbar-thumb {
-  background-color: var(--ifm-color-emphasis-500);
+  background-color: rgba(255, 255, 255, 0.2);
 }
 
-/* Animation for loading states */
-@keyframes pulse {
-  0%, 100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.5;
-  }
+[data-theme='dark'] ::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(255, 255, 255, 0.3);
 }
 
-.loading {
-  animation: pulse 2s ease-in-out infinite;
+/* Remove Edit This Page button via CSS (backup) */
+.theme-edit-this-page {
+  display: none !important;
+}
+
+/* DocCard - cards de navegacao */
+.card {
+  border-radius: 0.5rem;
+  border: 1px solid var(--ifm-toc-border-color);
+  transition: all 0.15s ease;
+}
+
+.card:hover {
+  border-color: var(--ifm-color-primary);
+  box-shadow: 0 2px 8px rgba(0, 153, 204, 0.1);
+}
+
+/* Links */
+a {
+  color: var(--ifm-color-primary);
+}
+
+a:hover {
+  color: var(--ifm-color-primary-dark);
+  text-decoration: underline;
+}
+
+/* Heading anchors */
+.hash-link {
+  color: var(--ifm-color-primary);
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+h1:hover .hash-link,
+h2:hover .hash-link,
+h3:hover .hash-link,
+h4:hover .hash-link {
+  opacity: 1;
 }
