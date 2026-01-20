@@ -64,14 +64,17 @@ export default function NPSPage() {
         comment: comment.trim() || undefined,
       });
 
-      if (response.data.success) {
+      const data = response.data as { success: boolean; message?: string };
+      
+      if (data.success) {
         setSubmitted(true);
       } else {
-        setError(response.data.message || "Erro ao enviar resposta");
+        setError(data.message || "Erro ao enviar resposta");
       }
     } catch (err: any) {
       console.error("Error submitting NPS:", err);
-      setError(err.response?.data?.message || "Erro ao enviar resposta. Tente novamente.");
+      const errorData = err.response?.data as { message?: string } | undefined;
+      setError(errorData?.message || "Erro ao enviar resposta. Tente novamente.");
     } finally {
       setSubmitting(false);
     }
