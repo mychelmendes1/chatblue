@@ -27,6 +27,7 @@ import { publicRouter } from './routes/public.routes';
 import aiAssistantRouter from './routes/ai-assistant.routes';
 import { blueRouter } from './routes/blue.routes';
 import notificationRouter from './routes/notification.routes';
+import mlLearningRouter from './routes/ml-learning.routes';
 import { setupSocketHandlers } from './sockets/index';
 import { startWorkers, stopWorkers } from './jobs/index';
 import { prisma } from './config/database';
@@ -141,6 +142,7 @@ app.use('/api/public', publicRouter);
 app.use('/api/ai-assistant', aiAssistantRouter);
 app.use('/api/blue', blueRouter);
 app.use('/api/notifications', notificationRouter);
+app.use('/api/ml-learning', mlLearningRouter);
 app.use('/webhooks', webhookRouter);
 
 // Serve uploaded files statically

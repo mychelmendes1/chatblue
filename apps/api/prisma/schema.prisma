@@ -192,6 +192,15 @@ model Company {
   aiDataSources  AIDataSource[]
   aiAgentConfigs AIAgentConfig[]
 
+  // ML Learning System relations
+  mlTrainingPairs     MLTrainingPair[]
+  mlIntentPatterns    MLIntentPattern[]
+  mlResponseTemplates MLResponseTemplate[]
+  mlModelVersions     MLModelVersion[]
+  mlLearningMetrics   MLLearningMetric[]
+  mlAIDecisionLogs    MLAIDecisionLog[]
+  mlTrainingBatches   MLTrainingBatch[]
+
   @@map("companies")
 }
 
@@ -1213,4 +1222,349 @@ model KnowledgeChunk {
 
   @@index([sourceId])
   @@map("knowledge_chunks")
+}
+
+// ============================================
+// ML LEARNING SYSTEM MODELS
+// ============================================
+
+/// Complexity level for ML training
+enum MLComplexity {
+  SIMPLE
+  MEDIUM
+  COMPLEX
+}
+
+/// Source type for ML response templates
+enum MLTemplateSourceType {
+  MANUAL
+  LEARNED
+  GENERATED
+}
+
+/// Status for ML models
+enum MLModelStatus {
+  TRAINING
+  READY
+  DEPLOYED
+  DEPRECATED
+}
+
+/// Par de Treinamento (pergunta do cliente + resposta do atendente)
+model MLTrainingPair {
+  id        String  @id @default(cuid())
+  companyId String  @map("company_id")
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  // Contexto da conversa
+  ticketId String @map("ticket_id")
+
+  // Pergunta do cliente
+  customerMessageId String  @map("customer_message_id")
+  customerQuery     String  @db.Text // Texto normalizado
+  customerEmbedding Float[] // Embedding vetorial (1536 dims)
+
+  // Resposta do atendente
+  agentMessageId String @map("agent_message_id")
+  agentResponse  String @db.Text
+  agentId        String @map("agent_id")
+
+  // Metadados de qualidade
+  responseTime       Int      @map("response_time") // Tempo em segundos até resposta
+  wasAIAssisted      Boolean  @default(false) @map("was_ai_assisted") // Se usou @ia para ajudar
+  aiSuggestionUsed   Boolean? @map("ai_suggestion_used") // Se usou sugestão da IA
+  aiSuggestionEdited Boolean? @map("ai_suggestion_edited") // Se editou sugestão da IA
+
+  // Classificação automática
+  category   String?      // Categoria detectada (vendas, suporte, etc)
+  intent     String?      // Intenção detectada (PRICE_INQUIRY, COMPLAINT, etc)
+  sentiment  String?      // Sentimento do cliente (positive, negative, neutral)
+  complexity MLComplexity @default(MEDIUM) // Complexidade da pergunta
+
+  // Outcome do ticket (para medir qualidade)
+  ticketResolved          Boolean? @map("ticket_resolved")
+  customerRating          Int?     @map("customer_rating") // 1-5
+  npsScore                Int?     @map("nps_score") // 0-10
+  firstContactResolution  Boolean? @map("first_contact_resolution")
+
+  // Status de uso no treinamento
+  qualityScore    Float?    @map("quality_score") // Score de qualidade calculado (0-100)
+  isValidated     Boolean   @default(false) @map("is_validated")
+  validatedBy     String?   @map("validated_by")
+  validatedAt     DateTime? @map("validated_at")
+  usedInTraining  Boolean   @default(false) @map("used_in_training")
+  trainingBatchId String?   @map("training_batch_id")
+
+  // Timestamps
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([companyId])
+  @@index([category])
+  @@index([intent])
+  @@index([qualityScore])
+  @@index([isValidated])
+  @@index([usedInTraining])
+  @@map("ml_training_pairs")
+}
+
+/// Padrão de Intenção Aprendido
+model MLIntentPattern {
+  id        String  @id @default(cuid())
+  companyId String  @map("company_id")
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  // Padrão identificado
+  intent   String // Ex: "PRICE_INQUIRY", "COMPLAINT", "ORDER_STATUS"
+  category String // Ex: "vendas", "suporte", "financeiro"
+
+  // Descrição amigável
+  name        String
+  description String?
+
+  // Exemplos de frases que correspondem a este intent
+  examplePhrases String[] @map("example_phrases")
+  keywords       String[] // Palavras-chave associadas
+
+  // Embedding médio dos exemplos (centroide do cluster)
+  centroidEmbedding Float[] @map("centroid_embedding")
+
+  // Resposta padrão sugerida
+  suggestedResponseTemplate String? @db.Text @map("suggested_response_template")
+
+  // Estatísticas
+  occurrenceCount   Int    @default(0) @map("occurrence_count") // Quantas vezes detectado
+  successRate       Float? @map("success_rate") // Taxa de sucesso quando IA responde
+  avgCustomerRating Float? @map("avg_customer_rating")
+  avgResponseTime   Float? @map("avg_response_time") // Tempo médio de resposta humana
+
+  // Status e confiança
+  isActive   Boolean @default(true) @map("is_active")
+  isApproved Boolean @default(false) @map("is_approved") // Se foi aprovado por humano
+  approvedBy String? @map("approved_by")
+  approvedAt DateTime? @map("approved_at")
+  confidence Float   // Confiança do padrão (0-1)
+
+  // Relação com templates de resposta
+  responseTemplates MLResponseTemplate[]
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@unique([companyId, intent])
+  @@index([companyId])
+  @@index([category])
+  @@index([isActive])
+  @@index([isApproved])
+  @@map("ml_intent_patterns")
+}
+
+/// Template de Resposta Aprendido
+model MLResponseTemplate {
+  id        String  @id @default(cuid())
+  companyId String  @map("company_id")
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  // Identificação
+  name     String
+  category String
+  intent   String?
+
+  // Template de resposta com placeholders
+  template  String @db.Text // Ex: "Olá {{nome}}! O preço do {{produto}} é R$ {{preco}}."
+  variables Json?  // Descrição das variáveis: { "nome": "Nome do cliente", "produto": "Nome do produto" }
+
+  // Embedding do template para matching
+  templateEmbedding Float[] @map("template_embedding")
+
+  // Origem
+  sourceType           MLTemplateSourceType @default(LEARNED) @map("source_type")
+  sourceTrainingPairId String?              @map("source_training_pair_id")
+
+  // Relação com padrão de intenção
+  intentPatternId String?          @map("intent_pattern_id")
+  intentPattern   MLIntentPattern? @relation(fields: [intentPatternId], references: [id])
+
+  // Estatísticas de uso
+  usageCount   Int    @default(0) @map("usage_count")
+  successCount Int    @default(0) @map("success_count") // Vezes que levou a resolução
+  avgRating    Float? @map("avg_rating")
+
+  // Status
+  isActive   Boolean   @default(true) @map("is_active")
+  isApproved Boolean   @default(false) @map("is_approved") // Se foi aprovado por humano
+  approvedBy String?   @map("approved_by")
+  approvedAt DateTime? @map("approved_at")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([companyId])
+  @@index([category])
+  @@index([intent])
+  @@index([isActive])
+  @@index([isApproved])
+  @@map("ml_response_templates")
+}
+
+/// Versão de Modelo ML Treinado
+model MLModelVersion {
+  id        String  @id @default(cuid())
+  companyId String  @map("company_id")
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  // Versão do modelo
+  version   String // Ex: "1.0.0", "1.1.0"
+  modelType String @map("model_type") // INTENT_CLASSIFIER, RESPONSE_RANKER, QUALITY_SCORER
+
+  // Descrição
+  name        String
+  description String?
+
+  // Métricas de treinamento
+  trainingPairsCount Int    @map("training_pairs_count")
+  accuracy           Float?
+  precision          Float?
+  recall             Float?
+  f1Score            Float? @map("f1_score")
+
+  // Configuração e artefatos
+  configJson Json?   // Configuração do modelo (hyperparameters, etc)
+  modelPath  String? @map("model_path") // Caminho para artefatos salvos (se aplicável)
+
+  // Status
+  status   MLModelStatus @default(TRAINING)
+  isActive Boolean       @default(false) @map("is_active")
+
+  // Deployment
+  deployedAt   DateTime? @map("deployed_at")
+  deprecatedAt DateTime? @map("deprecated_at")
+
+  // Changelog
+  changelog String? @db.Text
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([companyId])
+  @@index([modelType])
+  @@index([isActive])
+  @@map("ml_model_versions")
+}
+
+/// Métricas Diárias de Aprendizado
+model MLLearningMetric {
+  id        String   @id @default(cuid())
+  companyId String   @map("company_id")
+  company   Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  date      DateTime @db.Date
+
+  // Métricas de atendimento
+  totalTickets        Int @default(0) @map("total_tickets")
+  aiHandledTickets    Int @default(0) @map("ai_handled_tickets")
+  humanHandledTickets Int @default(0) @map("human_handled_tickets")
+  aiToHumanTransfers  Int @default(0) @map("ai_to_human_transfers")
+
+  // Métricas de qualidade da IA
+  aiResolutionRate Float  @default(0) @map("ai_resolution_rate") // % tickets resolvidos só com IA
+  aiAvgRating      Float? @map("ai_avg_rating") // Rating médio quando IA resolve
+  aiNpsScore       Float? @map("ai_nps_score") // NPS médio quando IA resolve
+
+  // Métricas de aprendizado
+  newTrainingPairs   Int @default(0) @map("new_training_pairs") // Novos pares coletados
+  validatedPairs     Int @default(0) @map("validated_pairs") // Pares validados
+  newPatternsLearned Int @default(0) @map("new_patterns_learned") // Novos padrões identificados
+  newTemplatesAdded  Int @default(0) @map("new_templates_added") // Novos templates
+  knowledgeGapsFound Int @default(0) @map("knowledge_gaps_found") // Lacunas detectadas
+
+  // Métricas de qualidade do modelo
+  intentAccuracy   Float? @map("intent_accuracy") // Precisão na classificação de intent
+  templateMatchRate Float? @map("template_match_rate") // % queries com template aplicável
+
+  // Comparação com período anterior
+  aiResolutionRateDelta Float? @map("ai_resolution_rate_delta") // Mudança vs dia anterior
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@unique([companyId, date])
+  @@index([companyId])
+  @@index([date])
+  @@map("ml_learning_metrics")
+}
+
+/// Log de Decisões da IA (para auditoria e aprendizado)
+model MLAIDecisionLog {
+  id        String  @id @default(cuid())
+  companyId String  @map("company_id")
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  ticketId  String  @map("ticket_id")
+  messageId String  @map("message_id")
+
+  // Input
+  customerMessage  String  @db.Text @map("customer_message")
+  messageEmbedding Float[] @map("message_embedding")
+
+  // Classificação
+  detectedIntent     String? @map("detected_intent")
+  intentConfidence   Float?  @map("intent_confidence")
+  detectedCategory   String? @map("detected_category")
+  categoryConfidence Float?  @map("category_confidence")
+
+  // Decisão tomada
+  decision        String // RESPOND_AI, TRANSFER_TO_HUMAN, SUGGEST_ONLY
+  decisionReason  String? @map("decision_reason")
+
+  // Resposta gerada (se houver)
+  generatedResponse  String? @db.Text @map("generated_response")
+  templateUsedId     String? @map("template_used_id")
+  documentsUsedIds   String[] @map("documents_used_ids")
+  qualityScore       Float?  @map("quality_score")
+
+  // Outcome
+  wasCorrectDecision Boolean? @map("was_correct_decision") // Se a decisão foi correta
+  humanOverride      Boolean  @default(false) @map("human_override") // Se humano mudou a decisão
+  finalOutcome       String?  @map("final_outcome") // RESOLVED, ESCALATED, CORRECTED
+
+  // Tempos
+  processingTimeMs Int @map("processing_time_ms")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([companyId])
+  @@index([ticketId])
+  @@index([detectedIntent])
+  @@index([decision])
+  @@index([createdAt])
+  @@map("ml_ai_decision_logs")
+}
+
+/// Batch de Treinamento
+model MLTrainingBatch {
+  id        String  @id @default(cuid())
+  companyId String  @map("company_id")
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  // Identificação
+  batchNumber Int    @map("batch_number")
+  description String?
+
+  // Dados do batch
+  pairsCount       Int @map("pairs_count")
+  patternsCreated  Int @default(0) @map("patterns_created")
+  templatesCreated Int @default(0) @map("templates_created")
+
+  // Status
+  status    String   @default("PENDING") // PENDING, PROCESSING, COMPLETED, FAILED
+  startedAt DateTime? @map("started_at")
+  completedAt DateTime? @map("completed_at")
+  error     String?   @db.Text
+
+  // Resultado
+  resultSummary Json? @map("result_summary")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([companyId])
+  @@index([status])
+  @@map("ml_training_batches")
 }
