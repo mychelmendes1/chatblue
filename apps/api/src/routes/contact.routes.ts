@@ -153,9 +153,9 @@ router.put('/:id', authenticate, ensureTenant, async (req, res, next) => {
   try {
     const data = z.object({
       name: z.string().min(1).optional(),
-      email: z.string().email().optional(),
+      email: z.string().email().optional().or(z.literal('')).transform(val => val === '' ? null : val),
       tags: z.array(z.string()).optional(),
-      notes: z.string().optional(),
+      notes: z.string().optional().nullable(),
       customFields: z.record(z.any()).optional(),
     }).parse(req.body);
 

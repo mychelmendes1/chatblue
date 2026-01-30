@@ -228,6 +228,12 @@ router.get('/', authenticate, ensureTenant, async (req, res, next) => {
             color: true,
           },
         },
+        connection: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
         messages: {
           take: 1,
           orderBy: { createdAt: 'desc' },

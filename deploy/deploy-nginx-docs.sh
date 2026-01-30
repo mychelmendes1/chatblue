@@ -47,3 +47,5 @@ expect eof
 
 puts "=== Configuração do Nginx atualizada! ==="
 
+
+

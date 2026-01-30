@@ -126,3 +126,5 @@ console.log('File:', outputPath);
 console.log('Categories:', sortedCategories.length);
 console.log('Total questions:', sortedCategories.reduce((sum, cat) => sum + cat.items.length, 0));
 
+
+

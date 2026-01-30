@@ -1,5 +1,6 @@
 import { prisma } from '../config/database.js';
 import { logger } from '../config/logger.js';
+import { redis } from '../config/redis.js';
 import { generateProtocol } from '../utils/protocol.js';
 import { normalizeMediaUrl } from '../utils/media-url.util.js';
 import { AIService } from './ai/ai.service.js';
@@ -9,6 +10,9 @@ import { TransferAnalyzerService } from './ai/transfer-analyzer.service.js';
 import { NotionService } from './notion/notion.service.js';
 import { SLAService } from './sla/sla.service.js';
 import * as path from 'path';
+
+// Cooldown de 4 horas para mensagens de fora do horário (em segundos)
+const OUT_OF_HOURS_COOLDOWN_SECONDS = 4 * 60 * 60; // 4 horas
 
 interface IncomingMessage {
   connectionId: string;
@@ -39,7 +43,48 @@ interface IncomingMessage {
   };
 }
 
+/** CompanySettings subset for business hours */
+type BusinessHoursSettings = {
+  businessHoursEnabled: boolean | null;
+  businessHoursTimezone: string | null;
+  businessHoursDays: string | null;
+  businessHoursStartTime: string | null;
+  businessHoursEndTime: string | null;
+};
+
 export class MessageProcessor {
+  /**
+   * Check if a given date is within configured business hours (in company timezone).
+   * Returns true if no restriction (disabled or missing config) or if current time is inside the window.
+   */
+  private static isWithinBusinessHours(settings: BusinessHoursSettings | null, now: Date): boolean {
+    if (!settings?.businessHoursEnabled) return true;
+    const tz = settings.businessHoursTimezone || 'America/Sao_Paulo';
+    const daysStr = settings.businessHoursDays?.trim();
+    const startStr = settings.businessHoursStartTime?.trim();
+    const endStr = settings.businessHoursEndTime?.trim();
+    if (!daysStr || !startStr || !endStr) return true;
+
+    const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    const dayStr = new Intl.DateTimeFormat('en-US', { timeZone: tz, weekday: 'short' }).format(now);
+    const dayNum = dayNames.indexOf(dayStr);
+    if (dayNum === -1) return true;
+
+    const allowedDays = new Set(daysStr.split(',').map((d) => parseInt(d.trim(), 10)).filter((n) => !isNaN(n)));
+    if (!allowedDays.has(dayNum)) return false;
+
+    const timeStr = new Intl.DateTimeFormat('en-US', { timeZone: tz, hour: '2-digit', minute: '2-digit', hour12: false }).format(now);
+    const [h, m] = timeStr.split(':').map(Number);
+    const currentMinutes = h * 60 + (m || 0);
+
+    const [sh, sm] = startStr.split(':').map((x) => parseInt(x.trim(), 10) || 0);
+    const [eh, em] = endStr.split(':').map((x) => parseInt(x.trim(), 10) || 0);
+    const startMinutes = sh * 60 + sm;
+    const endMinutes = eh * 60 + em;
+
+    return currentMinutes >= startMinutes && currentMinutes < endMinutes;
+  }
+
   /**
    * Normalize phone number: remove WhatsApp JID suffixes and non-numeric characters
    */
@@ -528,6 +573,81 @@ export class MessageProcessor {
           createdAt: timestamp,
         },
       });
+
+      // Horário de funcionamento: se recebemos fora do horário, enviar mensagem automática
+      const companySettings = await prisma.companySettings.findUnique({
+        where: { companyId },
+      });
+      type SettingsWithBusinessHours = BusinessHoursSettings & {
+        outOfHoursMessage?: string | null;
+        awayMessage?: string | null;
+      };
+      const s = companySettings as unknown as SettingsWithBusinessHours | null;
+      const businessSettings: BusinessHoursSettings | null = s
+        ? {
+            businessHoursEnabled: s.businessHoursEnabled ?? null,
+            businessHoursTimezone: s.businessHoursTimezone ?? null,
+            businessHoursDays: s.businessHoursDays ?? null,
+            businessHoursStartTime: s.businessHoursStartTime ?? null,
+            businessHoursEndTime: s.businessHoursEndTime ?? null,
+          }
+        : null;
+      if (
+        s?.businessHoursEnabled &&
+        !this.isWithinBusinessHours(businessSettings, new Date())
+      ) {
+        const outOfHoursText =
+          (s.outOfHoursMessage ?? s.awayMessage)?.trim();
+        if (outOfHoursText) {
+          // Verificar cooldown de 4 horas para não enviar mensagem repetida
+          const cooldownKey = `out-of-hours:${companyId}:${contact.phone}`;
+          const lastSent = await redis.get(cooldownKey);
+          
+          if (lastSent) {
+            logger.debug(`Out-of-hours message skipped for ${contact.phone} - cooldown active (sent at ${lastSent})`);
+          } else {
+            try {
+              const connection = await prisma.whatsAppConnection.findUnique({
+                where: { id: connectionId },
+              });
+              if (connection) {
+                const { WhatsAppService } = await import('./whatsapp/whatsapp.service.js');
+                const whatsappService = new WhatsAppService(connection);
+                const result = await whatsappService.sendMessage(contact.phone, outOfHoursText);
+                const sentMessage = await prisma.message.create({
+                  data: {
+                    type: 'TEXT',
+                    content: outOfHoursText,
+                    isFromMe: true,
+                    status: 'SENT',
+                    ticketId: ticket.id,
+                    connectionId,
+                    wamid: result.messageId,
+                  },
+                });
+                
+                // Salvar no Redis com cooldown de 4 horas
+                await redis.setex(cooldownKey, OUT_OF_HOURS_COOLDOWN_SECONDS, new Date().toISOString());
+                
+                const io = (global as any).io;
+                if (io) {
+                  io.to(`ticket:${ticket.id}`).emit('message:new', {
+                    ...sentMessage,
+                    ticketId: ticket.id,
+                  });
+                  io.to(`company:${companyId}`).emit('message:new', {
+                    ...sentMessage,
+                    ticketId: ticket.id,
+                  });
+                }
+                logger.info(`Out-of-hours auto-reply sent for ticket ${ticket.id} (next allowed in 4 hours)`);
+              }
+            } catch (err) {
+              logger.error('Failed to send out-of-hours message:', err);
+            }
+          }
+        }
+      }
 
       // Extract email from message content if contact doesn't have email
       if (messageContent && !contact.email) {

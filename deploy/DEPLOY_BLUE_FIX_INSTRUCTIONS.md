@@ -70,3 +70,5 @@ router.get('/admin', authenticate, requireAdmin, ensureTenant, async (req, res, 
 4. A rota `/api/settings/admin` deve retornar 200 apenas para admins
 
 
+
+

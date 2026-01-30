@@ -135,3 +135,5 @@ puts "todos os usuários quando blueEnabled=true\n"
 send "exit\r"
 expect eof
 
+
+

@@ -21,6 +21,7 @@ import {
   FolderTree,
   Mic,
   Bot,
+  FileText,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -89,6 +90,13 @@ interface CompanySettings {
   blueEnabled?: boolean;
   // Default transfer department
   defaultTransferDepartmentId?: string | null;
+  // Horário de funcionamento
+  businessHoursEnabled?: boolean;
+  businessHoursTimezone?: string | null;
+  businessHoursDays?: string | null;
+  businessHoursStartTime?: string | null;
+  businessHoursEndTime?: string | null;
+  outOfHoursMessage?: string | null;
 }
 
 interface DepartmentUser {
@@ -126,6 +134,13 @@ interface User {
   isAI: boolean;
   role: string;
   departments?: { department: { id: string; name: string } }[];
+}
+
+interface PredefinedMessage {
+  id: string;
+  shortcut: string;
+  name: string | null;
+  content: string;
 }
 
 const DEPARTMENT_COLORS = [
@@ -188,6 +203,12 @@ export default function SettingsPage() {
     maxTicketsPerAgent: 10,
     welcomeMessage: "",
     awayMessage: "",
+    businessHoursEnabled: false,
+    businessHoursTimezone: "America/Sao_Paulo",
+    businessHoursDays: "1,2,3,4,5",
+    businessHoursStartTime: "09:00",
+    businessHoursEndTime: "18:00",
+    outOfHoursMessage: "",
   });
 
   const [notionForm, setNotionForm] = useState({
@@ -240,10 +261,18 @@ export default function SettingsPage() {
     role: "AGENT" as "ADMIN" | "SUPERVISOR" | "AGENT",
   });
 
+  // Predefined messages (atalhos /xxx)
+  const [predefinedMessages, setPredefinedMessages] = useState<PredefinedMessage[]>([]);
+  const [isPredefinedMessagesLoading, setIsPredefinedMessagesLoading] = useState(false);
+  const [isPredefinedMessageDialogOpen, setIsPredefinedMessageDialogOpen] = useState(false);
+  const [editingPredefinedMessage, setEditingPredefinedMessage] = useState<PredefinedMessage | null>(null);
+  const [predefinedMessageForm, setPredefinedMessageForm] = useState({ shortcut: "", name: "", content: "" });
+
   useEffect(() => {
     fetchSettings();
     fetchDepartments();
     fetchAllUsers();
+    fetchPredefinedMessages();
   }, []);
 
   // Listen for company switch events to reload data
@@ -252,6 +281,7 @@ export default function SettingsPage() {
       console.log("Company switched, reloading settings...");
       setSettings(null);
       fetchSettings();
+      fetchPredefinedMessages();
     };
 
     window.addEventListener('company-switched', handleCompanySwitch);
@@ -259,6 +289,86 @@ export default function SettingsPage() {
       window.removeEventListener('company-switched', handleCompanySwitch);
     };
   }, []);
+
+  async function fetchPredefinedMessages() {
+    setIsPredefinedMessagesLoading(true);
+    try {
+      const res = await api.get<PredefinedMessage[]>("/predefined-messages");
+      setPredefinedMessages(res.data || []);
+    } catch {
+      setPredefinedMessages([]);
+    } finally {
+      setIsPredefinedMessagesLoading(false);
+    }
+  }
+
+  function openAddPredefinedMessage() {
+    setEditingPredefinedMessage(null);
+    setPredefinedMessageForm({ shortcut: "", name: "", content: "" });
+    setIsPredefinedMessageDialogOpen(true);
+  }
+
+  function openEditPredefinedMessage(msg: PredefinedMessage) {
+    setEditingPredefinedMessage(msg);
+    setPredefinedMessageForm({
+      shortcut: msg.shortcut,
+      name: msg.name || "",
+      content: msg.content,
+    });
+    setIsPredefinedMessageDialogOpen(true);
+  }
+
+  async function savePredefinedMessage() {
+    const shortcut = predefinedMessageForm.shortcut.trim().toLowerCase();
+    if (!shortcut || !predefinedMessageForm.content.trim()) {
+      toast({ title: "Preencha atalho e conteúdo", variant: "destructive" });
+      return;
+    }
+    if (!/^[a-z0-9_-]+$/i.test(shortcut)) {
+      toast({ title: "Atalho só pode conter letras, números, _ e -", variant: "destructive" });
+      return;
+    }
+    try {
+      if (editingPredefinedMessage) {
+        await api.put(`/predefined-messages/${editingPredefinedMessage.id}`, {
+          shortcut,
+          name: predefinedMessageForm.name.trim() || null,
+          content: predefinedMessageForm.content.trim(),
+        });
+        toast({ title: "Mensagem atualizada" });
+      } else {
+        await api.post("/predefined-messages", {
+          shortcut,
+          name: predefinedMessageForm.name.trim() || null,
+          content: predefinedMessageForm.content.trim(),
+        });
+        toast({ title: "Mensagem criada" });
+      }
+      setIsPredefinedMessageDialogOpen(false);
+      fetchPredefinedMessages();
+    } catch (e: any) {
+      toast({
+        title: "Erro",
+        description: e.response?.data?.error || e.message || "Falha ao salvar",
+        variant: "destructive",
+      });
+    }
+  }
+
+  async function deletePredefinedMessage(id: string) {
+    if (!confirm("Excluir esta mensagem pré-definida?")) return;
+    try {
+      await api.delete(`/predefined-messages/${id}`);
+      toast({ title: "Mensagem excluída" });
+      fetchPredefinedMessages();
+    } catch (e: any) {
+      toast({
+        title: "Erro",
+        description: e.response?.data?.error || "Falha ao excluir",
+        variant: "destructive",
+      });
+    }
+  }
 
   // Update default model when provider changes
   useEffect(() => {
@@ -282,6 +392,12 @@ export default function SettingsPage() {
         maxTicketsPerAgent: data.maxTicketsPerAgent,
         welcomeMessage: data.welcomeMessage || "",
         awayMessage: data.awayMessage || "",
+        businessHoursEnabled: data.businessHoursEnabled ?? false,
+        businessHoursTimezone: data.businessHoursTimezone ?? "America/Sao_Paulo",
+        businessHoursDays: data.businessHoursDays ?? "1,2,3,4,5",
+        businessHoursStartTime: data.businessHoursStartTime ?? "09:00",
+        businessHoursEndTime: data.businessHoursEndTime ?? "18:00",
+        outOfHoursMessage: data.outOfHoursMessage ?? "",
       });
 
       setNotionForm({
@@ -690,6 +806,10 @@ export default function SettingsPage() {
             <Settings className="w-4 h-4 mr-2" />
             Geral
           </TabsTrigger>
+          <TabsTrigger value="predefined-messages">
+            <FileText className="w-4 h-4 mr-2" />
+            Mensagens pré-definidas
+          </TabsTrigger>
           <TabsTrigger value="notion">
             <Globe className="w-4 h-4 mr-2" />
             Notion
@@ -782,6 +902,137 @@ export default function SettingsPage() {
                 />
               </div>
 
+              {/* Horário de funcionamento */}
+              <div className="border-t pt-6 space-y-4">
+                <div>
+                  <h3 className="text-sm font-medium mb-1">Horário de funcionamento</h3>
+                  <p className="text-sm text-muted-foreground">
+                    Quando ativo, ao receber mensagem fora do horário será enviada automaticamente a mensagem abaixo.
+                  </p>
+                </div>
+                <div className="flex items-center justify-between">
+                  <Label>Ativar horário de funcionamento</Label>
+                  <Switch
+                    checked={generalForm.businessHoursEnabled}
+                    onCheckedChange={(checked) =>
+                      setGeneralForm((prev) => ({ ...prev, businessHoursEnabled: checked }))
+                    }
+                  />
+                </div>
+                {generalForm.businessHoursEnabled && (
+                  <>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label htmlFor="businessHoursStartTime">Início</Label>
+                        <Input
+                          id="businessHoursStartTime"
+                          type="time"
+                          value={generalForm.businessHoursStartTime}
+                          onChange={(e) =>
+                            setGeneralForm((prev) => ({
+                              ...prev,
+                              businessHoursStartTime: e.target.value,
+                            }))
+                          }
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="businessHoursEndTime">Fim</Label>
+                        <Input
+                          id="businessHoursEndTime"
+                          type="time"
+                          value={generalForm.businessHoursEndTime}
+                          onChange={(e) =>
+                            setGeneralForm((prev) => ({
+                              ...prev,
+                              businessHoursEndTime: e.target.value,
+                            }))
+                          }
+                        />
+                      </div>
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="businessHoursTimezone">Fuso horário</Label>
+                      <select
+                        id="businessHoursTimezone"
+                        className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                        value={generalForm.businessHoursTimezone}
+                        onChange={(e) =>
+                          setGeneralForm((prev) => ({
+                            ...prev,
+                            businessHoursTimezone: e.target.value,
+                          }))
+                        }
+                      >
+                        <option value="America/Sao_Paulo">São Paulo (Brasília)</option>
+                        <option value="America/Manaus">Manaus</option>
+                        <option value="America/Fortaleza">Fortaleza</option>
+                        <option value="America/Recife">Recife</option>
+                        <option value="America/Cuiaba">Cuiabá</option>
+                        <option value="America/Noronha">Fernando de Noronha</option>
+                      </select>
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Dias da semana</Label>
+                      <div className="flex flex-wrap gap-2">
+                        {[
+                          { value: "0", label: "Dom" },
+                          { value: "1", label: "Seg" },
+                          { value: "2", label: "Ter" },
+                          { value: "3", label: "Qua" },
+                          { value: "4", label: "Qui" },
+                          { value: "5", label: "Sex" },
+                          { value: "6", label: "Sáb" },
+                        ].map((d) => {
+                          const days = generalForm.businessHoursDays?.split(",").map((x) => x.trim()) ?? [];
+                          const checked = days.includes(d.value);
+                          return (
+                            <label
+                              key={d.value}
+                              className="flex items-center gap-1.5 text-sm cursor-pointer"
+                            >
+                              <input
+                                type="checkbox"
+                                checked={checked}
+                                onChange={() => {
+                                  const newDays = checked
+                                    ? days.filter((x) => x !== d.value)
+                                    : [...days, d.value].sort();
+                                  setGeneralForm((prev) => ({
+                                    ...prev,
+                                    businessHoursDays: newDays.join(","),
+                                  }));
+                                }}
+                                className="rounded border-input"
+                              />
+                              {d.label}
+                            </label>
+                          );
+                        })}
+                      </div>
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="outOfHoursMessage">Mensagem ao receber fora do horário</Label>
+                      <Textarea
+                        id="outOfHoursMessage"
+                        value={generalForm.outOfHoursMessage}
+                        onChange={(e) =>
+                          setGeneralForm((prev) => ({
+                            ...prev,
+                            outOfHoursMessage: e.target.value,
+                          }))
+                        }
+                        placeholder="No momento estamos fora do horário de atendimento. Retornaremos em breve!"
+                        rows={3}
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        Se vazio, será usada a &quot;Mensagem de Ausência&quot; acima.
+                      </p>
+                    </div>
+                  </>
+                )}
+              </div>
+
               <Button onClick={saveGeneralSettings} disabled={isSaving}>
                 {isSaving && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
                 <Save className="w-4 h-4 mr-2" />
@@ -789,6 +1040,115 @@ export default function SettingsPage() {
               </Button>
             </CardContent>
           </Card>
+        </TabsContent>
+
+        {/* Mensagens pré-definidas (atalhos /xxx no chat) */}
+        <TabsContent value="predefined-messages">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <FileText className="w-5 h-5" />
+                Mensagens pré-definidas
+              </CardTitle>
+              <CardDescription>
+                Crie atalhos para o atendente: ao digitar / no campo de mensagem, a lista aparece. Ex: /ola para uma mensagem de boas-vindas.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Button onClick={openAddPredefinedMessage} className="mb-4">
+                <Plus className="w-4 h-4 mr-2" />
+                Adicionar mensagem
+              </Button>
+              {isPredefinedMessagesLoading ? (
+                <div className="flex items-center justify-center py-8">
+                  <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
+                </div>
+              ) : predefinedMessages.length === 0 ? (
+                <p className="text-sm text-muted-foreground py-4">
+                  Nenhuma mensagem pré-definida. Adicione atalhos como /ola, /horario, /despedida.
+                </p>
+              ) : (
+                <div className="space-y-2">
+                  {predefinedMessages.map((msg) => (
+                    <div
+                      key={msg.id}
+                      className="flex items-start justify-between gap-2 p-3 rounded-lg border bg-muted/30"
+                    >
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2">
+                          <code className="text-sm font-medium text-primary">/{msg.shortcut}</code>
+                          {msg.name && (
+                            <span className="text-sm text-muted-foreground">— {msg.name}</span>
+                          )}
+                        </div>
+                        <p className="text-sm text-muted-foreground mt-1 truncate max-w-md">
+                          {msg.content}
+                        </p>
+                      </div>
+                      <div className="flex gap-1 flex-shrink-0">
+                        <Button variant="ghost" size="icon" onClick={() => openEditPredefinedMessage(msg)} title="Editar">
+                          <Pencil className="w-4 h-4" />
+                        </Button>
+                        <Button variant="ghost" size="icon" onClick={() => deletePredefinedMessage(msg.id)} title="Excluir">
+                          <Trash2 className="w-4 h-4 text-destructive" />
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          <Dialog open={isPredefinedMessageDialogOpen} onOpenChange={setIsPredefinedMessageDialogOpen}>
+            <DialogContent className="max-w-md">
+              <DialogHeader>
+                <DialogTitle>{editingPredefinedMessage ? "Editar mensagem" : "Nova mensagem pré-definida"}</DialogTitle>
+                <DialogDescription>
+                  O atendente digita /atalho no chat para ver e inserir esta mensagem.
+                </DialogDescription>
+              </DialogHeader>
+              <div className="space-y-4 py-4">
+                <div className="space-y-2">
+                  <Label>Atalho (sem a barra)</Label>
+                  <Input
+                    placeholder="ola"
+                    value={predefinedMessageForm.shortcut}
+                    onChange={(e) => setPredefinedMessageForm((p) => ({ ...p, shortcut: e.target.value.replace(/\s/g, "").toLowerCase() }))}
+                    disabled={!!editingPredefinedMessage}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Será usado como /{predefinedMessageForm.shortcut || "atalho"}. Apenas letras, números, _ e -.
+                  </p>
+                </div>
+                <div className="space-y-2">
+                  <Label>Nome (opcional)</Label>
+                  <Input
+                    placeholder="Boas-vindas"
+                    value={predefinedMessageForm.name}
+                    onChange={(e) => setPredefinedMessageForm((p) => ({ ...p, name: e.target.value }))}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Conteúdo da mensagem</Label>
+                  <Textarea
+                    placeholder="Olá! Em que posso ajudar?"
+                    value={predefinedMessageForm.content}
+                    onChange={(e) => setPredefinedMessageForm((p) => ({ ...p, content: e.target.value }))}
+                    rows={4}
+                  />
+                </div>
+              </div>
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setIsPredefinedMessageDialogOpen(false)}>
+                  Cancelar
+                </Button>
+                <Button onClick={savePredefinedMessage}>
+                  {editingPredefinedMessage ? "Salvar" : "Criar"}
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
         </TabsContent>
 
         {/* Notion Settings */}

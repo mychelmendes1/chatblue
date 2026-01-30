@@ -142,6 +142,12 @@ export function ChatWindow({ ticket, onShowContactInfo, onMobileBack }: ChatWind
   // Reply state
   const [replyingTo, setReplyingTo] = useState<any>(null);
 
+  // Mensagens pré-definidas (atalhos /xxx)
+  const [predefinedMessages, setPredefinedMessages] = useState<Array<{ id: string; shortcut: string; name: string | null; content: string }>>([]);
+  const [showPredefinedList, setShowPredefinedList] = useState(false);
+  const [predefinedFilter, setPredefinedFilter] = useState("");
+  const [selectedPredefinedIndex, setSelectedPredefinedIndex] = useState(0);
+
   // Messaging window state (for Meta Cloud API 24h rule)
   const [messagingWindow, setMessagingWindow] = useState<{
     isOpen: boolean;
@@ -325,6 +331,13 @@ export function ChatWindow({ ticket, onShowContactInfo, onMobileBack }: ChatWind
     setHasMoreMessages(false);
   }, [ticket.id]);
 
+  // Carregar mensagens pré-definidas (atalhos /xxx)
+  useEffect(() => {
+    api.get<Array<{ id: string; shortcut: string; name: string | null; content: string }>>("/predefined-messages")
+      .then((res) => setPredefinedMessages(res.data || []))
+      .catch(() => setPredefinedMessages([]));
+  }, []);
+
   async function fetchMessages(resetPage = true) {
     console.log("[ChatWindow] fetchMessages called for ticket:", ticket.id);
     const pageToFetch = resetPage ? 1 : messagePage + 1;
@@ -392,6 +405,21 @@ export function ChatWindow({ ticket, onShowContactInfo, onMobileBack }: ChatWind
     const maxHeight = 160; // max-h-40 in pixels (10rem = 160px)
     textarea.style.height = `${Math.min(scrollHeight, maxHeight)}px`;
 
+    // Check for / predefined message trigger
+    const lastSlashAt = value.lastIndexOf("/");
+    if (lastSlashAt !== -1) {
+      const textAfterSlash = value.substring(lastSlashAt + 1);
+      if (!textAfterSlash.includes(" ") && !textAfterSlash.includes("\n")) {
+        setPredefinedFilter(textAfterSlash.toLowerCase());
+        setShowPredefinedList(true);
+        setSelectedPredefinedIndex(0);
+      } else {
+        setShowPredefinedList(false);
+      }
+    } else {
+      setShowPredefinedList(false);
+    }
+
     // Check for @ mention trigger
     const lastAtIndex = value.lastIndexOf("@");
     if (lastAtIndex !== -1) {
@@ -413,8 +441,51 @@ export function ChatWindow({ ticket, onShowContactInfo, onMobileBack }: ChatWind
     }
   }
 
+  // Mensagens pré-definidas filtradas por atalho
+  const filteredPredefined = predefinedMessages.filter((msg) =>
+    msg.shortcut.toLowerCase().startsWith(predefinedFilter)
+  );
+
+  // Manter índice selecionado dentro do range quando a lista filtrada mudar
+  useEffect(() => {
+    if (showPredefinedList && filteredPredefined.length > 0 && selectedPredefinedIndex >= filteredPredefined.length) {
+      setSelectedPredefinedIndex(0);
+    }
+  }, [showPredefinedList, filteredPredefined.length, selectedPredefinedIndex]);
+
+  function handleSelectPredefined(msg: { shortcut: string; content: string }) {
+    const lastSlashAt = newMessage.lastIndexOf("/");
+    const before = newMessage.substring(0, lastSlashAt);
+    setNewMessage(before + msg.content);
+    setShowPredefinedList(false);
+    setPredefinedFilter("");
+    inputRef.current?.focus();
+  }
+
   // Handle Enter key: send message if Enter alone, new line if Shift+Enter
   function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
+    if (showPredefinedList && filteredPredefined.length > 0) {
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setSelectedPredefinedIndex((i) => Math.min(i + 1, filteredPredefined.length - 1));
+        return;
+      }
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setSelectedPredefinedIndex((i) => Math.max(i - 1, 0));
+        return;
+      }
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        handleSelectPredefined(filteredPredefined[selectedPredefinedIndex]);
+        return;
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        setShowPredefinedList(false);
+        return;
+      }
+    }
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       handleSendMessage(e as any);
@@ -859,12 +930,22 @@ export function ChatWindow({ ticket, onShowContactInfo, onMobileBack }: ChatWind
               )}
             </div>
             <p className="text-xs md:text-sm text-muted-foreground truncate">
+              <span className="font-mono text-primary" title="Número do ticket para busca">#{ticket.protocol}</span>
+              <span className="mx-1">•</span>
               {ticket.contact?.phone} • {getStatusLabel(ticket.status)}
             </p>
           </div>
         </div>
 
         <div className="flex items-center gap-1 md:gap-2">
+          {ticket.connection?.name && (
+            <span
+              className="text-[10px] md:text-xs text-muted-foreground bg-muted/80 dark:bg-muted/50 px-1.5 md:px-2 py-0.5 rounded truncate max-w-[80px] md:max-w-[140px]"
+              title={ticket.connection.name}
+            >
+              {ticket.connection.name}
+            </span>
+          )}
           {ticket.isAIHandled && (
             <Button onClick={handleTakeover} variant="default" size="sm" className="h-7 md:h-8 px-2 md:px-3 text-xs md:text-sm">
               <UserPlus className="w-3 h-3 md:w-4 md:h-4 mr-1 md:mr-2" />
@@ -964,6 +1045,7 @@ export function ChatWindow({ ticket, onShowContactInfo, onMobileBack }: ChatWind
                 onClick={loadOlderMessages}
                 disabled={isLoadingOlderMessages}
                 className="text-xs"
+                title="Carregar mensagens antigas"
               >
                 {isLoadingOlderMessages ? (
                   <>
@@ -971,7 +1053,7 @@ export function ChatWindow({ ticket, onShowContactInfo, onMobileBack }: ChatWind
                     Carregando...
                   </>
                 ) : (
-                  "Carregar mensagens antigas"
+                  "Expandir"
                 )}
               </Button>
             </div>
@@ -1208,15 +1290,43 @@ export function ChatWindow({ ticket, onShowContactInfo, onMobileBack }: ChatWind
           >
             <AtSign className="w-4 h-4 md:w-5 md:h-5" />
           </Button>
-          <Textarea
-            ref={inputRef}
-            placeholder={isInternalMode ? "Interna... @mencione" : "Mensagem..."}
-            value={newMessage}
-            onChange={handleMessageChange}
-            onKeyDown={handleKeyDown}
-            rows={1}
-            className={cn("flex-1 min-w-0 min-h-[32px] md:min-h-[40px] max-h-32 md:max-h-40 text-sm md:text-base resize-none", isInternalMode && "border-amber-400 focus-visible:ring-amber-400")}
-          />
+          <div className="flex-1 min-w-0 relative">
+            <Textarea
+              ref={inputRef}
+              placeholder={isInternalMode ? "Interna... @mencione" : "Mensagem... (digite / para atalhos)"}
+              value={newMessage}
+              onChange={handleMessageChange}
+              onKeyDown={handleKeyDown}
+              rows={1}
+              className={cn("flex-1 min-w-0 min-h-[32px] md:min-h-[40px] max-h-32 md:max-h-40 text-sm md:text-base resize-none", isInternalMode && "border-amber-400 focus-visible:ring-amber-400")}
+            />
+            {showPredefinedList && (
+              <div className="absolute bottom-full left-0 right-0 mb-1 bg-background border rounded-lg shadow-lg max-h-48 overflow-y-auto z-50 py-1">
+                <p className="px-3 py-1.5 text-xs text-muted-foreground border-b">Mensagens pré-definidas</p>
+                {filteredPredefined.length === 0 ? (
+                  <p className="px-3 py-2 text-sm text-muted-foreground">Nenhum atalho encontrado</p>
+                ) : (
+                  filteredPredefined.map((msg, i) => (
+                    <button
+                      key={msg.id}
+                      type="button"
+                      className={cn(
+                        "w-full text-left px-3 py-2 text-sm hover:bg-muted transition-colors flex flex-col gap-0.5",
+                        i === selectedPredefinedIndex && "bg-muted"
+                      )}
+                      onClick={() => handleSelectPredefined(msg)}
+                    >
+                      <span className="font-medium">
+                        <code className="text-primary">/{msg.shortcut}</code>
+                        {msg.name && <span className="text-muted-foreground ml-1">— {msg.name}</span>}
+                      </span>
+                      <span className="text-muted-foreground truncate text-xs">{msg.content}</span>
+                    </button>
+                  ))
+                )}
+              </div>
+            )}
+          </div>
           <Button 
             type="submit" 
             size="icon" 

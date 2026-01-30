@@ -50,3 +50,5 @@ expect eof
 puts "\n=== Backup copiado com sucesso! ==="
 puts "Arquivo salvo em: /tmp/chatblue_backup.dump"
 
+
+

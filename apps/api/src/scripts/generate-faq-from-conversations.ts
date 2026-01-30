@@ -217,3 +217,5 @@ Esta documentação foi gerada automaticamente a partir das conversas atendidas 
 
 generateFAQFromConversations().catch(console.error);
 
+
+

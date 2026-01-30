@@ -551,7 +551,8 @@ router.delete('/:id', authenticate, requireAdmin, ensureTenant, async (req, res,
       const baileysService = BaileysService.getInstance(connection.id);
       // Mark as deleted FIRST to prevent any further database operations
       baileysService.markAsDeleted();
-      await baileysService.disconnect();
+      // Force logout to completely invalidate the session and prevent reconnection attempts
+      await baileysService.disconnect(true);
       
       // Remove session files (only session files, NOT messages/tickets)
       const fs = await import('fs');

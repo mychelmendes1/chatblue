@@ -62,3 +62,5 @@ expect eof
 puts "\n=== Dados extraídos! ==="
 puts "Arquivo salvo em: /tmp/conversations_faq.csv no servidor"
 
+
+

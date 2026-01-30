@@ -126,3 +126,5 @@ A conexão da Tokeniza deve reconectar automaticamente após o delay configurado
 
 
 
+
+

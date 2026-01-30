@@ -6,6 +6,11 @@ import { notificationProcessor } from "./processors/notification.processor";
 import { notionSyncProcessor } from "./processors/notion-sync.processor";
 import { ticketCleanupProcessor } from "./processors/ticket-cleanup.processor";
 import { snoozeCheckProcessor } from "./processors/snooze-check.processor";
+import { emailAlertsProcessor } from "./processors/email-alerts.processor";
+import { mlTrainingCollectorProcessor } from "./processors/ml-training-collector.processor";
+import { mlQualityScorerProcessor } from "./processors/ml-quality-scorer.processor";
+import { mlPatternDetectorProcessor } from "./processors/ml-pattern-detector.processor";
+import { mlMetricsProcessor } from "./processors/ml-metrics.processor";
 
 // Queue definitions
 export const slaCheckQueue = new Queue("sla-check", {
@@ -60,12 +65,77 @@ export const snoozeCheckQueue = new Queue("snooze-check", {
   },
 });
 
+export const emailAlertsQueue = new Queue("email-alerts", {
+  connection: redis,
+  defaultJobOptions: {
+    removeOnComplete: 100,
+    removeOnFail: 500,
+    attempts: 2,
+    backoff: {
+      type: "exponential",
+      delay: 5000,
+    },
+  },
+});
+
+// ML Learning System Queues
+export const mlTrainingCollectorQueue = new Queue("ml-training-collector", {
+  connection: redis,
+  defaultJobOptions: {
+    removeOnComplete: 100,
+    removeOnFail: 50,
+    attempts: 2,
+    backoff: {
+      type: "exponential",
+      delay: 2000,
+    },
+  },
+});
+
+export const mlQualityScorerQueue = new Queue("ml-quality-scorer", {
+  connection: redis,
+  defaultJobOptions: {
+    removeOnComplete: 50,
+    removeOnFail: 50,
+    attempts: 2,
+    backoff: {
+      type: "exponential",
+      delay: 1000,
+    },
+  },
+});
+
+export const mlPatternDetectorQueue = new Queue("ml-pattern-detector", {
+  connection: redis,
+  defaultJobOptions: {
+    removeOnComplete: 20,
+    removeOnFail: 50,
+    attempts: 2,
+  },
+});
+
+export const mlMetricsQueue = new Queue("ml-metrics", {
+  connection: redis,
+  defaultJobOptions: {
+    removeOnComplete: 50,
+    removeOnFail: 50,
+    attempts: 3,
+  },
+});
+
 // Workers
 let slaWorker: Worker | null = null;
 let notificationWorker: Worker | null = null;
 let notionSyncWorker: Worker | null = null;
 let ticketCleanupWorker: Worker | null = null;
 let snoozeCheckWorker: Worker | null = null;
+let emailAlertsWorker: Worker | null = null;
+
+// ML Workers
+let mlTrainingCollectorWorker: Worker | null = null;
+let mlQualityScorerWorker: Worker | null = null;
+let mlPatternDetectorWorker: Worker | null = null;
+let mlMetricsWorker: Worker | null = null;
 
 export async function startWorkers() {
   logger.info("Starting background job workers...");
@@ -140,6 +210,76 @@ export async function startWorkers() {
     logger.error(`Snooze check job ${job?.id} failed:`, error);
   });
 
+  // Email Alerts Worker
+  emailAlertsWorker = new Worker("email-alerts", emailAlertsProcessor, {
+    connection: redis,
+    concurrency: 1,
+  });
+
+  emailAlertsWorker.on("completed", (job: Job) => {
+    logger.debug(`Email alerts job ${job.id} completed`);
+  });
+
+  emailAlertsWorker.on("failed", (job: Job | undefined, error: Error) => {
+    logger.error(`Email alerts job ${job?.id} failed:`, error);
+  });
+
+  // ML Training Collector Worker
+  mlTrainingCollectorWorker = new Worker("ml-training-collector", mlTrainingCollectorProcessor, {
+    connection: redis,
+    concurrency: 2,
+  });
+
+  mlTrainingCollectorWorker.on("completed", (job: Job) => {
+    logger.debug(`ML training collector job ${job.id} completed`);
+  });
+
+  mlTrainingCollectorWorker.on("failed", (job: Job | undefined, error: Error) => {
+    logger.error(`ML training collector job ${job?.id} failed:`, error);
+  });
+
+  // ML Quality Scorer Worker
+  mlQualityScorerWorker = new Worker("ml-quality-scorer", mlQualityScorerProcessor, {
+    connection: redis,
+    concurrency: 2,
+  });
+
+  mlQualityScorerWorker.on("completed", (job: Job) => {
+    logger.debug(`ML quality scorer job ${job.id} completed`);
+  });
+
+  mlQualityScorerWorker.on("failed", (job: Job | undefined, error: Error) => {
+    logger.error(`ML quality scorer job ${job?.id} failed:`, error);
+  });
+
+  // ML Pattern Detector Worker
+  mlPatternDetectorWorker = new Worker("ml-pattern-detector", mlPatternDetectorProcessor, {
+    connection: redis,
+    concurrency: 1,
+  });
+
+  mlPatternDetectorWorker.on("completed", (job: Job) => {
+    logger.debug(`ML pattern detector job ${job.id} completed`);
+  });
+
+  mlPatternDetectorWorker.on("failed", (job: Job | undefined, error: Error) => {
+    logger.error(`ML pattern detector job ${job?.id} failed:`, error);
+  });
+
+  // ML Metrics Worker
+  mlMetricsWorker = new Worker("ml-metrics", mlMetricsProcessor, {
+    connection: redis,
+    concurrency: 1,
+  });
+
+  mlMetricsWorker.on("completed", (job: Job) => {
+    logger.debug(`ML metrics job ${job.id} completed`);
+  });
+
+  mlMetricsWorker.on("failed", (job: Job | undefined, error: Error) => {
+    logger.error(`ML metrics job ${job?.id} failed:`, error);
+  });
+
   // Schedule recurring jobs
   await scheduleRecurringJobs();
 
@@ -180,13 +320,96 @@ async function scheduleRecurringJobs() {
     }
   );
 
+  // Email alerts (conexão caída, tickets sem resposta > 12h) a cada 15 minutos
+  await emailAlertsQueue.add(
+    "check-email-alerts",
+    {},
+    {
+      repeat: {
+        every: 15 * 60000, // 15 minutes
+      },
+    }
+  );
+
+  // ML Jobs
+  await mlTrainingCollectorQueue.add(
+    "collect-recent",
+    { type: "collect-recent", hoursBack: 2 },
+    {
+      repeat: {
+        pattern: "0 * * * *", // Every hour
+      },
+    }
+  );
+
+  await mlTrainingCollectorQueue.add(
+    "collect-transfers",
+    { type: "collect-transfers", hoursBack: 4 },
+    {
+      repeat: {
+        pattern: "0 */2 * * *", // Every 2 hours
+      },
+    }
+  );
+
+  await mlQualityScorerQueue.add(
+    "score-pending",
+    { type: "score-pending", limit: 50 },
+    {
+      repeat: {
+        pattern: "*/30 * * * *", // Every 30 minutes
+      },
+    }
+  );
+
+  await mlPatternDetectorQueue.add(
+    "detect-patterns",
+    { type: "detect-patterns", minOccurrences: 3, minQualityScore: 60 },
+    {
+      repeat: {
+        pattern: "0 2 * * *", // 2 AM daily
+      },
+    }
+  );
+
+  await mlPatternDetectorQueue.add(
+    "full-training",
+    { type: "full-training", minOccurrences: 5, minQualityScore: 70, autoApprove: false },
+    {
+      repeat: {
+        pattern: "0 3 * * 0", // 3 AM on Sundays
+      },
+    }
+  );
+
+  await mlMetricsQueue.add(
+    "calculate-daily",
+    { type: "calculate-daily" },
+    {
+      repeat: {
+        pattern: "0 0 * * *", // Midnight daily
+      },
+    }
+  );
+
   logger.info("Recurring jobs scheduled");
 }
 
 export async function stopWorkers() {
   logger.info("Stopping background job workers...");
 
-  const workers = [slaWorker, notificationWorker, notionSyncWorker, ticketCleanupWorker, snoozeCheckWorker];
+  const workers = [
+    slaWorker,
+    notificationWorker,
+    notionSyncWorker,
+    ticketCleanupWorker,
+    snoozeCheckWorker,
+    emailAlertsWorker,
+    mlTrainingCollectorWorker,
+    mlQualityScorerWorker,
+    mlPatternDetectorWorker,
+    mlMetricsWorker,
+  ];
 
   await Promise.all(
     workers.filter(Boolean).map((worker) => worker?.close())
@@ -212,4 +435,40 @@ export async function addNotionSyncJob(data: {
   contactId: string;
 }) {
   return notionSyncQueue.add("sync-contact", data);
+}
+
+// ML Learning System helper functions
+export async function addMLTrainingCollectorJob(data: {
+  type: "collect-recent" | "collect-transfers" | "collect-single-ticket";
+  companyId?: string;
+  ticketId?: string;
+  hoursBack?: number;
+}) {
+  return mlTrainingCollectorQueue.add(`ml-collect-${data.type}`, data);
+}
+
+export async function addMLQualityScorerJob(data: {
+  type: "score-pending" | "score-batch";
+  companyId?: string;
+  limit?: number;
+}) {
+  return mlQualityScorerQueue.add(`ml-score-${data.type}`, data);
+}
+
+export async function addMLPatternDetectorJob(data: {
+  type: "detect-patterns" | "train-intents" | "full-training";
+  companyId?: string;
+  minOccurrences?: number;
+  minQualityScore?: number;
+  autoApprove?: boolean;
+}) {
+  return mlPatternDetectorQueue.add(`ml-${data.type}`, data);
+}
+
+export async function addMLMetricsJob(data: {
+  type: "calculate-daily" | "calculate-resolution-rate";
+  companyId?: string;
+  date?: string;
+}) {
+  return mlMetricsQueue.add(`ml-metrics-${data.type}`, data);
 }

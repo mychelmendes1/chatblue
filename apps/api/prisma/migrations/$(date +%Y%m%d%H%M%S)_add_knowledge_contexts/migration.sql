@@ -89,3 +89,5 @@ ALTER TABLE "knowledge_chunks" ADD CONSTRAINT "knowledge_chunks_source_id_fkey" 
 
 
 
+
+

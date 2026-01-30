@@ -17,3 +17,5 @@ SELECT id, name, slug FROM companies WHERE name ILIKE '%Tokeniza%';
 
 
 
+
+

@@ -31,3 +31,5 @@ ALTER TABLE "blue_interactions" ADD CONSTRAINT "blue_interactions_company_id_fke
 
 
 
+
+

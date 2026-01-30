@@ -99,3 +99,5 @@ echo "SSH deve estar funcionando agora."
 echo "Blue Mascot deve aparecer quando blueEnabled=true"
 echo ""
 
+
+

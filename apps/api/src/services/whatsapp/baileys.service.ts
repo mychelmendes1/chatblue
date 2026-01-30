@@ -90,16 +90,36 @@ export class BaileysService extends EventEmitter {
   }
 
   static getInstance(connectionId: string): BaileysService {
+    const existing = instances.get(connectionId);
+    
+    // If instance exists but is marked as deleted, remove it and create new one
+    if (existing && existing.isDeleted) {
+      logger.info(`Removing deleted instance for: ${connectionId}`);
+      instances.delete(connectionId);
+    }
+    
     if (!instances.has(connectionId)) {
       instances.set(connectionId, new BaileysService(connectionId));
     }
     return instances.get(connectionId)!;
   }
+  
+  // Get an existing instance without creating new one
+  static getExistingInstance(connectionId: string): BaileysService | null {
+    const instance = instances.get(connectionId);
+    if (instance && instance.isDeleted) {
+      instances.delete(connectionId);
+      return null;
+    }
+    return instance || null;
+  }
 
   // Mark this connection as deleted to prevent further operations
   markAsDeleted(): void {
+    logger.info(`Marking connection as deleted: ${this.connectionId}`);
     this.isDeleted = true;
-    instances.delete(this.connectionId);
+    // Note: Don't remove from instances yet - let disconnect() handle that
+    // This allows disconnect() to still find the instance and clean up properly
   }
 
   // Safe database update that checks if connection still exists
@@ -142,6 +162,12 @@ export class BaileysService extends EventEmitter {
   }
 
   async connect(): Promise<void> {
+    // Check if connection was marked as deleted - don't reconnect
+    if (this.isDeleted) {
+      logger.info(`Connection ${this.connectionId} is marked as deleted, not connecting`);
+      return;
+    }
+    
     if (this.isConnecting) {
       logger.info(`Already connecting: ${this.connectionId}`);
       // Return existing promise if already connecting
@@ -155,6 +181,30 @@ export class BaileysService extends EventEmitter {
     if (this.socket && this.isConnected) {
       logger.info(`Already connected: ${this.connectionId}`);
       return;
+    }
+    
+    // Double-check the connection still exists in database before connecting
+    try {
+      const connectionExists = await prisma.whatsAppConnection.findUnique({
+        where: { id: this.connectionId },
+        select: { id: true, isActive: true },
+      });
+      
+      if (!connectionExists) {
+        logger.info(`Connection ${this.connectionId} no longer exists in database, not connecting`);
+        this.isDeleted = true;
+        instances.delete(this.connectionId);
+        return;
+      }
+      
+      if (!connectionExists.isActive) {
+        logger.info(`Connection ${this.connectionId} is inactive, not connecting`);
+        this.isDeleted = true;
+        instances.delete(this.connectionId);
+        return;
+      }
+    } catch (error: any) {
+      logger.error(`Error checking connection existence: ${error?.message}`);
     }
 
     this.isConnecting = true;
@@ -595,17 +645,70 @@ export class BaileysService extends EventEmitter {
     }
   }
 
-  async disconnect(): Promise<void> {
+  async disconnect(forceLogout: boolean = false): Promise<void> {
+    logger.info(`Disconnecting Baileys for: ${this.connectionId} (forceLogout: ${forceLogout})`);
+    
     if (this.socket) {
-      this.socket.end(undefined);
-      this.socket = null;
+      try {
+        // Remove all event listeners to prevent further processing
+        this.socket.ev.removeAllListeners('connection.update');
+        this.socket.ev.removeAllListeners('creds.update');
+        this.socket.ev.removeAllListeners('messages.upsert');
+        this.socket.ev.removeAllListeners('messages.update');
+        this.socket.ev.removeAllListeners('messages.reaction');
+        this.socket.ev.removeAllListeners('messages.delete');
+        this.socket.ev.removeAllListeners('contacts.update');
+        this.socket.ev.removeAllListeners('contacts.upsert');
+        this.socket.ev.removeAllListeners('lid-mapping.update' as any);
+        
+        logger.info(`Event listeners removed for: ${this.connectionId}`);
+        
+        if (forceLogout) {
+          // Force logout from WhatsApp - this invalidates the session completely
+          try {
+            await this.socket.logout();
+            logger.info(`Logged out from WhatsApp for: ${this.connectionId}`);
+          } catch (logoutError: any) {
+            // Logout may fail if already disconnected, that's OK
+            logger.warn(`Logout error (expected if already disconnected): ${logoutError?.message}`);
+          }
+        }
+        
+        // Close the websocket connection
+        try {
+          // First try to end gracefully
+          this.socket.end(undefined);
+          
+          // Also close the websocket directly if available
+          const ws = (this.socket as any).ws;
+          if (ws && typeof ws.close === 'function') {
+            ws.close();
+          }
+        } catch (closeError: any) {
+          logger.warn(`Socket close error (expected if already closed): ${closeError?.message}`);
+        }
+        
+        logger.info(`Socket closed for: ${this.connectionId}`);
+      } catch (error: any) {
+        logger.error(`Error during disconnect for ${this.connectionId}:`, error?.message);
+      } finally {
+        this.socket = null;
+      }
     }
+    
     this.isConnected = false;
     this.isConnecting = false;
     this.connectionPromise = null;
     this.connectionResolve = null;
     this.connectionReject = null;
+    
+    // Clear LID mapping cache
+    this.lidMapping.clear();
+    
+    // Remove from instances map
     instances.delete(this.connectionId);
+    
+    logger.info(`Baileys disconnected completely for: ${this.connectionId}`);
   }
 
   // Check if socket is connected (used for health checks)

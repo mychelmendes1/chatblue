@@ -84,3 +84,5 @@ Após o deploy, verificar:
 - `apps/api/src/routes/settings.routes.ts`: Removido `requireAdmin` da rota GET `/` e criada nova rota `/admin` para admins.
 
 
+
+

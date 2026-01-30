@@ -137,3 +137,5 @@ expect eof
 
 puts "=== Tabelas de AI corrigidas com sucesso! ==="
 
+
+

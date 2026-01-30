@@ -52,3 +52,5 @@ expect eof
 
 puts "\n=== FAQ gerado e copiado com sucesso! ==="
 
+
+

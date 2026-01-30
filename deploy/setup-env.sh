@@ -83,3 +83,5 @@ echo "3. Altere o domínio no .env e Nginx quando tiver o domínio configurado"
 
 
 
+
+

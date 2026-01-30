@@ -70,6 +70,13 @@ router.put('/', authenticate, requireAdmin, ensureTenant, async (req, res, next)
       welcomeMessage: z.string().optional(),
       awayMessage: z.string().optional(),
       defaultTransferDepartmentId: z.string().nullable().optional(),
+      // Horário de funcionamento
+      businessHoursEnabled: z.boolean().optional(),
+      businessHoursTimezone: z.string().optional().nullable(),
+      businessHoursDays: z.string().optional().nullable(),
+      businessHoursStartTime: z.string().optional().nullable(),
+      businessHoursEndTime: z.string().optional().nullable(),
+      outOfHoursMessage: z.string().optional().nullable(),
     }).parse(req.body);
 
     const settings = await prisma.companySettings.upsert({

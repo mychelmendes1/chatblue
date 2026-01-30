@@ -134,3 +134,5 @@ Procure por:
 4. Se necessário, reconecte o WhatsApp ou renove as credenciais
 
 
+
+

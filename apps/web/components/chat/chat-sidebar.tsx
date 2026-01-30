@@ -69,6 +69,9 @@ export function ChatSidebar() {
   } = useChatStore();
 
   const [search, setSearch] = useState("");
+  const [ticketsPage, setTicketsPage] = useState(1);
+  const [hasMoreTickets, setHasMoreTickets] = useState(false);
+  const [isLoadingMoreTickets, setIsLoadingMoreTickets] = useState(false);
 
   // New conversation states
   const [showNewConversationDialog, setShowNewConversationDialog] = useState(false);
@@ -112,9 +115,17 @@ export function ChatSidebar() {
     };
   }, [clearData]);
 
-  async function fetchTickets() {
-    setLoadingTickets(true);
+  const TICKETS_PER_PAGE = 30;
+
+  async function fetchTickets(loadMore?: boolean) {
+    if (loadMore) {
+      setIsLoadingMoreTickets(true);
+    } else {
+      setLoadingTickets(true);
+      setTicketsPage(1);
+    }
     try {
+      const pageToFetch = loadMore ? ticketsPage + 1 : 1;
       const params = new URLSearchParams();
       if (filters.status) params.set("status", filters.status);
       if (filters.departmentId) params.set("departmentId", filters.departmentId);
@@ -123,13 +134,26 @@ export function ChatSidebar() {
       if (filters.mentionedUserId) params.set("hasMentions", "true");
       if (search) params.set("search", search);
       if (!showResolved) params.set("hideResolved", "true");
+      params.set("page", String(pageToFetch));
+      params.set("limit", String(TICKETS_PER_PAGE));
 
-      const response = await api.get<{ tickets: any[] }>(`/tickets?${params}`);
-      setTickets(response.data.tickets);
+      const response = await api.get<{ tickets: any[]; pagination: { page: number; limit: number; total: number; pages: number } }>(`/tickets?${params}`);
+      const { tickets: newTickets, pagination } = response.data;
+
+      if (loadMore) {
+        const currentTickets = useChatStore.getState().tickets;
+        setTickets([...currentTickets, ...newTickets]);
+        setTicketsPage(pagination.page);
+        setHasMoreTickets(pagination.page < pagination.pages);
+      } else {
+        setTickets(newTickets);
+        setHasMoreTickets(pagination.page < pagination.pages);
+      }
     } catch (error) {
       console.error("Failed to fetch tickets:", error);
     } finally {
       setLoadingTickets(false);
+      setIsLoadingMoreTickets(false);
     }
   }
 
@@ -360,7 +384,7 @@ export function ChatSidebar() {
           <div className="relative flex-1">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
             <Input
-              placeholder="Buscar..."
+              placeholder="Buscar por nome, telefone ou nº do ticket..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               className="pl-9"
@@ -443,16 +467,38 @@ export function ChatSidebar() {
             <p>Nenhuma conversa encontrada</p>
           </div>
         ) : (
-          <div className="divide-y">
-            {tickets.map((ticket) => (
-              <TicketItem
-                key={ticket.id}
-                ticket={ticket}
-                isSelected={selectedTicket?.id === ticket.id}
-                onSelect={() => selectTicket(ticket)}
-              />
-            ))}
-          </div>
+          <>
+            <div className="divide-y">
+              {tickets.map((ticket) => (
+                <TicketItem
+                  key={ticket.id}
+                  ticket={ticket}
+                  isSelected={selectedTicket?.id === ticket.id}
+                  onSelect={() => selectTicket(ticket)}
+                />
+              ))}
+            </div>
+            {hasMoreTickets && (
+              <div className="flex justify-center py-3 px-2 border-t">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => fetchTickets(true)}
+                  disabled={isLoadingMoreTickets}
+                  className="w-full text-xs"
+                >
+                  {isLoadingMoreTickets ? (
+                    <>
+                      <Loader2 className="w-3.5 h-3.5 mr-2 animate-spin" />
+                      Carregando...
+                    </>
+                  ) : (
+                    "Expandir"
+                  )}
+                </Button>
+              </div>
+            )}
+          </>
         )}
       </ScrollArea>
 
@@ -885,6 +931,9 @@ function TicketItem({ ticket, isSelected, onSelect }: TicketItemProps) {
             {contactName}
           </span>
           <div className="flex items-center gap-1.5 md:gap-2 flex-shrink-0">
+            <span className="text-[10px] md:text-xs text-muted-foreground font-mono" title="Número do ticket">
+              #{ticket.protocol}
+            </span>
             {hasUnread && (
               <span className="flex items-center justify-center min-w-4 md:min-w-5 h-4 md:h-5 px-1 md:px-1.5 text-[10px] md:text-xs font-bold text-white bg-primary rounded-full">
                 {unreadCount > 99 ? "99+" : unreadCount}

@@ -172,6 +172,88 @@ const templates = {
     text: `Ticket #${data.ticketProtocol} atribuído a você\n\nOlá ${data.agentName},\n\nO ticket foi atribuído a você.\n\nAcesse: ${data.ticketUrl}`,
   }),
 
+  connectionDown: (data: { connectionName: string; companyName: string; connectionsUrl: string }): EmailTemplate => ({
+    subject: `[ChatBlue] Alerta: Conexão "${data.connectionName}" desconectada`,
+    html: `
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <style>
+            body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+            .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+            .header { background: #dc2626; color: white; padding: 20px; text-align: center; }
+            .content { padding: 20px; background: #f9fafb; }
+            .button { display: inline-block; background: #3b82f6; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; }
+            .footer { padding: 20px; text-align: center; color: #6b7280; font-size: 12px; }
+          </style>
+        </head>
+        <body>
+          <div class="container">
+            <div class="header">
+              <h1>⚠️ Conexão desconectada</h1>
+            </div>
+            <div class="content">
+              <p>A conexão <strong>${data.connectionName}</strong> da empresa <strong>${data.companyName}</strong> deixou de funcionar (desconectada ou em erro).</p>
+              <p>Verifique o status e reconecte se necessário.</p>
+              <p style="text-align: center; margin-top: 20px;">
+                <a href="${data.connectionsUrl}" class="button">Ver conexões</a>
+              </p>
+            </div>
+            <div class="footer">
+              <p>Este é um email automático do ChatBlue. Não responda este email.</p>
+            </div>
+          </div>
+        </body>
+      </html>
+    `,
+    text: `Alerta: A conexão "${data.connectionName}" (${data.companyName}) deixou de funcionar.\n\nVerifique: ${data.connectionsUrl}`,
+  }),
+
+  ticketsNoResponse: (data: {
+    companyName: string;
+    tickets: Array<{ protocol: string; contactName: string; hoursOpen: number }>;
+    chatUrl: string;
+  }): EmailTemplate => ({
+    subject: `[ChatBlue] Alerta: ${data.tickets.length} ticket(s) sem resposta há mais de 12h`,
+    html: `
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <style>
+            body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+            .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+            .header { background: #f59e0b; color: white; padding: 20px; text-align: center; }
+            .content { padding: 20px; background: #f9fafb; }
+            .ticket-list { margin: 16px 0; padding: 0; list-style: none; }
+            .ticket-list li { padding: 8px 0; border-bottom: 1px solid #e5e7eb; }
+            .button { display: inline-block; background: #3b82f6; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; margin-top: 16px; }
+            .footer { padding: 20px; text-align: center; color: #6b7280; font-size: 12px; }
+          </style>
+        </head>
+        <body>
+          <div class="container">
+            <div class="header">
+              <h1>📩 Tickets sem resposta</h1>
+            </div>
+            <div class="content">
+              <p>A empresa <strong>${data.companyName}</strong> possui <strong>${data.tickets.length}</strong> ticket(s) abertos há mais de 12 horas sem resposta.</p>
+              <ul class="ticket-list">
+                ${data.tickets.map((t) => `<li><strong>#${t.protocol}</strong> – ${t.contactName} (${t.hoursOpen}h sem resposta)</li>`).join("")}
+              </ul>
+              <p style="text-align: center;">
+                <a href="${data.chatUrl}" class="button">Abrir conversas</a>
+              </p>
+            </div>
+            <div class="footer">
+              <p>Este é um email automático do ChatBlue. Não responda este email.</p>
+            </div>
+          </div>
+        </body>
+      </html>
+    `,
+    text: `Alerta: ${data.tickets.length} ticket(s) sem resposta há mais de 12h (${data.companyName}).\n\n${data.tickets.map((t) => `#${t.protocol} – ${t.contactName} (${t.hoursOpen}h)`).join("\n")}\n\nAcesse: ${data.chatUrl}`,
+  }),
+
   welcomeUser: (data: { userName: string; loginUrl: string; tempPassword?: string }): EmailTemplate => ({
     subject: `[ChatBlue] Bem-vindo ao ChatBlue!`,
     html: `
@@ -357,6 +439,36 @@ export class EmailService {
     const template = templates.welcomeUser(data);
     return this.send({
       to,
+      subject: template.subject,
+      html: template.html,
+      text: template.text,
+    });
+  }
+
+  async sendConnectionDown(
+    to: string | string[],
+    data: { connectionName: string; companyName: string; connectionsUrl: string }
+  ): Promise<boolean> {
+    const template = templates.connectionDown(data);
+    return this.send({
+      to: Array.isArray(to) ? to : [to],
+      subject: template.subject,
+      html: template.html,
+      text: template.text,
+    });
+  }
+
+  async sendTicketsNoResponse(
+    to: string | string[],
+    data: {
+      companyName: string;
+      tickets: Array<{ protocol: string; contactName: string; hoursOpen: number }>;
+      chatUrl: string;
+    }
+  ): Promise<boolean> {
+    const template = templates.ticketsNoResponse(data);
+    return this.send({
+      to: Array.isArray(to) ? to : [to],
       subject: template.subject,
       html: template.html,
       text: template.text,

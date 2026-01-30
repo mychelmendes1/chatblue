@@ -73,6 +73,10 @@ export interface Ticket {
     name: string;
     color?: string;
   };
+  connection?: {
+    id: string;
+    name: string;
+  };
   messages?: Message[];
   lastMessage?: Message;
   _count?: {
