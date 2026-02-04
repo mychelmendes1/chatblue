@@ -35,6 +35,12 @@ const createInstagramSchema = z.object({
   companyId: z.string().cuid().optional(), // Allow admin to specify company
 });
 
+// Schema for updating AI settings per connection
+const updateAISettingsSchema = z.object({
+  aiEnabled: z.boolean(),
+  defaultUserId: z.string().cuid().nullable().optional(),
+});
+
 // List connections
 router.get('/', authenticate, ensureTenant, async (req, res, next) => {
   try {
@@ -77,6 +83,15 @@ router.get('/', authenticate, ensureTenant, async (req, res, next) => {
         companyId: true,
         instagramAccountId: true,
         instagramUsername: true,
+        aiEnabled: true,
+        defaultUserId: true,
+        defaultUser: {
+          select: {
+            id: true,
+            name: true,
+            avatar: true,
+          },
+        },
         company: {
           select: {
             id: true,
@@ -114,6 +129,15 @@ router.get('/:id', authenticate, ensureTenant, async (req, res, next) => {
     
     const connection = await prisma.whatsAppConnection.findFirst({
       where: whereClause,
+      include: {
+        defaultUser: {
+          select: {
+            id: true,
+            name: true,
+            avatar: true,
+          },
+        },
+      },
     });
 
     if (!connection) {
@@ -519,6 +543,82 @@ router.get('/:id/templates', authenticate, ensureTenant, async (req, res, next) 
       }));
 
     res.json({ templates: approvedTemplates });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Update AI settings for connection
+router.patch('/:id/ai-settings', authenticate, requireAdmin, ensureTenant, async (req, res, next) => {
+  try {
+    const data = updateAISettingsSchema.parse(req.body);
+
+    // Build where clause - super admin can update any connection
+    const whereClause: any = {
+      id: req.params.id,
+    };
+    
+    if (req.user!.role !== 'SUPER_ADMIN') {
+      whereClause.companyId = req.user!.companyId;
+    }
+    
+    const connection = await prisma.whatsAppConnection.findFirst({
+      where: whereClause,
+    });
+
+    if (!connection) {
+      throw new NotFoundError('Connection not found');
+    }
+
+    // If AI is being disabled, defaultUserId is required
+    if (!data.aiEnabled && !data.defaultUserId) {
+      return res.status(400).json({
+        error: 'Validation Error',
+        message: 'Quando a IA está desabilitada, você deve selecionar um usuário padrão para receber as mensagens.',
+      });
+    }
+
+    // If defaultUserId is provided, verify user exists and belongs to the same company
+    if (data.defaultUserId) {
+      const user = await prisma.user.findFirst({
+        where: {
+          id: data.defaultUserId,
+          companyId: connection.companyId,
+          isActive: true,
+          isAI: false, // Default user cannot be an AI user
+        },
+      });
+
+      if (!user) {
+        return res.status(400).json({
+          error: 'Validation Error',
+          message: 'O usuário selecionado não foi encontrado ou não está ativo.',
+        });
+      }
+    }
+
+    // Update connection
+    const updated = await prisma.whatsAppConnection.update({
+      where: { id: connection.id },
+      data: {
+        aiEnabled: data.aiEnabled,
+        defaultUserId: data.defaultUserId,
+      },
+      include: {
+        defaultUser: {
+          select: {
+            id: true,
+            name: true,
+            avatar: true,
+          },
+        },
+      },
+    });
+
+    // Don't expose sensitive data
+    const { accessToken, sessionData, ...safeConnection } = updated;
+
+    res.json(safeConnection);
   } catch (error) {
     next(error);
   }

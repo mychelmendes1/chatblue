@@ -2,6 +2,8 @@ import { WhatsAppConnection } from '@prisma/client';
 import { BaileysService } from './baileys.service.js';
 import { MetaCloudService } from './meta-cloud.service.js';
 import { logger } from '../../config/logger.js';
+import * as path from 'path';
+import * as fs from 'fs';
 
 export class WhatsAppService {
   private connection: WhatsAppConnection;
@@ -77,6 +79,32 @@ export class WhatsAppService {
         }
       );
     } else {
+      // For Meta Cloud API, try upload-first approach for better reliability
+      // Especially important for audio files which often fail with URL method
+      const localPath = this.extractLocalPathFromUrl(mediaUrl);
+      
+      if (localPath && fs.existsSync(localPath)) {
+        logger.info(`Meta Cloud: Using upload-first method for ${mediaType} (file: ${localPath})`);
+        try {
+          const result = await this.metaService!.sendMediaWithUpload(
+            formattedNumber,
+            localPath,
+            mediaType,
+            {
+              caption,
+              filename: options?.filename,
+              quotedMessageId: options?.quotedMessageId,
+            }
+          );
+          return { ...result, finalMediaUrl: mediaUrl };
+        } catch (uploadError: any) {
+          logger.warn(`Meta Cloud upload-first failed, falling back to URL method: ${uploadError.message}`);
+          // Fall back to URL method if upload fails
+        }
+      }
+      
+      // Fallback: Use URL method (original behavior)
+      logger.info(`Meta Cloud: Using URL method for ${mediaType}`);
       const result = await this.metaService!.sendMediaMessage(
         formattedNumber,
         mediaUrl,
@@ -84,6 +112,53 @@ export class WhatsAppService {
         caption
       );
       return { ...result, finalMediaUrl: mediaUrl };
+    }
+  }
+
+  /**
+   * Extract local file path from a media URL
+   * Handles URLs like: http://localhost:3001/uploads/file.ogg or https://api.example.com/uploads/file.ogg
+   */
+  private extractLocalPathFromUrl(mediaUrl: string): string | null {
+    try {
+      const url = new URL(mediaUrl);
+      const pathname = url.pathname;
+      
+      // Look for /uploads/ in the path
+      if (pathname.includes('/uploads/')) {
+        const uploadsIndex = pathname.indexOf('/uploads/');
+        const relativePath = pathname.substring(uploadsIndex + 1); // Remove leading /
+        
+        // Try different base paths
+        const possiblePaths = [
+          path.join(process.cwd(), relativePath),
+          path.join(process.cwd(), 'apps', 'api', relativePath),
+        ];
+        
+        for (const p of possiblePaths) {
+          if (fs.existsSync(p)) {
+            return p;
+          }
+        }
+        
+        // Try just the uploads folder in cwd
+        const uploadsDir = path.join(process.cwd(), 'uploads');
+        if (fs.existsSync(uploadsDir)) {
+          const filename = path.basename(pathname);
+          // Check in subdirectories (audio, images, etc.)
+          const subdirs = ['', 'audio', 'audio-converted', 'images', 'videos', 'documents'];
+          for (const subdir of subdirs) {
+            const fullPath = path.join(uploadsDir, subdir, filename);
+            if (fs.existsSync(fullPath)) {
+              return fullPath;
+            }
+          }
+        }
+      }
+      
+      return null;
+    } catch {
+      return null;
     }
   }
 

@@ -20,6 +20,7 @@ import { spawn } from 'child_process';
 import { promisify } from 'util';
 import { MessageProcessor } from '../message-processor.service.js';
 import { normalizeMediaUrl } from '../../utils/media-url.util.js';
+import { emailService } from '../email/email.service.js';
 
 const instances = new Map<string, BaileysService>();
 
@@ -120,6 +121,44 @@ export class BaileysService extends EventEmitter {
     this.isDeleted = true;
     // Note: Don't remove from instances yet - let disconnect() handle that
     // This allows disconnect() to still find the instance and clean up properly
+  }
+
+  // Send disconnection alert email
+  private async sendDisconnectionAlert(reason?: string): Promise<void> {
+    try {
+      // Get connection details
+      const connection = await prisma.whatsAppConnection.findUnique({
+        where: { id: this.connectionId },
+        include: {
+          company: { select: { name: true } },
+        },
+      });
+
+      if (!connection || this.isDeleted) {
+        return;
+      }
+
+      const recipients = emailService.getAlertRecipients();
+      if (recipients.length === 0) {
+        logger.warn("No alert recipients configured for disconnection email");
+        return;
+      }
+
+      const frontendUrl = process.env.FRONTEND_URL || "https://app.chatblue.com.br";
+      const disconnectedAt = new Date().toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" });
+
+      await emailService.sendConnectionDown(recipients, {
+        connectionName: connection.name,
+        companyName: connection.company?.name || "Empresa não identificada",
+        connectionsUrl: `${frontendUrl}/connections`,
+        disconnectReason: reason,
+        disconnectedAt,
+      });
+
+      logger.info(`Disconnection alert sent for connection: ${this.connectionId}`);
+    } catch (error) {
+      logger.error(`Failed to send disconnection alert: ${this.connectionId}`, error);
+    }
   }
 
   // Safe database update that checks if connection still exists
@@ -307,6 +346,9 @@ export class BaileysService extends EventEmitter {
               qrCode: null 
             });
             
+            // Send disconnection alert email
+            await this.sendDisconnectionAlert("Sessão invalidada (logout ou token expirado)");
+            
             if (!updated || this.isDeleted) {
               // Connection was deleted, don't try to reconnect
               return;
@@ -338,6 +380,8 @@ export class BaileysService extends EventEmitter {
               logger.error(`Max retries reached for: ${this.connectionId}`);
               this.retryCount = 0;
               await this.safeUpdateConnection({ status: 'DISCONNECTED', qrCode: null });
+              // Send disconnection alert email
+              await this.sendDisconnectionAlert("Número máximo de tentativas de reconexão atingido (erro 405)");
               this.emit('connection_error', 'Erro de conexão. O WhatsApp pode estar temporariamente indisponível. Aguarde alguns minutos e tente novamente.');
             }
           } else if (reason === DisconnectReason.restartRequired || reason === 515) {
@@ -367,6 +411,9 @@ export class BaileysService extends EventEmitter {
               sessionData: Prisma.DbNull, 
               qrCode: null 
             });
+            
+            // Send disconnection alert email
+            await this.sendDisconnectionAlert("Conexão terminada pelo servidor (428) - possível atividade suspeita ou múltiplas conexões");
             
             if (!this.isDeleted) {
               // Wait longer (30-60 seconds) before reconnecting to avoid rate limiting

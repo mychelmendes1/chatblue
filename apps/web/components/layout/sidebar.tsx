@@ -18,6 +18,8 @@ import {
   X,
   Database,
   Sparkles,
+  Inbox,
+  LayoutGrid,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -33,6 +35,8 @@ import {
 
 const navigation = [
   { name: "Chat", href: "/chat", icon: MessageSquare },
+  { name: "Caixa de Entrada", href: "/inbox", icon: Inbox },
+  { name: "Kanban", href: "/kanban", icon: LayoutGrid },
   { name: "Contatos", href: "/contacts", icon: Users },
   { name: "Métricas", href: "/metrics", icon: BarChart3 },
   { name: "Usuários", href: "/users", icon: Shield, adminOnly: true },
@@ -45,12 +49,12 @@ const navigation = [
   { name: "Configurações", href: "/settings", icon: Settings },
 ];
 
-// Main navigation items for bottom nav (limited to 5)
+// Main navigation items for bottom nav (limited to 4 + "Mais")
 const bottomNavItems = [
   { name: "Chat", href: "/chat", icon: MessageSquare },
-  { name: "Contatos", href: "/contacts", icon: Users },
+  { name: "Entrada", href: "/inbox", icon: Inbox },
+  { name: "Kanban", href: "/kanban", icon: LayoutGrid },
   { name: "Métricas", href: "/metrics", icon: BarChart3 },
-  { name: "Conexões", href: "/connections", icon: Wifi },
 ];
 
 export function Sidebar() {

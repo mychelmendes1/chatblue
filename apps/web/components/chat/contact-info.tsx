@@ -56,20 +56,40 @@ export function ContactInfo({ ticket, onClose, onTicketUpdate }: ContactInfoProp
     .toUpperCase()
     .slice(0, 2);
 
-  // Update email when ticket.contact.email changes (from socket events)
+  // Update name and email when ticket.contact changes (from socket events or updates)
   useEffect(() => {
-    if (ticket.contact?.email) {
-      setEmail(ticket.contact.email);
+    if (ticket.contact?.name !== undefined) {
+      setName(ticket.contact.name || "");
     }
-  }, [ticket.contact?.email]);
+    if (ticket.contact?.email !== undefined) {
+      setEmail(ticket.contact.email || "");
+    }
+  }, [ticket.contact?.name, ticket.contact?.email]);
 
   async function handleSave() {
     setIsSaving(true);
     try {
-      await api.put(`/contacts/${ticket.contact.id}`, { name, email });
+      const response = await api.put<{ name?: string; email?: string | null }>(`/contacts/${ticket.contact.id}`, { name, email });
+      
+      // Update local ticket state with the updated contact
+      if (onTicketUpdate && response?.data) {
+        const updatedContact = response.data;
+        onTicketUpdate({
+          ...ticket,
+          contact: {
+            ...ticket.contact,
+            name: updatedContact.name || name,
+            email: updatedContact.email || email,
+          },
+        });
+      }
+      
       setIsEditing(false);
-    } catch (error) {
+    } catch (error: any) {
       console.error("Failed to save contact:", error);
+      // Show user-friendly error message
+      const errorMsg = error?.response?.data?.message || error?.response?.data?.error || "Erro ao salvar contato";
+      alert(errorMsg);
     } finally {
       setIsSaving(false);
     }
@@ -290,7 +310,7 @@ export function ContactInfo({ ticket, onClose, onTicketUpdate }: ContactInfoProp
                 </div>
                 <div className="flex items-center gap-3">
                   <Mail className="w-4 h-4 text-muted-foreground" />
-                  <span>{ticket.contact?.email || "-"}</span>
+                  <span>{email || ticket.contact?.email || "-"}</span>
                 </div>
                 {ticket.contact?.clientSince && (
                   <div className="flex items-center gap-3">

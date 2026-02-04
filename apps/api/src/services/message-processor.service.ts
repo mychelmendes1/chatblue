@@ -285,17 +285,45 @@ export class MessageProcessor {
         });
 
         if (closedTicket) {
-          // Reopen the closed ticket and send back to AI triage
-          logger.info(`Reopening closed ticket ${closedTicket.protocol} for contact ${from} - sending to AI triage`);
+          // Reopen the closed ticket - check if AI is enabled for this connection
+          logger.info(`Reopening closed ticket ${closedTicket.protocol} for contact ${from}`);
           
-          // Get AI user for handling the reopened ticket
-          const aiUser = await prisma.user.findFirst({
-            where: {
-              companyId,
-              isAI: true,
-              isActive: true,
+          // Get connection settings to check if AI is enabled
+          const connectionSettings = await prisma.whatsAppConnection.findUnique({
+            where: { id: connectionId },
+            select: { 
+              aiEnabled: true, 
+              defaultUserId: true,
+              defaultUser: {
+                select: { id: true, name: true, isActive: true }
+              }
             },
           });
+
+          const shouldUseAI = connectionSettings?.aiEnabled !== false;
+          let assignedUserId: string | null = null;
+          let aiUser: any = null;
+
+          if (shouldUseAI) {
+            // Get AI user for handling the reopened ticket
+            aiUser = await prisma.user.findFirst({
+              where: {
+                companyId,
+                isAI: true,
+                isActive: true,
+              },
+            });
+            assignedUserId = aiUser?.id || null;
+            logger.info(`Reopening ticket - AI enabled, assigning to AI`);
+          } else {
+            // AI disabled - use default user if configured
+            if (connectionSettings?.defaultUserId && connectionSettings?.defaultUser?.isActive) {
+              assignedUserId = connectionSettings.defaultUserId;
+              logger.info(`Reopening ticket - AI disabled, assigning to default user: ${connectionSettings.defaultUser.name}`);
+            } else {
+              logger.info(`Reopening ticket - AI disabled, no default user - ticket goes to queue`);
+            }
+          }
 
           ticket = await prisma.ticket.update({
             where: { id: closedTicket.id },
@@ -303,11 +331,11 @@ export class MessageProcessor {
               status: 'PENDING', // Back to triage/pending
               resolvedAt: null,
               closedAt: null,
-              isAIHandled: true, // Send back to AI
-              assignedToId: aiUser?.id || null, // Assign to AI
+              isAIHandled: shouldUseAI && !!aiUser, // Only if AI enabled and AI user exists
+              assignedToId: assignedUserId, // Assign to AI or default user
               departmentId: null, // Reset department - goes back to Triage
-              humanTakeoverAt: null, // Reset human takeover
-              aiTakeoverAt: new Date(), // Mark as AI handling
+              humanTakeoverAt: shouldUseAI ? null : new Date(), // Mark human takeover if AI disabled
+              aiTakeoverAt: shouldUseAI && aiUser ? new Date() : null, // Only if AI handling
             },
             include: {
               assignedTo: true,
@@ -333,19 +361,31 @@ export class MessageProcessor {
           wasReopened = true;
 
           // Create activity for reopening
+          const reopenDescription = shouldUseAI && aiUser
+            ? `Ticket reopened automatically - new message from ${from}. Sent to AI triage.`
+            : assignedUserId
+              ? `Ticket reopened automatically - new message from ${from}. Assigned to ${connectionSettings?.defaultUser?.name || 'default user'}.`
+              : `Ticket reopened automatically - new message from ${from}. Sent to queue.`;
+          
           await prisma.activity.create({
             data: {
               type: 'TICKET_REOPENED',
-              description: `Ticket reopened automatically - new message from ${from}. Sent to AI triage.`,
+              description: reopenDescription,
               ticketId: ticket.id,
             },
           });
 
           // Create system message for reopening
+          const systemContent = shouldUseAI && aiUser
+            ? `🔄 Atendimento reaberto automaticamente - encaminhado para triagem da IA`
+            : assignedUserId
+              ? `🔄 Atendimento reaberto automaticamente - atribuído para ${connectionSettings?.defaultUser?.name || 'atendente'}`
+              : `🔄 Atendimento reaberto automaticamente - aguardando atendente`;
+          
           await prisma.message.create({
             data: {
               type: 'SYSTEM',
-              content: `🔄 Atendimento reaberto automaticamente - encaminhado para triagem da IA`,
+              content: systemContent,
               isFromMe: true,
               isInternal: true,
               status: 'DELIVERED',
@@ -388,14 +428,43 @@ export class MessageProcessor {
       }
 
       if (!ticket) {
-        // Get AI user for initial handling
-        const aiUser = await prisma.user.findFirst({
-          where: {
-            companyId,
-            isAI: true,
-            isActive: true,
+        // Get connection settings to check if AI is enabled
+        const connection = await prisma.whatsAppConnection.findUnique({
+          where: { id: connectionId },
+          select: { 
+            aiEnabled: true, 
+            defaultUserId: true,
+            defaultUser: {
+              select: { id: true, name: true, isActive: true }
+            }
           },
         });
+
+        // Determine if AI should handle and who should be assigned
+        let shouldUseAI = connection?.aiEnabled !== false; // Default to true if not set
+        let assignedUserId: string | null = null;
+        let aiUser: any = null;
+
+        if (shouldUseAI) {
+          // AI is enabled for this connection - get AI user
+          aiUser = await prisma.user.findFirst({
+            where: {
+              companyId,
+              isAI: true,
+              isActive: true,
+            },
+          });
+          assignedUserId = aiUser?.id || null;
+        } else {
+          // AI is disabled for this connection - use default user if configured
+          if (connection?.defaultUserId && connection?.defaultUser?.isActive) {
+            assignedUserId = connection.defaultUserId;
+            logger.info(`AI disabled for connection ${connectionId}, assigning to default user: ${connection.defaultUser.name}`);
+          } else {
+            // No default user - ticket goes to queue unassigned
+            logger.info(`AI disabled for connection ${connectionId}, no default user configured - ticket goes to queue`);
+          }
+        }
 
         // Get default department (triagem)
         const defaultDept = await prisma.department.findFirst({
@@ -417,13 +486,13 @@ export class MessageProcessor {
           data: {
             protocol: generateProtocol(),
             status: 'PENDING',
-            isAIHandled: !!aiUser,
-            aiTakeoverAt: aiUser ? new Date() : null,
+            isAIHandled: shouldUseAI && !!aiUser,
+            aiTakeoverAt: shouldUseAI && aiUser ? new Date() : null,
             slaDeadline,
             contactId: contact.id,
             connectionId,
             companyId,
-            assignedToId: aiUser?.id,
+            assignedToId: assignedUserId,
             departmentId: defaultDept?.id,
           },
           include: {
@@ -784,17 +853,27 @@ export class MessageProcessor {
         });
       }
 
-      // If AI is handling, process with AI
+      // If AI is handling, process with AI (but only if AI is enabled for this connection)
       if (ticket.isAIHandled && ticket.assignedTo?.isAI) {
-        // Use transcription for audio messages, otherwise use original content
-        const contentForAI = type === 'AUDIO' && transcription 
-          ? transcription 
-          : content;
-        
-        if (contentForAI) {
-          await this.processWithAI(ticket.id, companyId, contentForAI, contact);
+        // Double-check that AI is enabled for this connection
+        const connectionAICheck = await prisma.whatsAppConnection.findUnique({
+          where: { id: connectionId },
+          select: { aiEnabled: true },
+        });
+
+        if (connectionAICheck?.aiEnabled !== false) {
+          // Use transcription for audio messages, otherwise use original content
+          const contentForAI = type === 'AUDIO' && transcription 
+            ? transcription 
+            : content;
+          
+          if (contentForAI) {
+            await this.processWithAI(ticket.id, companyId, contentForAI, contact);
+          } else {
+            logger.warn(`No content to process for AI: type=${type}, hasTranscription=${!!transcription}`);
+          }
         } else {
-          logger.warn(`No content to process for AI: type=${type}, hasTranscription=${!!transcription}`);
+          logger.info(`AI processing skipped - AI disabled for connection ${connectionId}`);
         }
       }
     } catch (error: any) {

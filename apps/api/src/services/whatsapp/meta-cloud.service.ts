@@ -606,6 +606,7 @@ export class MetaCloudService {
 
   /**
    * Upload media to Meta's servers for sending
+   * This is more reliable than sending by URL, especially for audio files
    */
   async uploadMedia(
     filePath: string,
@@ -614,9 +615,14 @@ export class MetaCloudService {
     const fileBuffer = fs.readFileSync(filePath);
     const filename = path.basename(filePath);
 
-    // Create form data
+    logger.info(`Uploading media to Meta: ${filename}, type: ${mimeType}, size: ${fileBuffer.length} bytes`);
+
+    // Use Node.js native FormData (available in Node 18+)
     const formData = new FormData();
-    formData.append('file', new Blob([fileBuffer], { type: mimeType }), filename);
+    
+    // Create a Blob from the buffer for FormData
+    const blob = new Blob([fileBuffer], { type: mimeType });
+    formData.append('file', blob, filename);
     formData.append('messaging_product', 'whatsapp');
     formData.append('type', mimeType);
 
@@ -634,11 +640,76 @@ export class MetaCloudService {
     const data = await response.json() as any;
 
     if (!response.ok) {
-      logger.error('Meta Cloud upload media failed:', data);
+      logger.error('Meta Cloud upload media failed:', { 
+        error: data.error,
+        filename, 
+        mimeType,
+        size: fileBuffer.length 
+      });
       throw new Error(data.error?.message || 'Failed to upload media');
     }
 
+    logger.info(`Media uploaded successfully: ${data.id}`);
     return { mediaId: data.id };
+  }
+
+  /**
+   * Send media by uploading first (more reliable, especially for audio)
+   * This uploads the file to Meta first, then sends it using the media ID
+   */
+  async sendMediaWithUpload(
+    to: string,
+    filePath: string,
+    mediaType: string,
+    options?: {
+      caption?: string;
+      filename?: string;
+      quotedMessageId?: string;
+    }
+  ): Promise<{ messageId: string }> {
+    // Determine MIME type based on mediaType and file extension
+    const ext = path.extname(filePath).toLowerCase();
+    const mimeTypeMap: Record<string, Record<string, string>> = {
+      AUDIO: {
+        '.ogg': 'audio/ogg',
+        '.opus': 'audio/ogg; codecs=opus',
+        '.mp3': 'audio/mpeg',
+        '.m4a': 'audio/mp4',
+        '.aac': 'audio/aac',
+        '.amr': 'audio/amr',
+        '.wav': 'audio/wav',
+      },
+      IMAGE: {
+        '.jpg': 'image/jpeg',
+        '.jpeg': 'image/jpeg',
+        '.png': 'image/png',
+        '.webp': 'image/webp',
+      },
+      VIDEO: {
+        '.mp4': 'video/mp4',
+        '.3gp': 'video/3gpp',
+      },
+      DOCUMENT: {
+        '.pdf': 'application/pdf',
+        '.doc': 'application/msword',
+        '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        '.xls': 'application/vnd.ms-excel',
+        '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        '.ppt': 'application/vnd.ms-powerpoint',
+        '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+        '.txt': 'text/plain',
+      },
+    };
+
+    const mimeType = mimeTypeMap[mediaType]?.[ext] || 'application/octet-stream';
+    
+    logger.info(`Sending media with upload: ${filePath}, type: ${mediaType}, mime: ${mimeType}`);
+
+    // Upload the file first
+    const { mediaId } = await this.uploadMedia(filePath, mimeType);
+
+    // Send using the uploaded media ID
+    return this.sendMediaById(to, mediaId, mediaType, options);
   }
 
   /**

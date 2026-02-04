@@ -11,6 +11,7 @@ import { mlTrainingCollectorProcessor } from "./processors/ml-training-collector
 import { mlQualityScorerProcessor } from "./processors/ml-quality-scorer.processor";
 import { mlPatternDetectorProcessor } from "./processors/ml-pattern-detector.processor";
 import { mlMetricsProcessor } from "./processors/ml-metrics.processor";
+import { dailyReportProcessor } from "./processors/daily-report.processor";
 
 // Queue definitions
 export const slaCheckQueue = new Queue("sla-check", {
@@ -123,6 +124,19 @@ export const mlMetricsQueue = new Queue("ml-metrics", {
   },
 });
 
+export const dailyReportQueue = new Queue("daily-report", {
+  connection: redis,
+  defaultJobOptions: {
+    removeOnComplete: 30,
+    removeOnFail: 30,
+    attempts: 3,
+    backoff: {
+      type: "exponential",
+      delay: 5000,
+    },
+  },
+});
+
 // Workers
 let slaWorker: Worker | null = null;
 let notificationWorker: Worker | null = null;
@@ -136,6 +150,9 @@ let mlTrainingCollectorWorker: Worker | null = null;
 let mlQualityScorerWorker: Worker | null = null;
 let mlPatternDetectorWorker: Worker | null = null;
 let mlMetricsWorker: Worker | null = null;
+
+// Daily Report Worker
+let dailyReportWorker: Worker | null = null;
 
 export async function startWorkers() {
   logger.info("Starting background job workers...");
@@ -280,6 +297,20 @@ export async function startWorkers() {
     logger.error(`ML metrics job ${job?.id} failed:`, error);
   });
 
+  // Daily Report Worker
+  dailyReportWorker = new Worker("daily-report", dailyReportProcessor, {
+    connection: redis,
+    concurrency: 1,
+  });
+
+  dailyReportWorker.on("completed", (job: Job) => {
+    logger.info(`Daily report job ${job.id} completed`);
+  });
+
+  dailyReportWorker.on("failed", (job: Job | undefined, error: Error) => {
+    logger.error(`Daily report job ${job?.id} failed:`, error);
+  });
+
   // Schedule recurring jobs
   await scheduleRecurringJobs();
 
@@ -392,6 +423,17 @@ async function scheduleRecurringJobs() {
     }
   );
 
+  // Daily Report - 8 AM every day (Brazil timezone: UTC-3, so 11 AM UTC)
+  await dailyReportQueue.add(
+    "send-daily-report",
+    {},
+    {
+      repeat: {
+        pattern: "0 11 * * *", // 11 AM UTC = 8 AM Brazil
+      },
+    }
+  );
+
   logger.info("Recurring jobs scheduled");
 }
 
@@ -409,6 +451,7 @@ export async function stopWorkers() {
     mlQualityScorerWorker,
     mlPatternDetectorWorker,
     mlMetricsWorker,
+    dailyReportWorker,
   ];
 
   await Promise.all(

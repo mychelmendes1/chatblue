@@ -16,7 +16,11 @@ import {
   Loader2,
   Building2,
   Edit,
+  Bot,
+  User,
+  Settings2,
 } from "lucide-react";
+import { Switch } from "@/components/ui/switch";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -68,6 +72,13 @@ interface Connection {
   companyId?: string;
   instagramAccountId?: string;
   instagramUsername?: string;
+  aiEnabled: boolean;
+  defaultUserId?: string | null;
+  defaultUser?: {
+    id: string;
+    name: string;
+    avatar?: string;
+  } | null;
   company?: {
     id: string;
     name: string;
@@ -77,6 +88,14 @@ interface Connection {
     tickets: number;
     messages: number;
   };
+}
+
+interface CompanyUser {
+  id: string;
+  name: string;
+  email: string;
+  avatar?: string;
+  isAI: boolean;
 }
 
 export default function ConnectionsPage() {
@@ -93,6 +112,14 @@ export default function ConnectionsPage() {
   const [availableCompanies, setAvailableCompanies] = useState<Array<{ id: string; name: string; logo?: string }>>([]);
   const [selectedCompanyId, setSelectedCompanyId] = useState<string>("");
   const { user } = useAuthStore();
+  
+  // AI Settings dialog state
+  const [showAISettingsDialog, setShowAISettingsDialog] = useState(false);
+  const [selectedConnectionForAI, setSelectedConnectionForAI] = useState<Connection | null>(null);
+  const [aiEnabled, setAiEnabled] = useState(true);
+  const [selectedDefaultUserId, setSelectedDefaultUserId] = useState<string>("");
+  const [availableUsers, setAvailableUsers] = useState<CompanyUser[]>([]);
+  const [isLoadingAISettings, setIsLoadingAISettings] = useState(false);
 
   useEffect(() => {
     fetchConnections();
@@ -279,6 +306,71 @@ export default function ConnectionsPage() {
     }
   }
 
+  // AI Settings functions
+  async function fetchAvailableUsers(companyId: string) {
+    try {
+      const response = await api.get<CompanyUser[]>(`/users?companyId=${companyId}`);
+      // Filter out AI users - only show human users as default recipients
+      const humanUsers = (response.data || []).filter(u => !u.isAI);
+      setAvailableUsers(humanUsers);
+    } catch (error: any) {
+      console.error("Error fetching users:", error);
+      toast({
+        title: "Erro",
+        description: "Falha ao carregar usuários",
+        variant: "destructive",
+      });
+    }
+  }
+
+  function handleOpenAISettings(connection: Connection) {
+    setSelectedConnectionForAI(connection);
+    setAiEnabled(connection.aiEnabled !== false);
+    setSelectedDefaultUserId(connection.defaultUserId || "");
+    if (connection.companyId) {
+      fetchAvailableUsers(connection.companyId);
+    }
+    setShowAISettingsDialog(true);
+  }
+
+  async function handleSaveAISettings() {
+    if (!selectedConnectionForAI) return;
+
+    // Validate: if AI is disabled, must select a default user
+    if (!aiEnabled && !selectedDefaultUserId) {
+      toast({
+        title: "Usuário obrigatório",
+        description: "Quando a IA está desabilitada, você deve selecionar um usuário padrão para receber as mensagens.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setIsLoadingAISettings(true);
+    try {
+      await api.patch(`/connections/${selectedConnectionForAI.id}/ai-settings`, {
+        aiEnabled,
+        defaultUserId: selectedDefaultUserId || null,
+      });
+      toast({ 
+        title: "Configurações de IA atualizadas",
+        description: aiEnabled 
+          ? "A IA está habilitada para esta conexão." 
+          : `Mensagens serão direcionadas para ${availableUsers.find(u => u.id === selectedDefaultUserId)?.name || 'o usuário selecionado'}.`
+      });
+      setShowAISettingsDialog(false);
+      fetchConnections();
+    } catch (error: any) {
+      toast({
+        title: "Erro",
+        description: error.response?.data?.message || error.response?.data?.error || "Falha ao salvar configurações",
+        variant: "destructive",
+      });
+    } finally {
+      setIsLoadingAISettings(false);
+    }
+  }
+
   const getStatusIcon = (status: string) => {
     switch (status) {
       case "CONNECTED":
@@ -398,6 +490,10 @@ export default function ConnectionsPage() {
                     </Button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end">
+                    <DropdownMenuItem onClick={() => handleOpenAISettings(connection)}>
+                      <Settings2 className="w-4 h-4 mr-2" />
+                      Configurar IA
+                    </DropdownMenuItem>
                     {user?.role === "SUPER_ADMIN" && (
                       <DropdownMenuItem onClick={() => handleChangeCompany(connection)}>
                         <Edit className="w-4 h-4 mr-2" />
@@ -476,6 +572,26 @@ export default function ConnectionsPage() {
                       </span>
                     </div>
                   )}
+
+                  {/* AI Status */}
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm text-muted-foreground">Atendimento IA</span>
+                    <div className="flex items-center gap-2">
+                      {connection.aiEnabled !== false ? (
+                        <>
+                          <Bot className="w-4 h-4 text-green-500" />
+                          <span className="text-sm text-green-600">Ativo</span>
+                        </>
+                      ) : (
+                        <>
+                          <User className="w-4 h-4 text-orange-500" />
+                          <span className="text-sm text-orange-600">
+                            {connection.defaultUser?.name || "Humano"}
+                          </span>
+                        </>
+                      )}
+                    </div>
+                  </div>
 
                   {connection.isDefault && (
                     <div className="text-xs text-primary font-medium">
@@ -590,6 +706,105 @@ export default function ConnectionsPage() {
             </Button>
             <Button onClick={handleUpdateCompany} disabled={!selectedCompanyId}>
               Atualizar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* AI Settings Dialog */}
+      <Dialog open={showAISettingsDialog} onOpenChange={setShowAISettingsDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Configurações de IA</DialogTitle>
+            <DialogDescription>
+              Configure o atendimento de IA para a conexão {selectedConnectionForAI?.name}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-6 py-4">
+            {/* AI Toggle */}
+            <div className="flex items-center justify-between">
+              <div className="space-y-0.5">
+                <Label htmlFor="ai-enabled" className="text-base">
+                  Atendente de IA
+                </Label>
+                <p className="text-sm text-muted-foreground">
+                  Quando ativado, a IA atende automaticamente as mensagens desta conexão
+                </p>
+              </div>
+              <Switch
+                id="ai-enabled"
+                checked={aiEnabled}
+                onCheckedChange={setAiEnabled}
+              />
+            </div>
+
+            {/* Default User Selection - only shown when AI is disabled */}
+            {!aiEnabled && (
+              <div className="space-y-2 p-4 bg-orange-50 dark:bg-orange-950/20 border border-orange-200 dark:border-orange-800 rounded-lg">
+                <div className="flex items-center gap-2 mb-2">
+                  <User className="w-4 h-4 text-orange-600" />
+                  <Label className="text-orange-800 dark:text-orange-200 font-medium">
+                    Usuário Padrão (Obrigatório)
+                  </Label>
+                </div>
+                <p className="text-sm text-orange-700 dark:text-orange-300 mb-3">
+                  Com a IA desabilitada, as mensagens serão direcionadas automaticamente para este usuário.
+                </p>
+                <Select
+                  value={selectedDefaultUserId}
+                  onValueChange={setSelectedDefaultUserId}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Selecione um usuário" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {availableUsers.map((user) => (
+                      <SelectItem key={user.id} value={user.id}>
+                        <div className="flex items-center gap-2">
+                          <Avatar className="h-5 w-5">
+                            <AvatarImage src={user.avatar} />
+                            <AvatarFallback>
+                              <User className="w-3 h-3" />
+                            </AvatarFallback>
+                          </Avatar>
+                          <span>{user.name}</span>
+                          <span className="text-muted-foreground text-xs">({user.email})</span>
+                        </div>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {availableUsers.length === 0 && (
+                  <p className="text-sm text-orange-600 mt-2">
+                    Nenhum usuário disponível. Adicione usuários à empresa primeiro.
+                  </p>
+                )}
+              </div>
+            )}
+
+            {/* Info box when AI is enabled */}
+            {aiEnabled && (
+              <div className="p-4 bg-green-50 dark:bg-green-950/20 border border-green-200 dark:border-green-800 rounded-lg">
+                <div className="flex items-center gap-2">
+                  <Bot className="w-4 h-4 text-green-600" />
+                  <span className="text-sm text-green-800 dark:text-green-200">
+                    A IA atenderá automaticamente todas as mensagens desta conexão.
+                    Quando necessário, a IA transferirá para um atendente humano.
+                  </span>
+                </div>
+              </div>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowAISettingsDialog(false)}>
+              Cancelar
+            </Button>
+            <Button 
+              onClick={handleSaveAISettings} 
+              disabled={isLoadingAISettings || (!aiEnabled && !selectedDefaultUserId)}
+            >
+              {isLoadingAISettings && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+              Salvar
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -334,46 +334,57 @@ router.post('/meta/:connectionId', async (req, res) => {
                   },
                 });
 
-                // If message failed, emit socket event with translated error
-                if (status.status === 'failed' && updateResult.count > 0) {
-                  const translatedError = translateMetaError(errorMessage);
-                  const suggestion = getErrorSuggestion(errorMessage);
-                  
-                  logger.error('Message delivery failed:', {
-                    messageId: status.id,
-                    errors: status.errors,
-                    translatedError,
-                  });
-                  
+                // Emit socket event for ALL status updates (not just failures)
+                if (updateResult.count > 0) {
                   // Find the message to get ticketId
-                  const failedMessage = await prisma.message.findFirst({
+                  const updatedMessage = await prisma.message.findFirst({
                     where: { wamid: status.id },
                     select: { id: true, ticketId: true },
                   });
                   
-                  if (failedMessage) {
+                  if (updatedMessage) {
                     const io = getGlobalIo();
                     if (io) {
-                      // Emit error event to the ticket room
-                      io.to(`ticket:${failedMessage.ticketId}`).emit('message:error', {
-                        messageId: failedMessage.id,
-                        wamid: status.id,
-                        error: translatedError,
-                        suggestion: suggestion,
-                        originalError: errorMessage,
-                      });
-                      
-                      // Also emit status update
-                      io.to(`ticket:${failedMessage.ticketId}`).emit('message:status', {
-                        messageId: failedMessage.id,
-                        wamid: status.id,
-                        status: 'FAILED',
-                        translatedError,
-                        suggestion,
-                      });
+                      if (status.status === 'failed') {
+                        const translatedError = translateMetaError(errorMessage);
+                        const suggestion = getErrorSuggestion(errorMessage);
+                        
+                        logger.error('Message delivery failed:', {
+                          messageId: status.id,
+                          errors: status.errors,
+                          translatedError,
+                        });
+                        
+                        // Emit error event to the ticket room
+                        io.to(`ticket:${updatedMessage.ticketId}`).emit('message:error', {
+                          messageId: updatedMessage.id,
+                          wamid: status.id,
+                          error: translatedError,
+                          suggestion: suggestion,
+                          originalError: errorMessage,
+                        });
+                        
+                        // Also emit status update
+                        io.to(`ticket:${updatedMessage.ticketId}`).emit('message:status', {
+                          messageId: updatedMessage.id,
+                          wamid: status.id,
+                          status: 'FAILED',
+                          translatedError,
+                          suggestion,
+                        });
+                      } else {
+                        // Emit status update for sent, delivered, read
+                        logger.debug(`Message status updated: ${status.id} -> ${mappedStatus}`);
+                        
+                        io.to(`ticket:${updatedMessage.ticketId}`).emit('message:status', {
+                          messageId: updatedMessage.id,
+                          wamid: status.id,
+                          status: mappedStatus,
+                        });
+                      }
                     }
                   }
-                } else if (status.status === 'failed' && updateResult.count === 0) {
+                } else if (status.status === 'failed') {
                   // Message not found - might be from a different connection type (e.g., Baileys)
                   logger.debug(`Message status update skipped: message ${status.id} not found (might be Baileys message)`);
                 }

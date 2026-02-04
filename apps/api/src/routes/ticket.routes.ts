@@ -28,6 +28,7 @@ router.get('/', authenticate, ensureTenant, async (req, res, next) => {
       search,
       hideResolved,
       hasMentions,
+      noHumanAssigned, // Filter for inbox: tickets without human assignee (null or AI)
       page = '1',
       limit = '100',
     } = req.query;
@@ -75,6 +76,14 @@ router.get('/', authenticate, ensureTenant, async (req, res, next) => {
           },
         },
       };
+    }
+
+    // Filter for inbox: tickets without human assignee (null or AI)
+    if (noHumanAssigned === 'true') {
+      baseWhere.OR = [
+        { assignedToId: null },
+        { assignedTo: { isAI: true } },
+      ];
     }
 
     // Build search filter

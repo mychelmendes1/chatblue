@@ -242,6 +242,9 @@ model User {
   // AI Assistant relations
   aiQueries AIAssistantQuery[]
 
+  // Connections where this user is the default handler (when AI is disabled)
+  defaultConnections WhatsAppConnection[] @relation("ConnectionDefaultUser")
+
   @@map("users")
 }
 
@@ -331,6 +334,11 @@ model WhatsAppConnection {
   // Instagram specific
   instagramAccountId String? @map("instagram_account_id")
   instagramUsername  String? @map("instagram_username")
+
+  // AI Settings per connection
+  aiEnabled       Boolean @default(true) @map("ai_enabled") // Se IA está habilitada nesta conexão
+  defaultUserId   String? @map("default_user_id") // Usuário padrão quando IA desabilitada
+  defaultUser     User?   @relation("ConnectionDefaultUser", fields: [defaultUserId], references: [id])
 
   isDefault     Boolean   @default(false) @map("is_default")
   isActive      Boolean   @default(true) @map("is_active")
