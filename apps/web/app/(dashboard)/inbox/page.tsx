@@ -25,16 +25,11 @@ export default function InboxPage() {
 
     try {
       // Buscar tickets sem atendente humano (null ou IA)
-      const response = await api.get<{ tickets: InboxTicket[]; pagination: any }>("/tickets", {
-        params: {
-          noHumanAssigned: true, // Filtro para tickets sem atendente humano
-          hideResolved: true,
-          limit: 100,
-        },
-      });
+      const response = await api.get("/tickets?noHumanAssigned=true&hideResolved=true&limit=100");
 
       // A API retorna { tickets, pagination }
-      const allTickets = response.data?.tickets || [];
+      const data = response.data as { tickets: InboxTicket[]; pagination: any };
+      const allTickets = data?.tickets || [];
       setTickets(allTickets);
     } catch (error: any) {
       console.error("Error fetching inbox tickets:", error);

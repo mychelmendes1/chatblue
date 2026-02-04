@@ -41,4 +41,4 @@ export function KanbanBoard({ ticketsByColumn, onDragEnd }: KanbanBoardProps) {
 }
 
 export { columns };
-export type { ColumnConfig };
+export type { ColumnConfig, ColumnId };

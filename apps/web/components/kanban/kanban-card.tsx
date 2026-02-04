@@ -78,7 +78,9 @@ export function KanbanCard({ ticket, isDragging }: KanbanCardProps) {
           <div className="flex items-center gap-1">
             <span className="font-medium text-sm truncate">{contactName}</span>
             {isWithAI && (
-              <Bot className="h-3.5 w-3.5 text-blue-500 flex-shrink-0" title="Atendido por IA" />
+              <span title="Atendido por IA">
+                <Bot className="h-3.5 w-3.5 text-blue-500 flex-shrink-0" />
+              </span>
             )}
           </div>
           <p className="text-xs text-muted-foreground truncate">

@@ -78,7 +78,9 @@ export function InboxCard({ ticket, onAtender, isAtendendo }: InboxCardProps) {
             {contactName}
           </span>
           {isWithAI && (
-            <Bot className="h-4 w-4 text-blue-500 flex-shrink-0" title="Atendido por IA" />
+            <span title="Atendido por IA">
+              <Bot className="h-4 w-4 text-blue-500 flex-shrink-0" />
+            </span>
           )}
         </div>
         <div className="flex items-center gap-2 text-sm text-muted-foreground flex-wrap">

@@ -44,15 +44,11 @@ export default function KanbanPage() {
 
     try {
       // Buscar todos os tickets (incluindo resolvidos para mostrar no kanban)
-      const response = await api.get<{ tickets: KanbanTicket[]; pagination: any }>("/tickets", {
-        params: {
-          hideResolved: false,
-          limit: 500,
-        },
-      });
+      const response = await api.get("/tickets?hideResolved=false&limit=500");
 
       // A API retorna { tickets, pagination }
-      const allTickets = response.data?.tickets || [];
+      const data = response.data as { tickets: KanbanTicket[]; pagination: any };
+      const allTickets = data?.tickets || [];
       setTickets(allTickets);
     } catch (error: any) {
       console.error("Error fetching kanban tickets:", error);
@@ -69,11 +65,10 @@ export default function KanbanPage() {
 
   const fetchUsers = useCallback(async () => {
     try {
-      const response = await api.get<User[]>("/users", {
-        params: { isActive: true },
-      });
+      const response = await api.get("/users?isActive=true");
       // Filtrar apenas usuários não-IA
-      const humanUsers = (response.data || []).filter((u) => !u.isAI);
+      const userData = response.data as User[];
+      const humanUsers = (userData || []).filter((u) => !u.isAI);
       setUsers(humanUsers);
     } catch (error) {
       console.error("Error fetching users:", error);
