@@ -557,6 +557,29 @@ export default function ConnectionsPage() {
                     </div>
                   )}
 
+                  {connection.type === "META_CLOUD" && (
+                    <div className="space-y-1.5 rounded-md border bg-muted/40 p-2">
+                      <span className="text-xs font-medium text-muted-foreground">URL de callback (Meta)</span>
+                      <p className="text-xs font-mono break-all text-foreground">
+                        {(typeof window !== "undefined" ? process.env.NEXT_PUBLIC_API_URL : null) || "https://chat.grupoblue.com.br"}
+                        /webhooks/meta/{connection.id}
+                      </p>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="h-7 text-xs"
+                        onClick={() => {
+                          const url = `${(typeof window !== "undefined" ? process.env.NEXT_PUBLIC_API_URL : null) || "https://chat.grupoblue.com.br"}/webhooks/meta/${connection.id}`;
+                          navigator.clipboard.writeText(url);
+                          toast({ title: "URL copiada!", description: "Cole no painel do Meta (WhatsApp → Configuração → Webhook)." });
+                        }}
+                      >
+                        Copiar URL
+                      </Button>
+                    </div>
+                  )}
+
                   {connection._count && (
                     <div className="flex items-center justify-between">
                       <span className="text-sm text-muted-foreground">Tickets</span>
@@ -916,7 +939,7 @@ function NewConnectionDialog({ onSuccess }: { onSuccess: () => void }) {
 
       console.log("Creating connection with payload:", JSON.stringify(payload, null, 2));
       
-      let response;
+      let response: any;
       if (type === "BAILEYS") {
         console.log("Creating BAILEYS connection...");
         response = await api.post("/connections/baileys", payload);
@@ -947,11 +970,24 @@ function NewConnectionDialog({ onSuccess }: { onSuccess: () => void }) {
       }
       
       console.log("Connection created successfully, showing toast...");
-      toast({ 
-        title: "Conexão criada com sucesso",
-        description: `A conexão "${name.trim()}" foi criada.`
-      });
-      
+      const baseUrl = (typeof window !== "undefined" ? process.env.NEXT_PUBLIC_API_URL : null) || "https://chat.grupoblue.com.br";
+      const callbackUrl = type === "META_CLOUD" && response?.data?.id
+        ? `${baseUrl.replace(/\/$/, "")}/webhooks/meta/${response.data.id}`
+        : null;
+      if (type === "META_CLOUD" && callbackUrl) {
+        navigator.clipboard.writeText(callbackUrl).catch(() => {});
+        toast({
+          title: "Conexão criada com sucesso",
+          description: `Configure no Meta: WhatsApp → Configuração → Webhook. URL de callback copiada para a área de transferência.`,
+          duration: 8000,
+        });
+      } else {
+        toast({
+          title: "Conexão criada com sucesso",
+          description: `A conexão "${name.trim()}" foi criada.`
+        });
+      }
+
       console.log("Resetting form...");
       // Reset form
       setName("");

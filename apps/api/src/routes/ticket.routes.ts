@@ -6,6 +6,8 @@ import { ensureTenant } from '../middlewares/tenant.middleware.js';
 import { NotFoundError, ForbiddenError } from '../middlewares/error.middleware.js';
 import { generateProtocol } from '../utils/protocol.js';
 import { logger } from '../config/logger.js';
+import { ExternalAIWebhookService } from '../services/external-ai/external-ai-webhook.service.js';
+import { MessageProcessor } from '../services/message-processor.service.js';
 
 const router = Router();
 
@@ -600,6 +602,31 @@ router.post('/:id/assign', authenticate, ensureTenant, async (req, res, next) =>
       userId: z.string().cuid(),
     }).parse(req.body);
 
+    // Get current ticket to check previous assignee
+    const currentTicket = await prisma.ticket.findFirst({
+      where: {
+        id: req.params.id,
+        companyId: req.user!.companyId,
+      },
+      include: {
+        assignedTo: {
+          select: { id: true, isAI: true, aiConfig: true },
+        },
+      },
+    });
+
+    if (!currentTicket) {
+      throw new NotFoundError('Ticket not found');
+    }
+
+    // Check if the target user is an external AI
+    const targetUser = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, name: true, isAI: true, aiConfig: true },
+    });
+
+    const isTargetExternalAI = targetUser?.isAI && ExternalAIWebhookService.isExternalAI(targetUser.aiConfig);
+
     const ticket = await prisma.ticket.update({
       where: {
         id: req.params.id,
@@ -608,7 +635,12 @@ router.post('/:id/assign', authenticate, ensureTenant, async (req, res, next) =>
       data: {
         assignedToId: userId,
         status: 'IN_PROGRESS',
-        humanTakeoverAt: new Date(),
+        ...(isTargetExternalAI ? {
+          isAIHandled: true,
+          aiTakeoverAt: new Date(),
+        } : {
+          humanTakeoverAt: new Date(),
+        }),
       },
     });
 
@@ -616,22 +648,25 @@ router.post('/:id/assign', authenticate, ensureTenant, async (req, res, next) =>
     await prisma.activity.create({
       data: {
         type: 'TICKET_ASSIGNED',
-        description: `Ticket assigned`,
+        description: isTargetExternalAI
+          ? `Ticket assigned to external AI ${targetUser!.name}`
+          : `Ticket assigned`,
         ticketId: ticket.id,
         userId: req.user!.userId,
       },
     });
 
-    // Get ticket details for notification
+    // Get ticket details for notification and webhooks
     const ticketWithDetails = await prisma.ticket.findUnique({
       where: { id: ticket.id },
       include: {
-        contact: { select: { name: true } },
+        contact: { select: { id: true, name: true, phone: true, email: true } },
+        department: { select: { id: true, name: true } },
       },
     });
 
-    // Create notification for assigned user
-    if (userId && userId !== req.user!.userId) {
+    // Create notification for assigned user (only for human users)
+    if (userId && userId !== req.user!.userId && !isTargetExternalAI) {
       await prisma.notification.create({
         data: {
           type: 'ticket_assigned',
@@ -670,6 +705,65 @@ router.post('/:id/assign', authenticate, ensureTenant, async (req, res, next) =>
       assignedToId: userId,
     });
 
+    // Send webhook to previous external AI if being unassigned
+    if (currentTicket.assignedTo?.isAI && currentTicket.assignedToId !== userId) {
+      if (ExternalAIWebhookService.isExternalAI(currentTicket.assignedTo.aiConfig)) {
+        ExternalAIWebhookService.sendTicketUnassigned(
+          currentTicket.assignedTo,
+          {
+            id: ticket.id,
+            protocol: ticket.protocol,
+            status: ticket.status,
+            departmentId: ticket.departmentId,
+            department: ticketWithDetails?.department,
+            contact: ticketWithDetails?.contact as any,
+          }
+        ).catch(err => logger.error('[ExternalAI] Error sending unassigned webhook:', err));
+      }
+    }
+
+    // Send webhook to new external AI if being assigned and process synchronous response
+    if (isTargetExternalAI && ticketWithDetails) {
+      try {
+        const webhookResult = await ExternalAIWebhookService.sendTicketAssigned(
+          targetUser!,
+          {
+            id: ticket.id,
+            protocol: ticket.protocol,
+            status: ticket.status,
+            departmentId: ticket.departmentId,
+            department: ticketWithDetails.department,
+            contact: ticketWithDetails.contact as any,
+          }
+        );
+
+        // Processar resposta síncrona da IA externa (se ela respondeu com texto)
+        if (webhookResult.success && webhookResult.data) {
+          logger.info(`[ExternalAI] Processing synchronous response from manual assign webhook for ticket ${ticket.id}`);
+          await MessageProcessor.processExternalAIResponse(
+            webhookResult.data,
+            {
+              id: ticket.id,
+              protocol: ticket.protocol,
+              status: ticket.status,
+              departmentId: ticket.departmentId,
+              department: ticketWithDetails.department as any,
+              contact: ticketWithDetails.contact as any,
+              connectionId: ticket.connectionId,
+            },
+            {
+              id: targetUser!.id,
+              name: targetUser!.name || 'IA Externa',
+              aiConfig: targetUser!.aiConfig,
+            },
+            req.user!.companyId
+          );
+        }
+      } catch (err: any) {
+        logger.error('[ExternalAI] Error sending/processing assigned webhook:', err?.message);
+      }
+    }
+
     res.json(ticket);
   } catch (error) {
     next(error);
@@ -689,6 +783,21 @@ router.post('/:id/takeover', authenticate, ensureTenant, async (req, res, next) 
           select: {
             id: true,
             name: true,
+          },
+        },
+        assignedTo: {
+          select: {
+            id: true,
+            isAI: true,
+            aiConfig: true,
+          },
+        },
+        contact: {
+          select: {
+            id: true,
+            name: true,
+            phone: true,
+            email: true,
           },
         },
       },
@@ -805,6 +914,21 @@ router.post('/:id/takeover', authenticate, ensureTenant, async (req, res, next) 
     io.to(`company:${req.user!.companyId}`).emit('ticket:updated', updatedTicket);
     io.to(`ticket:${ticket.id}`).emit('message:received', { message: systemMessage });
 
+    // If previous assignee was an external AI, send unassigned webhook
+    if (ticket.assignedTo?.isAI && ExternalAIWebhookService.isExternalAI(ticket.assignedTo.aiConfig)) {
+      ExternalAIWebhookService.sendTicketUnassigned(
+        ticket.assignedTo,
+        {
+          id: ticket.id,
+          protocol: ticket.protocol,
+          status: updatedTicket.status,
+          departmentId: updatedTicket.departmentId,
+          department: updatedTicket.department,
+          contact: ticket.contact as any,
+        }
+      ).catch(err => logger.error('[ExternalAI] Error sending unassigned webhook on takeover:', err));
+    }
+
     res.json(updatedTicket);
   } catch (error) {
     next(error);
@@ -835,14 +959,34 @@ router.post('/:id/transfer', authenticate, ensureTenant, async (req, res, next) 
       throw new NotFoundError('Ticket not found');
     }
 
+    // Check if target department has an external AI user (auto-assign)
+    let autoAssignExternalAI: { id: string; name: string; aiConfig: any } | null = null;
+    if (toDepartmentId && !toUserId) {
+      autoAssignExternalAI = await ExternalAIWebhookService.findExternalAIForDepartment(toDepartmentId);
+      if (autoAssignExternalAI) {
+        logger.info(`[ExternalAI] Auto-assigning ticket ${ticket.id} to external AI ${autoAssignExternalAI.name} in department ${toDepartmentId}`);
+      }
+    }
+
+    // Build update data
+    const transferUpdateData: any = {
+      ...(toDepartmentId && { departmentId: toDepartmentId }),
+      ...(toUserId && { assignedToId: toUserId }),
+      status: 'PENDING',
+    };
+
+    // If auto-assigning to external AI
+    if (autoAssignExternalAI) {
+      transferUpdateData.assignedToId = autoAssignExternalAI.id;
+      transferUpdateData.isAIHandled = true;
+      transferUpdateData.status = 'IN_PROGRESS';
+      transferUpdateData.aiTakeoverAt = new Date();
+    }
+
     // Update ticket
     const updatedTicket = await prisma.ticket.update({
       where: { id: ticket.id },
-      data: {
-        ...(toDepartmentId && { departmentId: toDepartmentId }),
-        ...(toUserId && { assignedToId: toUserId }),
-        status: 'PENDING',
-      },
+      data: transferUpdateData,
       include: {
         contact: {
           select: {
@@ -851,6 +995,7 @@ router.post('/:id/transfer', authenticate, ensureTenant, async (req, res, next) 
             phone: true,
             avatar: true,
             isClient: true,
+            email: true,
           },
         },
         assignedTo: {
@@ -876,7 +1021,7 @@ router.post('/:id/transfer', authenticate, ensureTenant, async (req, res, next) 
       data: {
         ticketId: ticket.id,
         fromUserId: ticket.assignedToId,
-        toUserId,
+        toUserId: transferUpdateData.assignedToId || toUserId || null,
         fromDeptId: ticket.departmentId,
         toDeptId: toDepartmentId,
         transferType: toDepartmentId ? 'DEPT_TO_DEPT' : 'USER_TO_USER',
@@ -888,7 +1033,9 @@ router.post('/:id/transfer', authenticate, ensureTenant, async (req, res, next) 
     await prisma.activity.create({
       data: {
         type: 'TICKET_TRANSFERRED',
-        description: `Ticket transferred`,
+        description: autoAssignExternalAI
+          ? `Ticket transferred to external AI ${autoAssignExternalAI.name}`
+          : `Ticket transferred`,
         ticketId: ticket.id,
         userId: req.user!.userId,
         metadata: { reason, toDepartmentId, toUserId },
@@ -957,10 +1104,46 @@ router.post('/:id/transfer', authenticate, ensureTenant, async (req, res, next) 
     io.to(`company:${req.user!.companyId}`).emit('ticket:transferred', {
       ticketId: ticket.id,
       fromUserId: ticket.assignedToId,
-      toUserId,
+      toUserId: transferUpdateData.assignedToId || toUserId,
       toDepartmentId,
     });
     io.to(`ticket:${ticket.id}`).emit('message:received', { message: systemMessage });
+
+    // If previous assignee was an external AI, send unassigned webhook
+    if (ticket.assignedToId) {
+      const previousUser = await prisma.user.findUnique({
+        where: { id: ticket.assignedToId },
+        select: { id: true, isAI: true, aiConfig: true },
+      });
+      if (previousUser?.isAI && ExternalAIWebhookService.isExternalAI(previousUser.aiConfig)) {
+        ExternalAIWebhookService.sendTicketUnassigned(
+          previousUser,
+          {
+            id: updatedTicket.id,
+            protocol: updatedTicket.protocol,
+            status: updatedTicket.status,
+            departmentId: updatedTicket.departmentId,
+            department: updatedTicket.department,
+            contact: updatedTicket.contact as any,
+          }
+        ).catch(err => logger.error('[ExternalAI] Error sending unassigned webhook:', err));
+      }
+    }
+
+    // If auto-assigned to external AI, send assigned webhook
+    if (autoAssignExternalAI) {
+      ExternalAIWebhookService.sendTicketAssigned(
+        autoAssignExternalAI,
+        {
+          id: updatedTicket.id,
+          protocol: updatedTicket.protocol,
+          status: updatedTicket.status,
+          departmentId: updatedTicket.departmentId,
+          department: updatedTicket.department,
+          contact: updatedTicket.contact as any,
+        }
+      ).catch(err => logger.error('[ExternalAI] Error sending assigned webhook:', err));
+    }
 
     res.json(updatedTicket);
   } catch (error) {

@@ -604,6 +604,33 @@ export function ChatWindow({ ticket, onShowContactInfo, onMobileBack }: ChatWind
     }
   }
 
+  // Handle paste - detect clipboard images
+  function handlePaste(e: React.ClipboardEvent) {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      // Check if the pasted item is an image
+      if (item.type.startsWith("image/")) {
+        e.preventDefault(); // Prevent pasting as text
+        const file = item.getAsFile();
+        if (file) {
+          // Create a named file since clipboard images come as "image.png"
+          const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+          const extension = item.type.split("/")[1] || "png";
+          const namedFile = new File([file], `imagem-colada-${timestamp}.${extension}`, {
+            type: item.type,
+          });
+          processFile(namedFile);
+          inputRef.current?.focus();
+        }
+        return; // Only process the first image
+      }
+    }
+    // If no image found, let the default paste behavior handle text
+  }
+
   // Cancel file selection
   function handleCancelFile() {
     setSelectedFile(null);
@@ -1297,6 +1324,7 @@ export function ChatWindow({ ticket, onShowContactInfo, onMobileBack }: ChatWind
               value={newMessage}
               onChange={handleMessageChange}
               onKeyDown={handleKeyDown}
+              onPaste={handlePaste}
               rows={1}
               className={cn("flex-1 min-w-0 min-h-[32px] md:min-h-[40px] max-h-32 md:max-h-40 text-sm md:text-base resize-none", isInternalMode && "border-amber-400 focus-visible:ring-amber-400")}
             />

@@ -144,11 +144,14 @@ router.post('/', authenticate, requireAdmin, ensureTenant, async (req, res, next
     const data = departmentSchema.parse(req.body);
     console.log('Parsed data:', JSON.stringify(data));
 
+    const { parentId, ...rest } = data;
+
     const department = await prisma.department.create({
       data: {
-        ...data,
+        ...rest,
         company: { connect: { id: req.user!.companyId } },
-      } as any,
+        ...(parentId ? { parent: { connect: { id: parentId } } } : {}),
+      },
     });
 
     res.status(201).json(department);
@@ -165,13 +168,21 @@ router.post('/', authenticate, requireAdmin, ensureTenant, async (req, res, next
 router.put('/:id', authenticate, requireAdmin, ensureTenant, async (req, res, next) => {
   try {
     const data = departmentSchema.partial().parse(req.body);
+    const { parentId, ...rest } = data;
 
     const department = await prisma.department.update({
       where: {
         id: req.params.id,
         companyId: req.user!.companyId,
       },
-      data,
+      data: {
+        ...rest,
+        ...(parentId !== undefined
+          ? parentId
+            ? { parent: { connect: { id: parentId } } }
+            : { parent: { disconnect: true } }
+          : {}),
+      },
     });
 
     res.json(department);

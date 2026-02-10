@@ -215,13 +215,15 @@ ${aiResponse}
 TAREFA: Verifique se a resposta da IA indica transferência. SE A IA DISSE QUE VAI TRANSFERIR, DEVE TRANSFERIR.
 
 REGRAS (em ordem de prioridade):
-1. **PRIORIDADE MÁXIMA**: Se a resposta contém frases como "vou transferir", "transferindo", "vou conectar você com", "direcionando seu atendimento" → SEMPRE TRANSFERIR
-2. Se a IA menciona que vai encaminhar para "especialista", "consultor", "atendente humano" para finalizar venda → TRANSFERIR para Comercial
-3. Se a IA menciona que vai encaminhar para resolver problema/suporte → TRANSFERIR para Suporte
-4. Se a IA menciona que vai encaminhar por questões financeiras → TRANSFERIR para Financeiro
-5. Só NÃO TRANSFERIR se a resposta da IA NÃO menciona nenhuma transferência ou encaminhamento
+1. **PRIORIDADE MÁXIMA**: Se a resposta contém frases como "vou transferir", "transferindo", "vou conectar você com", "direcionando seu atendimento", "vou te encaminhar", "vou passar você para" → SEMPRE TRANSFERIR
+2. Se a resposta contém blocos formatados como "TRANSFERINDO PARA:", "---" seguido de dados do cliente (nome, email, telefone) → SEMPRE TRANSFERIR (isso é uma nota interna de transferência)
+3. Se a IA menciona que vai encaminhar para "especialista", "consultor", "atendente humano" para finalizar venda → TRANSFERIR para Comercial
+4. Se a IA menciona que vai encaminhar para resolver problema/suporte → TRANSFERIR para Suporte
+5. Se a IA menciona que vai encaminhar por questões financeiras → TRANSFERIR para Financeiro
+6. Só NÃO TRANSFERIR se a resposta da IA NÃO menciona nenhuma transferência ou encaminhamento
 
 IMPORTANTE: O cliente pode estar interessado em compra E a IA decidiu transferir para um consultor finalizar. Isso é VÁLIDO e DEVE TRANSFERIR.
+IMPORTANTE: Se a resposta contém qualquer variação de "transferir", "encaminhar", "direcionar" para outro setor/pessoa, SEMPRE retorne shouldTransfer: true.
 
 Responda APENAS com JSON válido:
 {"shouldTransfer": true/false, "department": "nome do departamento ou null", "reason": "explicação breve"}`;

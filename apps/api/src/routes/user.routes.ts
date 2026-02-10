@@ -13,6 +13,7 @@ import fs from 'fs/promises';
 import * as fsSync from 'fs';
 import path from 'path';
 import { logger } from '../config/logger.js';
+import crypto from 'crypto';
 import { AIService } from '../services/ai/ai.service.js';
 
 const router: RouterType = Router();
@@ -160,6 +161,7 @@ router.get('/ai-agents', authenticate, ensureTenant, async (req, res, next) => {
       const config = agent.aiConfig as any || {};
       return {
         ...agent,
+        aiType: config.type || 'internal',
         aiModel: config.model || 'gpt-4-turbo-preview',
         aiTemperature: config.temperature || 0.7,
         aiMaxTokens: config.maxTokens || 1000,
@@ -172,6 +174,18 @@ router.get('/ai-agents', authenticate, ensureTenant, async (req, res, next) => {
         aiUseEmojis: config.useEmojis ?? true,
         aiUseClientName: config.useClientName ?? true,
         aiGuardrailsEnabled: config.guardrailsEnabled ?? true,
+        // External AI settings
+        webhookUrl: config.webhookUrl || '',
+        webhookSecret: config.webhookSecret || '',
+        externalApiKey: config.externalApiKey || '',
+        // External AI integration settings (bluetoken-ai)
+        authType: config.authType || 'hmac',
+        authToken: config.authToken || '',
+        payloadFormat: config.payloadFormat || 'chatblue',
+        empresa: config.empresa || '',
+        autoReply: config.autoReply ?? true,
+        autoEscalate: config.autoEscalate ?? true,
+        escalateDepartmentId: config.escalateDepartmentId || '',
         _count: {
           assignedTickets: agent._count.tickets, // Map to expected field name
         },
@@ -343,9 +357,27 @@ router.put('/:id', authenticate, requireAdmin, ensureTenant, async (req, res, ne
     // Build aiConfig if this is an AI agent being updated
     let aiConfigUpdate = data.aiConfig;
     const isAIAgent = data.isAI || currentUser?.isAI;
+    const aiType = req.body.aiType;
     
-    if (isAIAgent && (req.body.aiModel || req.body.aiSystemPrompt || req.body.trainingData || currentUser?.aiConfig)) {
-      // Build aiConfig from flat fields for AI agents
+    if (isAIAgent && aiType === 'external') {
+      // External AI configuration update
+      const currentConfig = (currentUser?.aiConfig as any) || {};
+      aiConfigUpdate = {
+        type: 'external',
+        webhookUrl: req.body.webhookUrl ?? currentConfig.webhookUrl ?? '',
+        webhookSecret: req.body.webhookSecret ?? currentConfig.webhookSecret ?? '',
+        externalApiKey: req.body.externalApiKey || currentConfig.externalApiKey || crypto.randomBytes(32).toString('hex'),
+        // Integration settings (bluetoken-ai)
+        authType: req.body.authType ?? currentConfig.authType ?? 'hmac',
+        authToken: req.body.authToken ?? currentConfig.authToken ?? '',
+        payloadFormat: req.body.payloadFormat ?? currentConfig.payloadFormat ?? 'chatblue',
+        empresa: req.body.empresa ?? currentConfig.empresa ?? '',
+        autoReply: req.body.autoReply ?? currentConfig.autoReply ?? true,
+        autoEscalate: req.body.autoEscalate ?? currentConfig.autoEscalate ?? true,
+        escalateDepartmentId: req.body.escalateDepartmentId ?? currentConfig.escalateDepartmentId ?? '',
+      };
+    } else if (isAIAgent && (req.body.aiModel || req.body.aiSystemPrompt || req.body.trainingData || currentUser?.aiConfig)) {
+      // Internal AI configuration update
       const currentConfig = (currentUser?.aiConfig as any) || {};
       
       // Get the base system prompt (without training data appendix)
@@ -357,6 +389,7 @@ router.put('/:id', authenticate, requireAdmin, ensureTenant, async (req, res, ne
       }
       
       aiConfigUpdate = {
+        type: 'internal',
         provider: currentConfig.provider || 'openai',
         model: req.body.aiModel ?? currentConfig.model ?? 'gpt-4-turbo-preview',
         systemPrompt: baseSystemPrompt,
@@ -414,7 +447,13 @@ router.put('/:id', authenticate, requireAdmin, ensureTenant, async (req, res, ne
       },
     });
 
-    res.json(user);
+    // Return externalApiKey for external AI agents
+    const responseData: any = { ...user };
+    if (aiType === 'external' && aiConfigUpdate?.externalApiKey) {
+      responseData.externalApiKey = aiConfigUpdate.externalApiKey;
+    }
+
+    res.json(responseData);
   } catch (error) {
     next(error);
   }
@@ -640,28 +679,50 @@ router.post('/ai-agent', authenticate, requireAdmin, ensureTenant, async (req, r
 
     const hashedPassword = await bcrypt.hash(data.password, 10);
 
-    // Build aiConfig from flat fields
-    let systemPrompt = req.body.aiSystemPrompt || '';
-    // If trainingData is provided, append it to systemPrompt
-    if (req.body.trainingData && systemPrompt) {
-      systemPrompt = `${systemPrompt}\n\n---\n\nInformações da Empresa (Contexto para Treinamento):\n\n${req.body.trainingData}`;
-    }
+    // Build aiConfig based on AI type
+    let aiConfig: any;
+    const aiType = req.body.aiType || 'internal';
 
-    const aiConfig = {
-      provider: 'openai',
-      model: req.body.aiModel || 'gpt-4-turbo-preview',
-      systemPrompt,
-      temperature: req.body.aiTemperature || 0.7,
-      maxTokens: req.body.aiMaxTokens || 1000,
-      triggerKeywords: req.body.transferKeywords || [],
-      trainingData: req.body.trainingData || '', // PDF extracted text
-      // Personality settings
-      personalityTone: req.body.aiPersonalityTone || 'friendly',
-      personalityStyle: req.body.aiPersonalityStyle || 'conversational',
-      useEmojis: req.body.aiUseEmojis ?? true,
-      useClientName: req.body.aiUseClientName ?? true,
-      guardrailsEnabled: req.body.aiGuardrailsEnabled ?? true,
-    };
+    if (aiType === 'external') {
+      // External AI configuration
+      const externalApiKey = req.body.externalApiKey || crypto.randomBytes(32).toString('hex');
+      aiConfig = {
+        type: 'external',
+        webhookUrl: req.body.webhookUrl,
+        webhookSecret: req.body.webhookSecret || '',
+        externalApiKey,
+        // Integration settings (bluetoken-ai)
+        authType: req.body.authType || 'hmac',
+        authToken: req.body.authToken || '',
+        payloadFormat: req.body.payloadFormat || 'chatblue',
+        empresa: req.body.empresa || '',
+        autoReply: req.body.autoReply ?? true,
+        autoEscalate: req.body.autoEscalate ?? true,
+        escalateDepartmentId: req.body.escalateDepartmentId || '',
+      };
+    } else {
+      // Internal AI configuration
+      let systemPrompt = req.body.aiSystemPrompt || '';
+      if (req.body.trainingData && systemPrompt) {
+        systemPrompt = `${systemPrompt}\n\n---\n\nInformações da Empresa (Contexto para Treinamento):\n\n${req.body.trainingData}`;
+      }
+
+      aiConfig = {
+        type: 'internal',
+        provider: 'openai',
+        model: req.body.aiModel || 'gpt-4-turbo-preview',
+        systemPrompt,
+        temperature: req.body.aiTemperature || 0.7,
+        maxTokens: req.body.aiMaxTokens || 1000,
+        triggerKeywords: req.body.transferKeywords || [],
+        trainingData: req.body.trainingData || '',
+        personalityTone: req.body.aiPersonalityTone || 'friendly',
+        personalityStyle: req.body.aiPersonalityStyle || 'conversational',
+        useEmojis: req.body.aiUseEmojis ?? true,
+        useClientName: req.body.aiUseClientName ?? true,
+        guardrailsEnabled: req.body.aiGuardrailsEnabled ?? true,
+      };
+    }
 
     const user = await prisma.user.create({
       data: {
@@ -686,6 +747,7 @@ router.post('/ai-agent', authenticate, requireAdmin, ensureTenant, async (req, r
         name: true,
         role: true,
         isAI: true,
+        aiConfig: true,
         departments: {
           include: {
             department: true,
@@ -694,7 +756,13 @@ router.post('/ai-agent', authenticate, requireAdmin, ensureTenant, async (req, r
       },
     });
 
-    res.status(201).json(user);
+    // Return externalApiKey for the frontend to display
+    const responseData: any = { ...user };
+    if (aiType === 'external') {
+      responseData.externalApiKey = aiConfig.externalApiKey;
+    }
+
+    res.status(201).json(responseData);
   } catch (error) {
     next(error);
   }

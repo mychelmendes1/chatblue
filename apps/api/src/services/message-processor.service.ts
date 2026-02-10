@@ -9,6 +9,8 @@ import { TranscriptionService } from './ai/transcription.service.js';
 import { TransferAnalyzerService } from './ai/transfer-analyzer.service.js';
 import { NotionService } from './notion/notion.service.js';
 import { SLAService } from './sla/sla.service.js';
+import { ExternalAIWebhookService, BlueChatResponse, ExternalAIConfig } from './external-ai/external-ai-webhook.service.js';
+import { WhatsAppService } from './whatsapp/whatsapp.service.js';
 import * as path from 'path';
 
 // Cooldown de 4 horas para mensagens de fora do horário (em segundos)
@@ -305,16 +307,32 @@ export class MessageProcessor {
           let aiUser: any = null;
 
           if (shouldUseAI) {
-            // Get AI user for handling the reopened ticket
-            aiUser = await prisma.user.findFirst({
+            // Get INTERNAL AI user for handling the reopened ticket (Triagem)
+            // External AIs should only be assigned when ticket is transferred to their department
+            const allAIUsers = await prisma.user.findMany({
               where: {
                 companyId,
                 isAI: true,
                 isActive: true,
               },
+              select: {
+                id: true,
+                name: true,
+                aiConfig: true,
+              },
             });
+            // Prefer internal AI over external AI for initial triage
+            const internalAI = allAIUsers.find(u => {
+              const config = u.aiConfig as any;
+              return !config || config.type !== 'external';
+            });
+            aiUser = internalAI || null;
             assignedUserId = aiUser?.id || null;
-            logger.info(`Reopening ticket - AI enabled, assigning to AI`);
+            if (aiUser) {
+              logger.info(`Reopening ticket - AI enabled, assigning to internal AI: ${aiUser.name}`);
+            } else {
+              logger.info(`Reopening ticket - AI enabled but no internal AI found`);
+            }
           } else {
             // AI disabled - use default user if configured
             if (connectionSettings?.defaultUserId && connectionSettings?.defaultUser?.isActive) {
@@ -446,15 +464,32 @@ export class MessageProcessor {
         let aiUser: any = null;
 
         if (shouldUseAI) {
-          // AI is enabled for this connection - get AI user
-          aiUser = await prisma.user.findFirst({
+          // AI is enabled for this connection - get INTERNAL AI user for triage
+          // External AIs should only be assigned when ticket is transferred to their department
+          const allAIUsers = await prisma.user.findMany({
             where: {
               companyId,
               isAI: true,
               isActive: true,
             },
+            select: {
+              id: true,
+              name: true,
+              aiConfig: true,
+            },
           });
+          // Prefer internal AI over external AI for initial triage
+          const internalAI = allAIUsers.find(u => {
+            const config = u.aiConfig as any;
+            return !config || config.type !== 'external';
+          });
+          aiUser = internalAI || null;
           assignedUserId = aiUser?.id || null;
+          if (aiUser) {
+            logger.info(`New ticket - AI enabled, assigning to internal AI: ${(aiUser as any).name}`);
+          } else {
+            logger.info(`New ticket - AI enabled but no internal AI found`);
+          }
         } else {
           // AI is disabled for this connection - use default user if configured
           if (connection?.defaultUserId && connection?.defaultUser?.isActive) {
@@ -855,25 +890,79 @@ export class MessageProcessor {
 
       // If AI is handling, process with AI (but only if AI is enabled for this connection)
       if (ticket.isAIHandled && ticket.assignedTo?.isAI) {
-        // Double-check that AI is enabled for this connection
-        const connectionAICheck = await prisma.whatsAppConnection.findUnique({
-          where: { id: connectionId },
-          select: { aiEnabled: true },
-        });
-
-        if (connectionAICheck?.aiEnabled !== false) {
-          // Use transcription for audio messages, otherwise use original content
-          const contentForAI = type === 'AUDIO' && transcription 
-            ? transcription 
-            : content;
+        // Check if this is an external AI user
+        const aiConfig = ticket.assignedTo?.aiConfig as any;
+        if (ExternalAIWebhookService.isExternalAI(aiConfig)) {
+          // External AI: send webhook instead of processing internally
+          logger.info(`[ExternalAI] Sending webhook for ticket ${ticket.id} to external AI ${ticket.assignedTo.name}`);
           
-          if (contentForAI) {
-            await this.processWithAI(ticket.id, companyId, contentForAI, contact);
-          } else {
-            logger.warn(`No content to process for AI: type=${type}, hasTranscription=${!!transcription}`);
+          // Get ticket with department info for the webhook
+          const ticketForWebhook = await prisma.ticket.findUnique({
+            where: { id: ticket.id },
+            include: {
+              contact: {
+                select: { id: true, name: true, phone: true, email: true },
+              },
+              department: {
+                select: { id: true, name: true },
+              },
+              connection: true,
+            },
+          });
+
+          if (ticketForWebhook) {
+            const webhookResult = await ExternalAIWebhookService.sendMessageReceived(
+              { id: ticket.assignedTo.id, name: ticket.assignedTo.name, aiConfig: ticket.assignedTo.aiConfig },
+              {
+                id: ticketForWebhook.id,
+                protocol: ticketForWebhook.protocol,
+                status: ticketForWebhook.status,
+                departmentId: ticketForWebhook.departmentId,
+                department: ticketForWebhook.department,
+                contact: ticketForWebhook.contact,
+                connectionId: ticketForWebhook.connectionId,
+              },
+              {
+                id: messageWithQuoted?.id || '',
+                content: type === 'AUDIO' && transcription ? transcription : content,
+                type,
+                mediaUrl: messageWithQuoted?.mediaUrl ? normalizeMediaUrl(messageWithQuoted.mediaUrl) : null,
+                createdAt: messageWithQuoted?.createdAt || new Date(),
+              }
+            );
+
+            // Process the synchronous response from external AI (if available)
+            if (webhookResult.success && webhookResult.response) {
+              await this.processExternalAIResponse(
+                webhookResult.response,
+                ticketForWebhook,
+                ticket.assignedTo,
+                companyId
+              );
+            }
           }
         } else {
-          logger.info(`AI processing skipped - AI disabled for connection ${connectionId}`);
+          // Internal AI: use built-in AI processing
+          // Double-check that AI is enabled for this connection
+          const connectionAICheck = await prisma.whatsAppConnection.findUnique({
+            where: { id: connectionId },
+            select: { aiEnabled: true },
+          });
+
+          if (connectionAICheck?.aiEnabled !== false) {
+            // Use transcription for audio messages, otherwise use original content
+            const contentForAI = type === 'AUDIO' && transcription 
+              ? transcription 
+              : content;
+            
+            if (contentForAI) {
+              await this.processWithAI(ticket.id, companyId, contentForAI, contact);
+            } else {
+              logger.warn(`No content to process for AI: type=${type}, hasTranscription=${!!transcription}`);
+            }
+          } else {
+            logger.info(`AI processing skipped - AI disabled for connection ${connectionId}`);
+          }
         }
       }
     } catch (error: any) {
@@ -999,6 +1088,400 @@ export class MessageProcessor {
           name: notionData.name || contact.name,
         },
       });
+    }
+  }
+
+  // ============================================================================
+  // PROCESSAMENTO DE RESPOSTA DA IA EXTERNA (síncrona)
+  // ============================================================================
+
+  /**
+   * Processa a resposta síncrona de uma IA externa (bluetoken-ai)
+   * - Se action === 'RESPOND' e tem texto: envia a mensagem de volta ao cliente via WhatsApp
+   * - Se escalation.needed === true: transfere o ticket para humano/departamento
+   */
+  static async processExternalAIResponse(
+    response: BlueChatResponse,
+    ticket: {
+      id: string;
+      protocol: string;
+      status: string;
+      departmentId: string | null;
+      department?: { id: string; name: string } | null;
+      contact: { id: string; name: string | null; phone: string; email?: string | null };
+      connectionId: string;
+      connection?: any;
+      companyId?: string;
+    },
+    aiUser: { id: string; name: string; aiConfig: any },
+    companyId: string
+  ): Promise<void> {
+    const config = aiUser.aiConfig as ExternalAIConfig;
+    const autoReply = config.autoReply !== false; // Default: true
+    const autoEscalate = config.autoEscalate !== false; // Default: true
+
+    logger.info(`[ExternalAI] Processing response for ticket ${ticket.id}:`, {
+      action: response.action,
+      hasText: !!response.response?.text,
+      escalationNeeded: response.escalation?.needed,
+      autoReply,
+      autoEscalate,
+    });
+
+    // ========================================================================
+    // 1. Enviar resposta da IA de volta ao cliente
+    // ========================================================================
+    if (autoReply && response.action === 'RESPOND' && response.response?.text) {
+      try {
+        // Obter conexão WhatsApp para envio
+        let connection = ticket.connection;
+        if (!connection) {
+          connection = await prisma.whatsAppConnection.findUnique({
+            where: { id: ticket.connectionId },
+          });
+        }
+
+        if (!connection || connection.status !== 'CONNECTED' || !connection.isActive) {
+          // Tentar encontrar outra conexão ativa
+          connection = await prisma.whatsAppConnection.findFirst({
+            where: {
+              companyId,
+              status: 'CONNECTED',
+              isActive: true,
+            },
+            orderBy: [
+              { isDefault: 'desc' },
+              { lastConnected: 'desc' },
+            ],
+          });
+        }
+
+        if (connection) {
+          const whatsappService = new WhatsAppService(connection);
+          const aiName = aiUser.name || 'Assistente IA';
+          const formattedMessage = `*${aiName}:*\n${response.response.text}`;
+
+          // Enviar mensagem via WhatsApp
+          const sendResult = await whatsappService.sendMessage(ticket.contact.phone, formattedMessage);
+
+          // Salvar mensagem no banco de dados
+          const aiMessage = await prisma.message.create({
+            data: {
+              type: 'TEXT',
+              content: response.response.text,
+              isFromMe: true,
+              isAIGenerated: true,
+              status: 'SENT',
+              wamid: sendResult.messageId,
+              sentAt: new Date(),
+              ticketId: ticket.id,
+              senderId: aiUser.id,
+              connectionId: connection.id,
+            },
+            include: {
+              sender: {
+                select: {
+                  id: true,
+                  name: true,
+                  avatar: true,
+                  isAI: true,
+                },
+              },
+            },
+          });
+
+          // Atualizar status do ticket
+          const ticketCurrentData = await prisma.ticket.findUnique({ where: { id: ticket.id }, select: { firstResponse: true, status: true, createdAt: true } });
+          const newStatus = ticketCurrentData?.status === 'PENDING' ? 'IN_PROGRESS' as const : undefined;
+          await prisma.ticket.update({
+            where: { id: ticket.id },
+            data: {
+              updatedAt: new Date(),
+              ...(newStatus && { status: newStatus }),
+              ...(!ticketCurrentData?.firstResponse && {
+                firstResponse: new Date(),
+                responseTime: Math.floor((Date.now() - (ticketCurrentData?.createdAt?.getTime() || Date.now())) / 1000),
+              }),
+            },
+          });
+
+          // Emitir eventos de socket
+          const io = (global as any).io;
+          if (io) {
+            const normalizedAiMessage = {
+              ...aiMessage,
+              mediaUrl: normalizeMediaUrl(aiMessage.mediaUrl),
+            };
+            io.to(`ticket:${ticket.id}`).emit('message:sent', normalizedAiMessage);
+            io.to(`ticket:${ticket.id}`).emit('message:new', normalizedAiMessage);
+          }
+
+          logger.info(`[ExternalAI] Auto-reply sent for ticket ${ticket.id}: "${response.response.text.substring(0, 50)}..."`);
+        } else {
+          logger.warn(`[ExternalAI] No active WhatsApp connection found to send auto-reply for ticket ${ticket.id}`);
+        }
+      } catch (error: any) {
+        logger.error(`[ExternalAI] Error sending auto-reply for ticket ${ticket.id}:`, {
+          message: error?.message,
+          stack: error?.stack,
+        });
+      }
+    }
+
+    // ========================================================================
+    // 2. Escalar para humano se a IA pediu
+    // ========================================================================
+    if (autoEscalate && response.escalation?.needed) {
+      try {
+        const escalation = response.escalation;
+        logger.info(`[ExternalAI] Escalation requested for ticket ${ticket.id}:`, {
+          reason: escalation.reason,
+          priority: escalation.priority,
+          toDepartmentId: escalation.toDepartmentId,
+          toUserId: escalation.toUserId,
+        });
+
+        // Determinar para onde transferir
+        const toDepartmentId = escalation.toDepartmentId || config.escalateDepartmentId || null;
+        const toUserId = escalation.toUserId || null;
+
+        const updateData: any = {
+          status: 'PENDING',
+          isAIHandled: false,
+          humanTakeoverAt: new Date(),
+          assignedToId: toUserId || null,
+        };
+
+        if (toDepartmentId) {
+          updateData.departmentId = toDepartmentId;
+        }
+
+        // Se não temos departamento nem usuário específico, mantemos no mesmo departamento
+        // mas tiramos a atribuição da IA
+        const updatedTicket = await prisma.ticket.update({
+          where: { id: ticket.id },
+          data: updateData,
+          include: {
+            contact: {
+              select: { id: true, name: true, phone: true, avatar: true },
+            },
+            assignedTo: {
+              select: { id: true, name: true, avatar: true, isAI: true },
+            },
+            department: {
+              select: { id: true, name: true, color: true },
+            },
+          },
+        });
+
+        // Criar registro de transferência
+        await prisma.ticketTransfer.create({
+          data: {
+            ticketId: ticket.id,
+            fromUserId: aiUser.id,
+            toUserId: toUserId,
+            fromDeptId: ticket.departmentId,
+            toDeptId: toDepartmentId,
+            transferType: toDepartmentId ? 'DEPT_TO_DEPT' : 'USER_TO_USER',
+            reason: escalation.reason || 'Escalated by external AI',
+          },
+        });
+
+        // Criar mensagem de sistema
+        const reason = escalation.reason || 'Escalada solicitada pela IA';
+        let toName = '';
+        if (toUserId) {
+          const toUser = await prisma.user.findUnique({ where: { id: toUserId }, select: { name: true } });
+          toName = toUser?.name || 'atendente humano';
+        } else if (toDepartmentId) {
+          const toDept = await prisma.department.findUnique({ where: { id: toDepartmentId }, select: { name: true } });
+          toName = `departamento ${toDept?.name || ''}`;
+        } else {
+          toName = 'atendente humano';
+        }
+
+        const systemMessage = await prisma.message.create({
+          data: {
+            type: 'SYSTEM',
+            content: `${aiUser.name} (IA) transferiu o atendimento para ${toName}. Motivo: ${reason}`,
+            isFromMe: true,
+            status: 'DELIVERED',
+            ticketId: ticket.id,
+            connectionId: ticket.connectionId,
+          },
+        });
+
+        // Criar atividade
+        await prisma.activity.create({
+          data: {
+            type: 'TICKET_TRANSFERRED',
+            description: `Ticket escalated by external AI ${aiUser.name}: ${reason}`,
+            ticketId: ticket.id,
+            userId: aiUser.id,
+            metadata: { reason, priority: escalation.priority, toDepartmentId, toUserId },
+          },
+        });
+
+        // Emitir eventos de socket
+        const io = (global as any).io;
+        if (io) {
+          io.to(`company:${companyId}`).emit('ticket:transferred', {
+            ticketId: ticket.id,
+            fromUserId: aiUser.id,
+            toUserId: toUserId,
+            toDepartmentId,
+          });
+          io.to(`company:${companyId}`).emit('ticket:updated', {
+            ...updatedTicket,
+            _count: { messages: 0 },
+          });
+          io.to(`ticket:${ticket.id}`).emit('message:received', { message: systemMessage });
+
+          // Notificar usuário alvo
+          if (toUserId) {
+            io.to(`user:${toUserId}`).emit('notification', {
+              type: 'ticket_assigned',
+              title: 'Conversa escalada pela IA',
+              message: `${aiUser.name} transferiu uma conversa com ${updatedTicket.contact?.name || 'cliente'} para você`,
+              ticketId: ticket.id,
+              createdAt: new Date().toISOString(),
+              read: false,
+            });
+          }
+        }
+
+        logger.info(`[ExternalAI] Ticket ${ticket.id} escalated to ${toName} by ${aiUser.name}`);
+      } catch (error: any) {
+        logger.error(`[ExternalAI] Error escalating ticket ${ticket.id}:`, {
+          message: error?.message,
+          stack: error?.stack,
+        });
+      }
+    }
+
+    // ========================================================================
+    // 3. Resolver/fechar o ticket se a IA pediu
+    // ========================================================================
+    if (response.action === 'RESOLVE') {
+      try {
+        logger.info(`[ExternalAI] Resolve requested for ticket ${ticket.id} by ${aiUser.name}`);
+
+        // Enviar mensagem de despedida se houver texto na resposta
+        if (autoReply && response.response?.text) {
+          let connection = ticket.connection;
+          if (!connection) {
+            connection = await prisma.whatsAppConnection.findUnique({
+              where: { id: ticket.connectionId },
+            });
+          }
+
+          if (!connection || connection.status !== 'CONNECTED' || !connection.isActive) {
+            connection = await prisma.whatsAppConnection.findFirst({
+              where: { companyId, status: 'CONNECTED', isActive: true },
+              orderBy: [{ isDefault: 'desc' }, { lastConnected: 'desc' }],
+            });
+          }
+
+          if (connection) {
+            const whatsappService = new WhatsAppService(connection);
+            const aiName = aiUser.name || 'Assistente IA';
+            const formattedMessage = `*${aiName}:*\n${response.response.text}`;
+
+            const sendResult = await whatsappService.sendMessage(ticket.contact.phone, formattedMessage);
+
+            const aiMessage = await prisma.message.create({
+              data: {
+                type: 'TEXT',
+                content: response.response.text,
+                isFromMe: true,
+                isAIGenerated: true,
+                status: 'SENT',
+                wamid: sendResult.messageId,
+                sentAt: new Date(),
+                ticketId: ticket.id,
+                senderId: aiUser.id,
+                connectionId: connection.id,
+              },
+              include: {
+                sender: { select: { id: true, name: true, avatar: true, isAI: true } },
+              },
+            });
+
+            const io = (global as any).io;
+            if (io) {
+              const normalizedMsg = { ...aiMessage, mediaUrl: normalizeMediaUrl(aiMessage.mediaUrl) };
+              io.to(`ticket:${ticket.id}`).emit('message:sent', normalizedMsg);
+              io.to(`ticket:${ticket.id}`).emit('message:new', normalizedMsg);
+            }
+
+            logger.info(`[ExternalAI] Farewell message sent for ticket ${ticket.id}: "${response.response.text.substring(0, 50)}..."`);
+          }
+        }
+
+        // Resolver o ticket
+        const resolutionSummary = response.resolution?.summary || `Atendimento finalizado por ${aiUser.name} (IA)`;
+        const resolutionReason = response.resolution?.reason || 'Conversa concluída pela IA';
+
+        const updatedTicket = await prisma.ticket.update({
+          where: { id: ticket.id },
+          data: {
+            status: 'RESOLVED' as const,
+            resolvedAt: new Date(),
+            isAIHandled: false,
+            resolutionNote: resolutionReason,
+          },
+          include: {
+            contact: { select: { id: true, name: true, phone: true, avatar: true } },
+            assignedTo: { select: { id: true, name: true, avatar: true, isAI: true } },
+            department: { select: { id: true, name: true, color: true } },
+          },
+        });
+
+        // Criar mensagem de sistema
+        const systemMessage = await prisma.message.create({
+          data: {
+            type: 'SYSTEM',
+            content: `✅ Atendimento resolvido por ${aiUser.name} (IA)\n\n📋 Resumo: ${resolutionSummary}`,
+            isFromMe: true,
+            status: 'DELIVERED',
+            ticketId: ticket.id,
+            connectionId: ticket.connectionId,
+          },
+        });
+
+        // Criar atividade
+        await prisma.activity.create({
+          data: {
+            type: 'TICKET_RESOLVED',
+            description: `Ticket resolved by external AI ${aiUser.name}`,
+            ticketId: ticket.id,
+            userId: aiUser.id,
+            metadata: { summary: resolutionSummary, reason: resolutionReason },
+          },
+        });
+
+        // Emitir eventos de socket
+        const io = (global as any).io;
+        if (io) {
+          io.to(`company:${companyId}`).emit('ticket:updated', {
+            ...updatedTicket,
+            _count: { messages: 0 },
+          });
+          io.to(`ticket:${ticket.id}`).emit('ticket:statusChanged', {
+            ticketId: ticket.id,
+            status: 'RESOLVED',
+            resolvedAt: updatedTicket.resolvedAt,
+          });
+          io.to(`ticket:${ticket.id}`).emit('message:received', { message: systemMessage });
+        }
+
+        logger.info(`[ExternalAI] Ticket ${ticket.id} resolved by ${aiUser.name}. Summary: ${resolutionSummary.substring(0, 100)}`);
+      } catch (error: any) {
+        logger.error(`[ExternalAI] Error resolving ticket ${ticket.id}:`, {
+          message: error?.message,
+          stack: error?.stack,
+        });
+      }
     }
   }
 
@@ -1240,6 +1723,28 @@ export class MessageProcessor {
         }
 
         logger.info(`AI response generated (first 200 chars): ${finalResponse.slice(0, 200)}`);
+
+        // =================================================================
+        // DETECÇÃO DIRETA de intenção de transferência no texto gerado
+        // Isso é mais confiável que o postAnalysis para padrões óbvios
+        // =================================================================
+        const transferPatterns = [
+          /vou transferir voc[eê]/i,
+          /transferindo para/i,
+          /vou te encaminhar/i,
+          /vou conectar voc[eê]/i,
+          /direcionando seu atendimento/i,
+          /TRANSFERINDO PARA:/i,
+          /vou passar voc[eê] para/i,
+          /encaminhando para/i,
+          /vou te direcionar/i,
+          /transferir.{0,30}(comercial|suporte|financeiro|atendente|especialista|consultor)/i,
+        ];
+        const directTransferDetected = transferPatterns.some(p => p.test(finalResponse));
+
+        if (directTransferDetected) {
+          logger.info('DIRECT TRANSFER DETECTION: Transfer intent detected in AI response text, forcing transfer');
+        }
         
         // POST-ANALYSIS: Check if generated response indicates transfer
         logger.info('TransferAnalyzer: Starting post-analysis on AI response');
@@ -1251,10 +1756,15 @@ export class MessageProcessor {
           companyId
         );
 
-        if (postAnalysis.shouldTransfer) {
-          logger.info('TransferAnalyzer: POST-ANALYSIS decided to TRANSFER', {
+        // Forçar transferência se detecção direta encontrou padrão, mesmo que postAnalysis discorde
+        const shouldTransfer = postAnalysis.shouldTransfer || directTransferDetected;
+
+        if (shouldTransfer) {
+          logger.info('TransferAnalyzer: TRANSFER decided', {
             department: postAnalysis.departmentName,
             reason: postAnalysis.reason,
+            directDetection: directTransferDetected,
+            postAnalysisAgrees: postAnalysis.shouldTransfer,
           });
 
           try {
@@ -1318,7 +1828,15 @@ export class MessageProcessor {
     let lastMessage: any = null;
 
     for (let i = 0; i < finalParts.length; i++) {
-      const part = finalParts[i];
+      // Filtrar blocos de "nota interna" que a IA pode gerar indevidamente (ex: ---TRANSFERINDO PARA:)
+      const cleanedPart = finalParts[i]
+        .replace(/---\s*\n?\*?\*?TRANSFERINDO PARA:[\s\S]*$/i, '')
+        .replace(/---\s*\n?\*?\*?TRANSFER[ÊE]NCIA:[\s\S]*$/i, '')
+        .replace(/\*?\*?TRANSFERINDO PARA:\s*[\s\S]*$/i, '')
+        .trim();
+      if (!cleanedPart) continue; // Pula partes que só tinham nota interna
+
+      const part = cleanedPart;
       
       // Add delay between messages to simulate human typing (except for first message)
       if (i > 0) {
@@ -1483,6 +2001,17 @@ export class MessageProcessor {
     if (departmentId) {
       updateData.departmentId = departmentId;
       logger.info(`Transferring ticket ${ticketId} to department ${departmentId}`);
+
+      // Check if the target department has an external AI user
+      const externalAI = await ExternalAIWebhookService.findExternalAIForDepartment(departmentId);
+      if (externalAI) {
+        logger.info(`[ExternalAI] Department ${departmentId} has external AI: ${externalAI.name} (${externalAI.id})`);
+        updateData.assignedToId = externalAI.id;
+        updateData.isAIHandled = true;
+        updateData.status = 'IN_PROGRESS';
+        updateData.humanTakeoverAt = null;
+        updateData.aiTakeoverAt = new Date();
+      }
     }
 
     // Update ticket status
@@ -1497,6 +2026,7 @@ export class MessageProcessor {
             phone: true,
             avatar: true,
             isClient: true,
+            email: true,
           },
         },
         assignedTo: {
@@ -1531,9 +2061,11 @@ export class MessageProcessor {
     await prisma.activity.create({
       data: {
         type: 'AI_TAKEOVER',
-        description: departmentId 
-          ? `AI transferred to department ${updatedTicket.department?.name || 'Unknown'}`
-          : 'AI transferred to human queue',
+        description: updateData.isAIHandled
+          ? `AI transferred to external AI ${updatedTicket.assignedTo?.name || 'Unknown'} in department ${updatedTicket.department?.name || 'Unknown'}`
+          : departmentId 
+            ? `AI transferred to department ${updatedTicket.department?.name || 'Unknown'}`
+            : 'AI transferred to human queue',
         ticketId,
       },
     });
@@ -1553,20 +2085,71 @@ export class MessageProcessor {
         ticketId,
         departmentId: updatedTicket.departmentId,
         departmentName: updatedTicket.department?.name,
-        reason: 'AI_TO_HUMAN',
+        reason: updateData.isAIHandled ? 'AI_TO_EXTERNAL_AI' : 'AI_TO_HUMAN',
       });
 
       // Notify the specific ticket room
       io.to(`ticket:${ticketId}`).emit('ticket:statusChanged', {
         ticketId,
-        status: 'PENDING',
+        status: updatedTicket.status,
         departmentId: updatedTicket.departmentId,
         departmentName: updatedTicket.department?.name,
-        assignedToId: null,
-        isAIHandled: false,
+        assignedToId: updatedTicket.assignedToId,
+        isAIHandled: updatedTicket.isAIHandled,
       });
     }
+
+    // If assigned to external AI, send webhook and process synchronous response
+    if (updateData.isAIHandled && updateData.assignedToId) {
+      const externalAIUser = await prisma.user.findUnique({
+        where: { id: updateData.assignedToId },
+        select: { id: true, name: true, aiConfig: true },
+      });
+      if (externalAIUser && ExternalAIWebhookService.isExternalAI(externalAIUser.aiConfig)) {
+        try {
+          const webhookResult = await ExternalAIWebhookService.sendTicketAssigned(
+            externalAIUser,
+            {
+              id: updatedTicket.id,
+              protocol: updatedTicket.protocol,
+              status: updatedTicket.status,
+              departmentId: updatedTicket.departmentId,
+              department: updatedTicket.department,
+              contact: updatedTicket.contact as any,
+            }
+          );
+
+          // Processar resposta síncrona da IA externa (se ela respondeu)
+          if (webhookResult.success && webhookResult.data) {
+            logger.info(`[ExternalAI] Processing synchronous response from ticket.assigned webhook for ticket ${updatedTicket.id}`);
+            await this.processExternalAIResponse(
+              webhookResult.data,
+              {
+                id: updatedTicket.id,
+                protocol: updatedTicket.protocol,
+                status: updatedTicket.status,
+                departmentId: updatedTicket.departmentId,
+                department: updatedTicket.department as any,
+                contact: updatedTicket.contact as any,
+                connectionId,
+              },
+              {
+                id: externalAIUser.id,
+                name: externalAIUser.name || 'IA Externa',
+                aiConfig: externalAIUser.aiConfig,
+              },
+              companyId
+            );
+          }
+        } catch (webhookError: any) {
+          logger.error(`[ExternalAI] Error sending/processing ticket.assigned webhook for ticket ${updatedTicket.id}:`, {
+            message: webhookError?.message,
+            stack: webhookError?.stack?.slice(0, 500),
+          });
+        }
+      }
+    }
     
-    logger.info(`Ticket ${ticketId} transferred to human queue${departmentId ? ` (department: ${updatedTicket.department?.name})` : ''}`);
+    logger.info(`Ticket ${ticketId} transferred${updateData.isAIHandled ? ` to external AI ${updatedTicket.assignedTo?.name}` : ` to human queue`}${departmentId ? ` (department: ${updatedTicket.department?.name})` : ''}`);
   }
 }
