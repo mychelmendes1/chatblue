@@ -6,7 +6,12 @@
 
 set -e
 
-APP_DIR="/opt/chatblue/app"
+# Se o script for executado da raiz do repo (onde está .git), usar esse diretório
+if [ -d .git ]; then
+  APP_DIR="$(pwd)"
+else
+  APP_DIR="/opt/chatblue/app"
+fi
 BACKUP_DIR="/opt/chatblue/backups"
 LOG_FILE="/opt/chatblue/logs/deploy-$(date +%Y%m%d-%H%M%S).log"
 
@@ -51,10 +56,14 @@ if [ -f "$BACKUP_FILE" ]; then
     log "Backup salvo em: ${BACKUP_FILE}.gz"
 fi
 
-# 2. Pull das mudanças
-log "Baixando atualizações do Git..."
-git fetch origin
-git pull origin main
+# 2. Pull das mudanças (se for um repositório git)
+if [ -d .git ]; then
+  log "Baixando atualizações do Git..."
+  git config --global --add safe.directory "$(pwd)" 2>/dev/null || true
+  git fetch origin && git pull origin main || log "Aviso: git pull falhou (código pode ter sido enviado por rsync)."
+else
+  log "Deploy sem Git (código atualizado por rsync/cópia)."
+fi
 
 # 3. Instalar dependências
 log "Instalando dependências..."
@@ -73,7 +82,7 @@ pnpm build
 
 # 6. Reiniciar PM2
 log "Reiniciando serviços..."
-pm2 reload ecosystem.config.js --update-env
+pm2 reload deploy/ecosystem.config.js --update-env
 
 # 7. Verificar saúde
 log "Verificando saúde dos serviços..."
