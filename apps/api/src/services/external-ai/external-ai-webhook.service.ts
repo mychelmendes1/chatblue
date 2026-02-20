@@ -34,6 +34,10 @@ export interface WebhookPayload {
     type: string;
     timestamp: string;
   }>;
+  /** Resumo do histórico para a IA iniciar o atendimento (formato chatblue) */
+  summary?: string;
+  /** Instrução para a IA iniciar o atendimento (formato chatblue) */
+  instruction?: string;
 }
 
 // ============================================================================
@@ -626,8 +630,18 @@ export class ExternalAIWebhookService {
       const result = await this.sendWebhookWithResponse(config.webhookUrl, blueChatPayload, config);
       return result;
     } else {
-      const success = await this.sendWebhook(config.webhookUrl, payload, config.webhookSecret);
-      return { success };
+      // Formato chatblue: enviar resumo e instrução para a IA iniciar o atendimento; aceitar resposta síncrona opcional
+      const historySummary = this.generateHistorySummary(conversation, 30, 500);
+      (payload as WebhookPayload).summary = historySummary ?? undefined;
+      (payload as WebhookPayload).instruction = 'Inicie o atendimento com o cliente com base no contexto acima.';
+
+      const result = await this.sendWebhookWithResponse(
+        config.webhookUrl,
+        payload,
+        config,
+        25000
+      );
+      return result;
     }
   }
 

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Search, FileText, Loader2, ChevronRight, X, Send } from "lucide-react";
+import { Search, FileText, Loader2, ChevronRight, X, Send, RefreshCw } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -49,6 +49,7 @@ interface TemplateSelectorProps {
 export function TemplateSelector({ connectionId, onSelect, onCancel }: TemplateSelectorProps) {
   const [templates, setTemplates] = useState<Template[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [search, setSearch] = useState("");
   const [selectedTemplate, setSelectedTemplate] = useState<Template | null>(null);
   const [variables, setVariables] = useState<Record<string, string>>({});
@@ -69,6 +70,20 @@ export function TemplateSelector({ connectionId, onSelect, onCancel }: TemplateS
       setError(error.message || "Falha ao carregar templates");
     } finally {
       setIsLoading(false);
+    }
+  }
+
+  async function handleRefreshTemplates() {
+    setIsRefreshing(true);
+    setError(null);
+    try {
+      const response = await api.get<{ templates: Template[] }>(`/connections/${connectionId}/templates`);
+      setTemplates(response.data.templates || []);
+    } catch (error: any) {
+      console.error("Failed to refresh templates:", error);
+      setError(error.message || "Falha ao atualizar templates");
+    } finally {
+      setIsRefreshing(false);
     }
   }
 
@@ -290,14 +305,25 @@ export function TemplateSelector({ connectionId, onSelect, onCancel }: TemplateS
         </Button>
       </div>
 
-      <div className="relative">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-        <Input
-          placeholder="Buscar template..."
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          className="pl-9"
-        />
+      <div className="flex gap-2">
+        <div className="relative flex-1">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+          <Input
+            placeholder="Buscar template..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="pl-9"
+          />
+        </div>
+        <Button
+          variant="outline"
+          size="icon"
+          onClick={handleRefreshTemplates}
+          disabled={isRefreshing}
+          title="Atualizar lista de templates da Meta"
+        >
+          <RefreshCw className={cn("w-4 h-4", isRefreshing && "animate-spin")} />
+        </Button>
       </div>
 
       {templates.length === 0 ? (
@@ -305,7 +331,7 @@ export function TemplateSelector({ connectionId, onSelect, onCancel }: TemplateS
           <FileText className="w-12 h-12 mx-auto mb-2 opacity-50" />
           <p>Nenhum template encontrado</p>
           <p className="text-xs mt-1">
-            Cadastre templates no Meta Business Manager
+            Cadastre templates no Meta Business Manager ou use o botão ao lado da busca para atualizar a lista.
           </p>
         </div>
       ) : filteredTemplates.length === 0 ? (

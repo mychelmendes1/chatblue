@@ -1,4 +1,4 @@
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
+const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001";
 
 class ApiClient {
   private baseUrl: string;
@@ -42,7 +42,16 @@ class ApiClient {
 
     if (!response.ok) {
       const error = await response.json().catch(() => ({}));
-      throw new Error(error.message || error.error || "Request failed");
+      const message =
+        error?.message ||
+        error?.error ||
+        (error?.details?.length
+          ? `Validação: ${error.details.map((d: { field?: string; message?: string }) => d.message || d.field).join(", ")}`
+          : null) ||
+        (response.status === 403 ? "Sem permissão para esta ação" : null) ||
+        (response.status === 401 ? "Sessão expirada. Faça login novamente." : null) ||
+        `Erro ${response.status}`;
+      throw new Error(message);
     }
 
     const result = await response.json();

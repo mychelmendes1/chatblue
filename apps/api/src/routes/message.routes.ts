@@ -5,9 +5,11 @@ import { authenticate } from '../middlewares/auth.middleware.js';
 import { ensureTenant } from '../middlewares/tenant.middleware.js';
 import { NotFoundError } from '../middlewares/error.middleware.js';
 import { WhatsAppService } from '../services/whatsapp/whatsapp.service.js';
+import { InstagramService } from '../services/instagram/instagram.service.js';
 import { logger } from '../config/logger.js';
 import { normalizeMediaUrl } from '../utils/media-url.util.js';
 import { translateMetaError, getErrorSuggestion } from '../utils/meta-error-translator.js';
+import { sendOutboundEvent } from '../services/outbound-webhook.service.js';
 
 const router = Router();
 
@@ -98,7 +100,9 @@ router.get('/ticket/:ticketId', authenticate, ensureTenant, async (req, res, nex
     const page = parseInt(req.query.page as string) || 1;
     const requestedLimit = parseInt(req.query.limit as string) || 100;
     const limit = Math.min(requestedLimit, 500); // Max 500 per request
-    const includeHistory = req.query.includeHistory === 'true';
+    const includeHistoryParam = req.query.includeHistory;
+    const includeHistoryContact = includeHistoryParam === 'contact';
+    const includeHistoryChain = includeHistoryParam === 'true';
 
     const ticket = await prisma.ticket.findFirst({
       where: {
@@ -111,19 +115,32 @@ router.get('/ticket/:ticketId', authenticate, ensureTenant, async (req, res, nex
       throw new NotFoundError('Ticket not found');
     }
 
-    // Collect all ticket IDs for history (current + previous tickets)
-    const ticketIds: string[] = [req.params.ticketId];
-    
-    if (includeHistory) {
-      // Walk back through the ticket chain to get all previous tickets
-      let currentTicket = ticket;
-      while (currentTicket.previousTicketId) {
-        ticketIds.unshift(currentTicket.previousTicketId); // Add to beginning
-        const prevTicket = await prisma.ticket.findUnique({
-          where: { id: currentTicket.previousTicketId },
-        });
-        if (!prevTicket) break;
-        currentTicket = prevTicket;
+    let ticketIds: string[];
+
+    if (includeHistoryContact) {
+      // All tickets for the same contact (full conversation history with the company)
+      const contactTickets = await prisma.ticket.findMany({
+        where: {
+          companyId: req.user!.companyId,
+          contactId: ticket.contactId,
+        },
+        select: { id: true },
+        orderBy: { createdAt: 'asc' },
+      });
+      ticketIds = contactTickets.map((t) => t.id);
+    } else {
+      // Current ticket only, or chain via previousTicketId
+      ticketIds = [req.params.ticketId];
+      if (includeHistoryChain) {
+        let currentTicket = ticket;
+        while (currentTicket.previousTicketId) {
+          ticketIds.unshift(currentTicket.previousTicketId);
+          const prevTicket = await prisma.ticket.findUnique({
+            where: { id: currentTicket.previousTicketId },
+          });
+          if (!prevTicket) break;
+          currentTicket = prevTicket;
+        }
       }
     }
 
@@ -260,6 +277,16 @@ router.post('/ticket/:ticketId', authenticate, ensureTenant, async (req, res, ne
       },
     });
 
+    sendOutboundEvent(req.user!.companyId, 'message_created', {
+      ticketId: ticket.id,
+      companyId: req.user!.companyId,
+      messageId: message.id,
+      type: message.type,
+      content: message.content ?? undefined,
+      isFromMe: message.isFromMe,
+      createdAt: message.createdAt.toISOString(),
+    });
+
     let updatedMessage = message;
 
     // Only send to WhatsApp if not internal
@@ -282,12 +309,22 @@ router.post('/ticket/:ticketId', authenticate, ensureTenant, async (req, res, ne
         });
       }
 
-      // Send via WhatsApp
-      const whatsappService = new WhatsAppService(connectionToUse);
-      // Note: sendMessage only accepts text, type is used to determine message type in DB
-      
+      // Recipient: for Instagram use instagramId (or phone, which may store PSID); for WhatsApp use phone
+      const recipientId = connectionToUse.type === 'INSTAGRAM'
+        ? (ticket.contact.instagramId || ticket.contact.phone)
+        : ticket.contact.phone;
+
       try {
-        const result = await whatsappService.sendMessage(ticket.contact.phone, formattedContent);
+        let result: { messageId: string };
+        if (connectionToUse.type === 'INSTAGRAM') {
+          const instagramService = new InstagramService(connectionToUse);
+          result = await instagramService.sendTextMessage(recipientId, formattedContent);
+        } else {
+          const whatsappService = new WhatsAppService(connectionToUse);
+          result = await whatsappService.sendMessage(recipientId, formattedContent, {
+            quotedMessageId: quotedId || undefined,
+          });
+        }
 
         // Update message with WhatsApp ID and SENT status
         updatedMessage = await prisma.message.update({
@@ -574,6 +611,16 @@ router.post('/ticket/:ticketId/media', authenticate, ensureTenant, async (req, r
         connectionId: ticket.connectionId,
       },
     });
+    sendOutboundEvent(req.user!.companyId, 'message_created', {
+      ticketId: ticket.id,
+      companyId: req.user!.companyId,
+      messageId: message.id,
+      type: message.type,
+      content: message.caption ?? undefined,
+      mediaUrl: message.mediaUrl ?? undefined,
+      isFromMe: message.isFromMe,
+      createdAt: message.createdAt.toISOString(),
+    });
 
     // Get active connection for ticket (will find and update if needed)
     const { connection: connectionToUse, updated: connectionUpdated } = await getActiveConnectionForTicket(ticket);
@@ -586,32 +633,51 @@ router.post('/ticket/:ticketId/media', authenticate, ensureTenant, async (req, r
       });
     }
 
-    // Send via WhatsApp
-    // Normalize URL to HTTPS before sending - Baileys needs to download the file
+    // Normalize URL to HTTPS before sending
     const normalizedMediaUrl = normalizeMediaUrl(mediaUrl) || mediaUrl;
-    const originalMediaUrl = message.mediaUrl; // Store original URL for comparison
-    
-    const whatsappService = new WhatsAppService(connectionToUse);
-    const result = await whatsappService.sendMedia(
-      ticket.contact.phone,
-      normalizedMediaUrl,
-      mediaType,
-      caption
-    );
+    const originalMediaUrl = message.mediaUrl;
+    const recipientId = connectionToUse.type === 'INSTAGRAM'
+      ? (ticket.contact.instagramId || ticket.contact.phone)
+      : ticket.contact.phone;
 
-    // Update message with WhatsApp ID, status, and final media URL (converted if audio)
-    // For audio files, result.finalMediaUrl will be the converted OGG file URL
+    let result: { messageId: string; finalMediaUrl?: string };
+    if (connectionToUse.type === 'INSTAGRAM') {
+      const instagramService = new InstagramService(connectionToUse);
+      switch (mediaType) {
+        case 'IMAGE':
+          result = await instagramService.sendImageMessage(recipientId, normalizedMediaUrl);
+          break;
+        case 'VIDEO':
+          result = await instagramService.sendVideoMessage(recipientId, normalizedMediaUrl);
+          break;
+        case 'AUDIO':
+          result = await instagramService.sendAudioMessage(recipientId, normalizedMediaUrl);
+          break;
+        case 'DOCUMENT':
+          result = await instagramService.sendFileMessage(recipientId, normalizedMediaUrl);
+          break;
+        default:
+          result = await instagramService.sendTextMessage(recipientId, caption || '[Mídia]');
+      }
+    } else {
+      const whatsappService = new WhatsAppService(connectionToUse);
+      result = await whatsappService.sendMedia(
+        recipientId,
+        normalizedMediaUrl,
+        mediaType,
+        caption
+      );
+    }
+
+    // Update message with external message ID and status
     logger.info(`[Media Send] result.finalMediaUrl: ${result.finalMediaUrl}, originalMediaUrl: ${originalMediaUrl}, normalizedMediaUrl: ${normalizedMediaUrl}`);
-    
+
     const updateData: any = {
       wamid: result.messageId,
       status: 'SENT',
       sentAt: new Date(),
     };
-    
-    // If audio was converted, update mediaUrl to point to the converted OGG file
-    // Compare with original URL (before normalization) to detect conversion
-    const finalUrl = result.finalMediaUrl || normalizedMediaUrl;
+
     if (result.finalMediaUrl && result.finalMediaUrl !== originalMediaUrl && result.finalMediaUrl.includes('audio-converted')) {
       updateData.mediaUrl = result.finalMediaUrl;
       logger.info(`[Media Send] ✅ Updating message mediaUrl to converted file: ${result.finalMediaUrl} (was: ${originalMediaUrl})`);
@@ -756,6 +822,15 @@ router.post('/template', authenticate, ensureTenant, async (req, res, next) => {
           },
         },
       },
+    });
+    sendOutboundEvent(req.user!.companyId, 'message_created', {
+      ticketId: ticket.id,
+      companyId: req.user!.companyId,
+      messageId: message.id,
+      type: message.type,
+      content: message.content ?? undefined,
+      isFromMe: message.isFromMe,
+      createdAt: message.createdAt.toISOString(),
     });
 
     // Send via WhatsApp

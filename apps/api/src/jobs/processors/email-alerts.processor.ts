@@ -54,6 +54,7 @@ export async function emailAlertsProcessor(_job: Job): Promise<{ connectionAlert
         connectionName: conn.name,
         companyName: conn.company.name,
         connectionsUrl,
+        disconnectedAt: conn.updatedAt.toISOString(),
       });
 
       if (sent) {

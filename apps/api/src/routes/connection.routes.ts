@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { prisma } from '../config/database.js';
+import { logger } from '../config/logger.js';
 import { authenticate, requireAdmin } from '../middlewares/auth.middleware.js';
 import { ensureTenant } from '../middlewares/tenant.middleware.js';
 import { NotFoundError } from '../middlewares/error.middleware.js';
@@ -270,6 +271,7 @@ router.post('/instagram', authenticate, requireAdmin, ensureTenant, async (req, 
     // Test connection and get account info
     const instagramService = new InstagramService(connection);
     const isValid = await instagramService.testConnection();
+    logger.info(`[POST /connections/instagram] Connection ${connection.id} (${data.name}), testConnection: ${isValid}`);
 
     let instagramUsername: string | undefined;
     if (isValid) {
@@ -364,10 +366,7 @@ router.post('/:id/connect', authenticate, requireAdmin, ensureTenant, async (req
       await baileysService.connect();
     } else if (connection.type === 'META_CLOUD') {
       const metaService = new MetaCloudService(connection);
-      await metaService.testConnection();
-    } else if (connection.type === 'INSTAGRAM') {
-      const instagramService = new InstagramService(connection);
-      const isValid = await instagramService.testConnection();
+      const isValid = await metaService.testConnection();
       if (isValid) {
         await prisma.whatsAppConnection.update({
           where: { id: connection.id },
@@ -375,14 +374,95 @@ router.post('/:id/connect', authenticate, requireAdmin, ensureTenant, async (req
         });
         return res.json({ message: 'Connected' });
       }
+      await prisma.whatsAppConnection.update({
+        where: { id: connection.id },
+        data: { status: 'DISCONNECTED' },
+      });
+      return res.status(400).json({ message: 'Falha ao validar conexão com a Meta. Verifique o token e a configuração.' });
+    } else if (connection.type === 'INSTAGRAM') {
+      const instagramService = new InstagramService(connection);
+      const result = await instagramService.testConnection();
+      logger.info(`[POST /connections/:id/connect] Instagram ${connection.id} (${connection.name}), valid: ${result.valid}, error: ${result.error || 'none'}`);
+      if (result.valid) {
+        const accountInfo = await instagramService.getAccountInfo();
+        await prisma.whatsAppConnection.update({
+          where: { id: connection.id },
+          data: {
+            status: 'CONNECTED',
+            lastConnected: new Date(),
+            ...(accountInfo?.username && { instagramUsername: accountInfo.username }),
+          },
+        });
+        return res.json({ message: 'Connected', instagramUsername: accountInfo?.username });
+      }
+      await prisma.whatsAppConnection.update({
+        where: { id: connection.id },
+        data: { status: 'DISCONNECTED' },
+      });
+      return res.status(400).json({
+        message: `Falha ao validar conexão com o Instagram: ${result.error || 'Verifique o token e o Instagram Account ID.'}`,
+      });
     }
 
-    await prisma.whatsAppConnection.update({
-      where: { id: connection.id },
-      data: { status: 'CONNECTING' },
-    });
+    // Apenas Baileys chega aqui: aguardando QR code (Instagram/Meta nunca devem ficar CONNECTING)
+    if (connection.type === 'BAILEYS') {
+      await prisma.whatsAppConnection.update({
+        where: { id: connection.id },
+        data: { status: 'CONNECTING' },
+      });
+      return res.json({ message: 'Connecting...' });
+    }
 
-    res.json({ message: 'Connecting...' });
+    // Fallback: se não for Baileys e não entrou nos branches acima, manter estado e retornar erro
+    return res.status(400).json({ message: 'Tipo de conexão não suportado para esta ação.' });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Refresh status (corrige Instagram/Meta presos em CONNECTING)
+router.post('/:id/refresh', authenticate, ensureTenant, async (req, res, next) => {
+  try {
+    const whereClause: any = { id: req.params.id };
+    if (req.user!.role !== 'SUPER_ADMIN') {
+      whereClause.companyId = req.user!.companyId;
+    }
+    const connection = await prisma.whatsAppConnection.findFirst({ where: whereClause });
+    if (!connection) {
+      throw new NotFoundError('Connection not found');
+    }
+    if (connection.type === 'INSTAGRAM') {
+      const instagramService = new InstagramService(connection);
+      const result = await instagramService.testConnection();
+      logger.info(`[POST /connections/:id/refresh] Instagram ${connection.id}, valid: ${result.valid}, error: ${result.error || 'none'}`);
+      if (result.valid) {
+        const accountInfo = await instagramService.getAccountInfo();
+        await prisma.whatsAppConnection.update({
+          where: { id: connection.id },
+          data: {
+            status: 'CONNECTED',
+            lastConnected: new Date(),
+            ...(accountInfo?.username && { instagramUsername: accountInfo.username }),
+          },
+        });
+        return res.json({ status: 'CONNECTED', instagramUsername: accountInfo?.username });
+      }
+      await prisma.whatsAppConnection.update({
+        where: { id: connection.id },
+        data: { status: 'DISCONNECTED' },
+      });
+      return res.json({ status: 'DISCONNECTED', error: result.error });
+    }
+    if (connection.type === 'META_CLOUD') {
+      const metaService = new MetaCloudService(connection);
+      const isValid = await metaService.testConnection();
+      await prisma.whatsAppConnection.update({
+        where: { id: connection.id },
+        data: { status: isValid ? 'CONNECTED' : 'DISCONNECTED', ...(isValid && { lastConnected: new Date() }) },
+      });
+      return res.json({ status: isValid ? 'CONNECTED' : 'DISCONNECTED' });
+    }
+    return res.status(400).json({ message: 'Tipo de conexão não suporta refresh.' });
   } catch (error) {
     next(error);
   }

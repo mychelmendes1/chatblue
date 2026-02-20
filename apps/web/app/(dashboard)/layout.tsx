@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, usePathname } from "next/navigation";
 import { useAuthStore } from "@/stores/auth.store";
 import { Sidebar } from "@/components/layout/sidebar";
 import { Header } from "@/components/layout/header";
@@ -14,6 +14,7 @@ export default function DashboardLayout({
   children: React.ReactNode;
 }) {
   const router = useRouter();
+  const pathname = usePathname();
   const { user, isLoading, checkAuth } = useAuthStore();
 
   useEffect(() => {
@@ -22,9 +23,15 @@ export default function DashboardLayout({
 
   useEffect(() => {
     if (!isLoading && !user) {
-      router.push("/login");
+      // Preserve the current path so login can redirect back
+      const currentPath = pathname || "/chat";
+      if (currentPath !== "/chat" && currentPath !== "/") {
+        router.push(`/login?redirect=${encodeURIComponent(currentPath)}`);
+      } else {
+        router.push("/login");
+      }
     }
-  }, [user, isLoading, router]);
+  }, [user, isLoading, router, pathname]);
 
   if (isLoading) {
     return (

@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { cn, formatPhone } from "@/lib/utils";
 import { formatDistanceToNow } from "date-fns";
 import { ptBR } from "date-fns/locale";
+import { ConnectionTag } from "@/components/shared/connection-tag";
 
 export interface InboxTicket {
   id: string;
@@ -21,6 +22,7 @@ export interface InboxTicket {
     name?: string;
     phone: string;
     avatar?: string;
+    lastMessageAt?: string;
   };
   assignedTo?: {
     id: string;
@@ -32,6 +34,11 @@ export interface InboxTicket {
     id: string;
     name: string;
     color?: string;
+  } | null;
+  connection?: {
+    id: string;
+    name: string;
+    type?: string;
   } | null;
   _count?: {
     messages: number;
@@ -89,9 +96,9 @@ export function InboxCard({ ticket, onAtender, isAtendendo }: InboxCardProps) {
         </div>
       </div>
 
-      {/* Setor */}
-      {ticket.department && (
-        <div className="hidden sm:block flex-shrink-0">
+      {/* Setor + Conexão */}
+      <div className="hidden sm:flex items-center gap-1.5 flex-shrink-0">
+        {ticket.department && (
           <Badge
             variant="outline"
             style={{
@@ -101,8 +108,13 @@ export function InboxCard({ ticket, onAtender, isAtendendo }: InboxCardProps) {
           >
             {ticket.department.name}
           </Badge>
-        </div>
-      )}
+        )}
+        <ConnectionTag
+          connectionName={ticket.connection?.name}
+          connectionType={ticket.connection?.type}
+          lastMessageAt={ticket.contact?.lastMessageAt}
+        />
+      </div>
 
       {/* Mensagens */}
       <div className="hidden md:flex items-center gap-1 flex-shrink-0">

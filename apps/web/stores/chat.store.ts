@@ -7,6 +7,7 @@ interface Contact {
   phone: string;
   avatar?: string;
   isClient?: boolean;
+  lastMessageAt?: string;
 }
 
 export interface Message {
@@ -76,6 +77,7 @@ export interface Ticket {
   connection?: {
     id: string;
     name: string;
+    type?: string;
   };
   messages?: Message[];
   lastMessage?: Message;
@@ -170,22 +172,25 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   addMessage: (message) =>
     set((state) => {
-      // Avoid duplicates - check if message already exists
       if (state.messages.some((m) => m.id === message.id)) {
-        console.log("[Store] addMessage - Message already exists, skipping:", message.id);
         return state;
       }
-      console.log("[Store] addMessage - Adding message:", message.id, "Current count:", state.messages.length);
-      const newMessages = [...state.messages, message];
-      console.log("[Store] addMessage - New count:", newMessages.length);
-      return { messages: newMessages };
+      const url = (message as any).media_url ?? message.mediaUrl;
+      const normalized = {
+        ...message,
+        mediaUrl: normalizeMediaUrl(url) ?? undefined,
+      };
+      return { messages: [...state.messages, normalized] };
     }),
 
   updateMessage: (messageId, updates) =>
     set((state) => ({
-      messages: state.messages.map((m) =>
-        m.id === messageId ? { ...m, ...updates } : m
-      ),
+      messages: state.messages.map((m) => {
+        if (m.id !== messageId) return m;
+        const url = (updates as any).media_url ?? updates.mediaUrl;
+        const mediaUrl = url !== undefined ? normalizeMediaUrl(url) ?? undefined : m.mediaUrl;
+        return { ...m, ...updates, mediaUrl };
+      }),
     })),
 
   updateTicket: (ticketId, updates) =>

@@ -274,6 +274,49 @@ const templates = {
     text: `Alerta: ${data.tickets.length} ticket(s) sem resposta há mais de 12h (${data.companyName}).\n\n${data.tickets.map((t) => `#${t.protocol} – ${t.contactName} (${t.hoursOpen}h)`).join("\n")}\n\nAcesse: ${data.chatUrl}`,
   }),
 
+  passwordReset: (data: { userName: string; resetUrl: string; expiresInMinutes: number }): EmailTemplate => ({
+    subject: `[ChatBlue] Redefinição de senha`,
+    html: `
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <style>
+            body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+            .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+            .header { background: #3b82f6; color: white; padding: 20px; text-align: center; }
+            .content { padding: 20px; background: #f9fafb; }
+            .button { display: inline-block; background: #3b82f6; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-weight: 600; }
+            .footer { padding: 20px; text-align: center; color: #6b7280; font-size: 12px; }
+            .warning { background: #fef3c7; border-left: 4px solid #f59e0b; padding: 12px 16px; margin: 16px 0; border-radius: 0 4px 4px 0; }
+          </style>
+        </head>
+        <body>
+          <div class="container">
+            <div class="header">
+              <h1>Redefinir Senha</h1>
+            </div>
+            <div class="content">
+              <p>Ola ${data.userName},</p>
+              <p>Recebemos uma solicitacao para redefinir a senha da sua conta no ChatBlue.</p>
+              <p>Clique no botao abaixo para criar uma nova senha:</p>
+              <p style="text-align: center; margin: 24px 0;">
+                <a href="${data.resetUrl}" class="button">Redefinir Senha</a>
+              </p>
+              <div class="warning">
+                <p style="margin: 0;"><strong>Este link expira em ${data.expiresInMinutes} minutos.</strong></p>
+                <p style="margin: 4px 0 0 0;">Se voce nao solicitou a redefinicao, ignore este email.</p>
+              </div>
+            </div>
+            <div class="footer">
+              <p>Este e um email automatico do ChatBlue. Nao responda este email.</p>
+            </div>
+          </div>
+        </body>
+      </html>
+    `,
+    text: `Redefinir Senha\n\nOla ${data.userName},\n\nRecebemos uma solicitacao para redefinir sua senha.\n\nAcesse: ${data.resetUrl}\n\nEste link expira em ${data.expiresInMinutes} minutos.\n\nSe voce nao solicitou, ignore este email.`,
+  }),
+
   welcomeUser: (data: { userName: string; loginUrl: string; tempPassword?: string }): EmailTemplate => ({
     subject: `[ChatBlue] Bem-vindo ao ChatBlue!`,
     html: `
@@ -682,6 +725,19 @@ export class EmailService {
     data: { ticketProtocol: string; agentName: string; ticketUrl: string }
   ): Promise<boolean> {
     const template = templates.ticketAssigned(data);
+    return this.send({
+      to,
+      subject: template.subject,
+      html: template.html,
+      text: template.text,
+    });
+  }
+
+  async sendPasswordReset(
+    to: string,
+    data: { userName: string; resetUrl: string; expiresInMinutes: number }
+  ): Promise<boolean> {
+    const template = templates.passwordReset(data);
     return this.send({
       to,
       subject: template.subject,

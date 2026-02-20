@@ -8,6 +8,7 @@ import { generateProtocol } from '../utils/protocol.js';
 import { logger } from '../config/logger.js';
 import { ExternalAIWebhookService } from '../services/external-ai/external-ai-webhook.service.js';
 import { MessageProcessor } from '../services/message-processor.service.js';
+import { sendOutboundEvent } from '../services/outbound-webhook.service.js';
 
 const router = Router();
 
@@ -88,12 +89,13 @@ router.get('/', authenticate, ensureTenant, async (req, res, next) => {
       ];
     }
 
-    // Build search filter
+    // Build search filter (case-insensitive for name/email)
     const searchConditions: any[] = [];
     if (search) {
       searchConditions.push(
-        { protocol: { contains: search as string } },
+        { protocol: { contains: search as string, mode: 'insensitive' } },
         { contact: { name: { contains: search as string, mode: 'insensitive' } } },
+        { contact: { email: { contains: search as string, mode: 'insensitive' } } },
         { contact: { phone: { contains: search as string } } }
       );
     }
@@ -222,6 +224,7 @@ router.get('/', authenticate, ensureTenant, async (req, res, next) => {
             phone: true,
             avatar: true,
             isClient: true,
+            lastMessageAt: true,
           },
         },
         assignedTo: {
@@ -243,6 +246,7 @@ router.get('/', authenticate, ensureTenant, async (req, res, next) => {
           select: {
             id: true,
             name: true,
+            type: true,
           },
         },
         messages: {
@@ -366,6 +370,159 @@ router.get('/', authenticate, ensureTenant, async (req, res, next) => {
         pages: Math.ceil(total / parseInt(limit as string)),
       },
     });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Open conversation by phone number (deep-link) - MUST be before /:id routes
+router.post('/open-by-phone', authenticate, ensureTenant, async (req, res, next) => {
+  try {
+    const { phone } = z.object({
+      phone: z.string().min(10, 'Phone number must have at least 10 digits'),
+    }).parse(req.body);
+
+    // Normalize phone (remove non-digits)
+    const normalizedPhone = phone.replace(/\D/g, '');
+
+    if (normalizedPhone.length < 10) {
+      throw new NotFoundError('Número de telefone inválido.');
+    }
+
+    // Find contact by phone in this company
+    let contact = await prisma.contact.findFirst({
+      where: {
+        companyId: req.user!.companyId,
+        phone: {
+          contains: normalizedPhone.slice(-11), // match last 11 digits to handle DDI variations
+        },
+      },
+    });
+
+    // If contact doesn't exist, create it
+    if (!contact) {
+      contact = await prisma.contact.create({
+        data: {
+          phone: normalizedPhone,
+          companyId: req.user!.companyId,
+        },
+      });
+      logger.info(`Contact created via deep-link: ${contact.id} (${normalizedPhone})`);
+    }
+
+    // Check for existing open ticket with this contact
+    const existingTicket = await prisma.ticket.findFirst({
+      where: {
+        contactId: contact.id,
+        companyId: req.user!.companyId,
+        status: { in: ['PENDING', 'IN_PROGRESS', 'WAITING'] },
+      },
+    });
+
+    if (existingTicket) {
+      return res.json({ ticketId: existingTicket.id, contactId: contact.id, isNew: false });
+    }
+
+    // Find an active WhatsApp connection
+    const connection = await prisma.whatsAppConnection.findFirst({
+      where: {
+        companyId: req.user!.companyId,
+        isActive: true,
+        status: 'CONNECTED',
+      },
+    });
+
+    if (!connection) {
+      const anyConnection = await prisma.whatsAppConnection.findFirst({
+        where: {
+          companyId: req.user!.companyId,
+          isActive: true,
+        },
+      });
+
+      if (!anyConnection) {
+        throw new NotFoundError('Nenhuma conexão WhatsApp ativa encontrada.');
+      }
+    }
+
+    const connectionToUse = connection || await prisma.whatsAppConnection.findFirst({
+      where: {
+        companyId: req.user!.companyId,
+        isActive: true,
+      },
+    });
+
+    if (!connectionToUse) {
+      throw new NotFoundError('Nenhuma conexão WhatsApp disponível.');
+    }
+
+    // Generate protocol and create ticket
+    const protocol = await generateProtocol();
+
+    const ticket = await prisma.ticket.create({
+      data: {
+        protocol,
+        status: 'IN_PROGRESS',
+        priority: 'MEDIUM',
+        contactId: contact.id,
+        connectionId: connectionToUse.id,
+        assignedToId: req.user!.userId,
+        companyId: req.user!.companyId,
+      },
+      include: {
+        contact: {
+          select: { id: true, name: true, phone: true, avatar: true, isClient: true },
+        },
+        assignedTo: {
+          select: { id: true, name: true, avatar: true, isAI: true },
+        },
+        department: {
+          select: { id: true, name: true, color: true },
+        },
+        connection: {
+          select: { id: true, name: true, type: true, phone: true },
+        },
+      },
+    });
+
+    // Create activity
+    await prisma.activity.create({
+      data: {
+        type: 'TICKET_CREATED',
+        description: `Conversa iniciada via deep-link por ${req.user!.name}`,
+        ticketId: ticket.id,
+        userId: req.user!.userId,
+      },
+    });
+
+    // Create system message
+    await prisma.message.create({
+      data: {
+        type: 'SYSTEM',
+        content: `Atendimento iniciado por ${req.user!.name} via link externo`,
+        isFromMe: true,
+        status: 'DELIVERED',
+        ticketId: ticket.id,
+        connectionId: connectionToUse.id,
+      },
+    });
+
+    // Emit socket event
+    const io = req.app.get('io');
+    io.to(`company:${req.user!.companyId}`).emit('ticket:created', ticket);
+
+    sendOutboundEvent(req.user!.companyId, 'conversation_created', {
+      ticketId: ticket.id,
+      companyId: ticket.companyId,
+      contactId: ticket.contactId,
+      protocol: ticket.protocol,
+      status: ticket.status,
+      departmentId: ticket.departmentId ?? undefined,
+      createdAt: ticket.createdAt.toISOString(),
+    });
+
+    logger.info(`Ticket created via deep-link: ${ticket.id} for phone ${normalizedPhone}`);
+    res.status(201).json({ ticketId: ticket.id, contactId: contact.id, isNew: true });
   } catch (error) {
     next(error);
   }
@@ -540,6 +697,16 @@ router.post('/start-conversation', authenticate, ensureTenant, async (req, res, 
     const io = req.app.get('io');
     io.to(`company:${req.user!.companyId}`).emit('ticket:created', ticket);
 
+    sendOutboundEvent(req.user!.companyId, 'conversation_created', {
+      ticketId: ticket.id,
+      companyId: ticket.companyId,
+      contactId: ticket.contactId,
+      protocol: ticket.protocol,
+      status: ticket.status,
+      departmentId: ticket.departmentId ?? undefined,
+      createdAt: ticket.createdAt.toISOString(),
+    });
+
     res.status(201).json({ id: ticket.id, isNew: true });
   } catch (error) {
     next(error);
@@ -619,13 +786,14 @@ router.post('/:id/assign', authenticate, ensureTenant, async (req, res, next) =>
       throw new NotFoundError('Ticket not found');
     }
 
-    // Check if the target user is an external AI
+    // Check if the target user is external AI or internal AI
     const targetUser = await prisma.user.findUnique({
       where: { id: userId },
       select: { id: true, name: true, isAI: true, aiConfig: true },
     });
 
     const isTargetExternalAI = targetUser?.isAI && ExternalAIWebhookService.isExternalAI(targetUser.aiConfig);
+    const isTargetInternalAI = targetUser?.isAI && !ExternalAIWebhookService.isExternalAI(targetUser.aiConfig);
 
     const ticket = await prisma.ticket.update({
       where: {
@@ -635,7 +803,7 @@ router.post('/:id/assign', authenticate, ensureTenant, async (req, res, next) =>
       data: {
         assignedToId: userId,
         status: 'IN_PROGRESS',
-        ...(isTargetExternalAI ? {
+        ...(isTargetExternalAI || isTargetInternalAI ? {
           isAIHandled: true,
           aiTakeoverAt: new Date(),
         } : {
@@ -650,7 +818,9 @@ router.post('/:id/assign', authenticate, ensureTenant, async (req, res, next) =>
         type: 'TICKET_ASSIGNED',
         description: isTargetExternalAI
           ? `Ticket assigned to external AI ${targetUser!.name}`
-          : `Ticket assigned`,
+          : isTargetInternalAI
+            ? `Ticket assigned to AI ${targetUser!.name}`
+            : `Ticket assigned`,
         ticketId: ticket.id,
         userId: req.user!.userId,
       },
@@ -666,7 +836,7 @@ router.post('/:id/assign', authenticate, ensureTenant, async (req, res, next) =>
     });
 
     // Create notification for assigned user (only for human users)
-    if (userId && userId !== req.user!.userId && !isTargetExternalAI) {
+    if (userId && userId !== req.user!.userId && !isTargetExternalAI && !isTargetInternalAI) {
       await prisma.notification.create({
         data: {
           type: 'ticket_assigned',
@@ -763,6 +933,22 @@ router.post('/:id/assign', authenticate, ensureTenant, async (req, res, next) =>
         logger.error('[ExternalAI] Error sending/processing assigned webhook:', err?.message);
       }
     }
+
+    // Internal AI: generate and send opening message so the AI actively starts attending
+    if (targetUser?.isAI && !ExternalAIWebhookService.isExternalAI(targetUser.aiConfig)) {
+      MessageProcessor.generateAndSendOpeningMessage(ticket.id, req.user!.companyId).catch((err: any) =>
+        logger.error('[OpeningMessage] Error sending opening message:', err?.message)
+      );
+    }
+
+    sendOutboundEvent(req.user!.companyId, 'conversation_updated', {
+      ticketId: ticket.id,
+      companyId: ticket.companyId,
+      status: ticket.status,
+      departmentId: ticket.departmentId ?? undefined,
+      assignedToId: ticket.assignedToId ?? undefined,
+      updatedAt: ticket.updatedAt.toISOString(),
+    });
 
     res.json(ticket);
   } catch (error) {
@@ -935,17 +1121,38 @@ router.post('/:id/takeover', authenticate, ensureTenant, async (req, res, next) 
   }
 });
 
+// Helper: aceita ID de departamento/usuário (string não vazia) ou string vazia como undefined.
+// Evita "Validation failed" em produção quando o front envia "" ou quando IDs não batem com .cuid() estrito.
+const optionalId = z
+  .union([z.string().min(1), z.literal('')])
+  .optional()
+  .transform((val) => (val === '' || val == null ? undefined : val));
+
 // Transfer ticket
 router.post('/:id/transfer', authenticate, ensureTenant, async (req, res, next) => {
   try {
+    const body = typeof req.body === 'object' && req.body !== null ? req.body : {};
     const { toDepartmentId, toUserId, reason } = z.object({
-      toDepartmentId: z.string().cuid().optional(),
-      toUserId: z.string().cuid().optional(),
+      toDepartmentId: optionalId,
+      toUserId: optionalId,
       reason: z.string().optional(),
-    }).parse(req.body);
+    }).parse(body);
 
     if (!toDepartmentId && !toUserId) {
-      throw new ForbiddenError('Must specify department or user');
+      throw new ForbiddenError('Deve informar departamento ou usuário para transferir');
+    }
+
+    if (toDepartmentId) {
+      const dept = await prisma.department.findFirst({
+        where: { id: toDepartmentId, companyId: req.user!.companyId },
+      });
+      if (!dept) throw new NotFoundError('Departamento não encontrado');
+    }
+    if (toUserId) {
+      const user = await prisma.user.findFirst({
+        where: { id: toUserId, companyId: req.user!.companyId },
+      });
+      if (!user) throw new NotFoundError('Usuário não encontrado');
     }
 
     const ticket = await prisma.ticket.findFirst({
@@ -959,7 +1166,29 @@ router.post('/:id/transfer', authenticate, ensureTenant, async (req, res, next) 
       throw new NotFoundError('Ticket not found');
     }
 
-    // Check if target department has an external AI user (auto-assign)
+    // When transferring to a user, derive department from that user's departments (first active by order)
+    let derivedDepartmentId: string | undefined;
+    if (toUserId) {
+      const userDepartments = await prisma.userDepartment.findMany({
+        where: { userId: toUserId },
+        include: {
+          department: {
+            select: { id: true, name: true, isActive: true, order: true },
+          },
+        },
+      });
+      const sorted = userDepartments
+        .filter((ud) => ud.department.isActive)
+        .sort((a, b) => a.department.order - b.department.order);
+      if (sorted.length > 0) {
+        derivedDepartmentId = sorted[0].departmentId;
+      }
+    }
+
+    // Effective department: when transferring to user, use their department; otherwise use toDepartmentId
+    const effectiveToDepartmentId = toUserId && derivedDepartmentId ? derivedDepartmentId : toDepartmentId;
+
+    // Check if target department has an external AI user (auto-assign) - only when transferring to department only
     let autoAssignExternalAI: { id: string; name: string; aiConfig: any } | null = null;
     if (toDepartmentId && !toUserId) {
       autoAssignExternalAI = await ExternalAIWebhookService.findExternalAIForDepartment(toDepartmentId);
@@ -968,9 +1197,9 @@ router.post('/:id/transfer', authenticate, ensureTenant, async (req, res, next) 
       }
     }
 
-    // Build update data
+    // Build update data: when transferring to user, use their department by default
     const transferUpdateData: any = {
-      ...(toDepartmentId && { departmentId: toDepartmentId }),
+      ...(effectiveToDepartmentId && { departmentId: effectiveToDepartmentId }),
       ...(toUserId && { assignedToId: toUserId }),
       status: 'PENDING',
     };
@@ -1016,15 +1245,15 @@ router.post('/:id/transfer', authenticate, ensureTenant, async (req, res, next) 
       },
     });
 
-    // Create transfer record
+    // Create transfer record (toDeptId = effective department applied)
     await prisma.ticketTransfer.create({
       data: {
         ticketId: ticket.id,
         fromUserId: ticket.assignedToId,
         toUserId: transferUpdateData.assignedToId || toUserId || null,
         fromDeptId: ticket.departmentId,
-        toDeptId: toDepartmentId,
-        transferType: toDepartmentId ? 'DEPT_TO_DEPT' : 'USER_TO_USER',
+        toDeptId: effectiveToDepartmentId ?? null,
+        transferType: effectiveToDepartmentId ? 'DEPT_TO_DEPT' : 'USER_TO_USER',
         reason,
       },
     });
@@ -1145,6 +1374,15 @@ router.post('/:id/transfer', authenticate, ensureTenant, async (req, res, next) 
       ).catch(err => logger.error('[ExternalAI] Error sending assigned webhook:', err));
     }
 
+    sendOutboundEvent(req.user!.companyId, 'conversation_updated', {
+      ticketId: updatedTicket.id,
+      companyId: updatedTicket.companyId,
+      status: updatedTicket.status,
+      departmentId: updatedTicket.departmentId ?? undefined,
+      assignedToId: updatedTicket.assignedToId ?? undefined,
+      updatedAt: updatedTicket.updatedAt.toISOString(),
+    });
+
     res.json(updatedTicket);
   } catch (error) {
     next(error);
@@ -1215,6 +1453,29 @@ router.put('/:id/status', authenticate, ensureTenant, async (req, res, next) => 
     // Emit socket event
     const io = req.app.get('io');
     io.to(`company:${req.user!.companyId}`).emit('ticket:updated', ticket);
+
+    sendOutboundEvent(req.user!.companyId, 'conversation_updated', {
+      ticketId: ticket.id,
+      companyId: ticket.companyId,
+      status: ticket.status,
+      departmentId: ticket.departmentId ?? undefined,
+      assignedToId: ticket.assignedToId ?? undefined,
+      updatedAt: ticket.updatedAt.toISOString(),
+    });
+    if (status === 'RESOLVED' || status === 'CLOSED') {
+      const resolvedAt = ticket.resolvedAt ?? ticket.closedAt;
+      const resolutionTime = resolvedAt && ticket.createdAt
+        ? Math.round((resolvedAt.getTime() - ticket.createdAt.getTime()) / 1000)
+        : undefined;
+      sendOutboundEvent(req.user!.companyId, 'conversation_resolved', {
+        ticketId: ticket.id,
+        companyId: ticket.companyId,
+        status: ticket.status,
+        resolvedAt: ticket.resolvedAt?.toISOString(),
+        closedAt: ticket.closedAt?.toISOString(),
+        resolutionTime,
+      });
+    }
 
     res.json(ticket);
   } catch (error) {
@@ -1922,6 +2183,16 @@ router.post('/', authenticate, ensureTenant, async (req, res, next) => {
     // Emit socket event
     const io = req.app.get('io');
     io.to(`company:${req.user!.companyId}`).emit('ticket:created', ticket);
+
+    sendOutboundEvent(req.user!.companyId, 'conversation_created', {
+      ticketId: ticket.id,
+      companyId: ticket.companyId,
+      contactId: ticket.contactId,
+      protocol: ticket.protocol,
+      status: ticket.status,
+      departmentId: ticket.departmentId ?? undefined,
+      createdAt: ticket.createdAt.toISOString(),
+    });
 
     res.status(201).json({ ticket, isExisting: false });
   } catch (error) {

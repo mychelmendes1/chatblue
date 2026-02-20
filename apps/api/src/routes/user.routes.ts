@@ -7,8 +7,7 @@ import { authenticate, requireAdmin } from '../middlewares/auth.middleware.js';
 import { ensureTenant } from '../middlewares/tenant.middleware.js';
 import { NotFoundError, ValidationError } from '../middlewares/error.middleware.js';
 import { upload } from '../services/upload/upload.service.js';
-// @ts-ignore - pdf-parse types issue
-import pdf from 'pdf-parse';
+// pdf-parse: lazy-loaded in handler to avoid crash in Docker (browser/canvas polyfills)
 import fs from 'fs/promises';
 import * as fsSync from 'fs';
 import path from 'path';
@@ -360,14 +359,13 @@ router.put('/:id', authenticate, requireAdmin, ensureTenant, async (req, res, ne
     const aiType = req.body.aiType;
     
     if (isAIAgent && aiType === 'external') {
-      // External AI configuration update
+      // External AI configuration update (stored as JSON, type is not in Prisma schema)
       const currentConfig = (currentUser?.aiConfig as any) || {};
       aiConfigUpdate = {
         type: 'external',
         webhookUrl: req.body.webhookUrl ?? currentConfig.webhookUrl ?? '',
         webhookSecret: req.body.webhookSecret ?? currentConfig.webhookSecret ?? '',
         externalApiKey: req.body.externalApiKey || currentConfig.externalApiKey || crypto.randomBytes(32).toString('hex'),
-        // Integration settings (bluetoken-ai)
         authType: req.body.authType ?? currentConfig.authType ?? 'hmac',
         authToken: req.body.authToken ?? currentConfig.authToken ?? '',
         payloadFormat: req.body.payloadFormat ?? currentConfig.payloadFormat ?? 'chatblue',
@@ -375,7 +373,7 @@ router.put('/:id', authenticate, requireAdmin, ensureTenant, async (req, res, ne
         autoReply: req.body.autoReply ?? currentConfig.autoReply ?? true,
         autoEscalate: req.body.autoEscalate ?? currentConfig.autoEscalate ?? true,
         escalateDepartmentId: req.body.escalateDepartmentId ?? currentConfig.escalateDepartmentId ?? '',
-      };
+      } as any;
     } else if (isAIAgent && (req.body.aiModel || req.body.aiSystemPrompt || req.body.trainingData || currentUser?.aiConfig)) {
       // Internal AI configuration update
       const currentConfig = (currentUser?.aiConfig as any) || {};
@@ -397,13 +395,12 @@ router.put('/:id', authenticate, requireAdmin, ensureTenant, async (req, res, ne
         maxTokens: req.body.aiMaxTokens ?? currentConfig.maxTokens ?? 1000,
         triggerKeywords: req.body.transferKeywords ?? currentConfig.triggerKeywords ?? [],
         trainingData: req.body.trainingData ?? currentConfig.trainingData ?? '',
-        // Personality settings
         personalityTone: req.body.aiPersonalityTone ?? currentConfig.personalityTone ?? 'friendly',
         personalityStyle: req.body.aiPersonalityStyle ?? currentConfig.personalityStyle ?? 'conversational',
         useEmojis: req.body.aiUseEmojis ?? currentConfig.useEmojis ?? true,
         useClientName: req.body.aiUseClientName ?? currentConfig.useClientName ?? true,
         guardrailsEnabled: req.body.aiGuardrailsEnabled ?? currentConfig.guardrailsEnabled ?? true,
-      };
+      } as any;
 
       // If trainingData exists, append it to systemPrompt
       if (aiConfigUpdate && aiConfigUpdate.trainingData && aiConfigUpdate.systemPrompt) {
@@ -449,8 +446,8 @@ router.put('/:id', authenticate, requireAdmin, ensureTenant, async (req, res, ne
 
     // Return externalApiKey for external AI agents
     const responseData: any = { ...user };
-    if (aiType === 'external' && aiConfigUpdate?.externalApiKey) {
-      responseData.externalApiKey = aiConfigUpdate.externalApiKey;
+    if (aiType === 'external' && (aiConfigUpdate as any)?.externalApiKey) {
+      responseData.externalApiKey = (aiConfigUpdate as any).externalApiKey;
     }
 
     res.json(responseData);
@@ -829,9 +826,10 @@ router.post('/process-training-pdf', authenticate, requireAdmin, ensureTenant, (
       let extractedText = '';
       let pdfPages = 0;
 
-      // Try to extract basic info with pdf-parse first (just for page count)
+      // Try to extract basic info with pdf-parse first (just for page count) - lazy load
       try {
-        // @ts-ignore - pdf-parse types issue
+        const pdfModule = await import('pdf-parse');
+        const pdf = (pdfModule as any).default ?? pdfModule;
         const pdfData = await pdf(dataBuffer, { max: 0 });
         pdfPages = pdfData.numpages;
         logger.info(`PDF has ${pdfPages} pages`);

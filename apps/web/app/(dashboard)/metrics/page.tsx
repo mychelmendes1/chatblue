@@ -527,7 +527,7 @@ export default function MetricsPage() {
         headers["Authorization"] = `Bearer ${accessToken}`;
       }
 
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001"}/api/metrics/export?period=${period}&format=${format}`, {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001"}/api/metrics/export?period=${period}&format=${format}`, {
         method: 'GET',
         headers,
       });

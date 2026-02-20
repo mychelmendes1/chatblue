@@ -2,8 +2,10 @@ import { WhatsAppConnection } from '@prisma/client';
 import { BaileysService } from './baileys.service.js';
 import { MetaCloudService } from './meta-cloud.service.js';
 import { logger } from '../../config/logger.js';
+import { getUploadsDir } from '../../utils/uploads-dir.util.js';
 import * as path from 'path';
 import * as fs from 'fs';
+import { spawn } from 'child_process';
 
 export class WhatsAppService {
   private connection: WhatsAppConnection;
@@ -81,7 +83,21 @@ export class WhatsAppService {
     } else {
       // For Meta Cloud API, try upload-first approach for better reliability
       // Especially important for audio files which often fail with URL method
-      const localPath = this.extractLocalPathFromUrl(mediaUrl);
+      let localPath = this.extractLocalPathFromUrl(mediaUrl);
+      let convertedPath: string | null = null;
+      let resultMediaUrl = mediaUrl;
+
+      // For audio files, convert WebM/WAV to OGG/Opus (WhatsApp requirement)
+      if (mediaType === 'AUDIO' && localPath && fs.existsSync(localPath)) {
+        convertedPath = await this.convertAudioToOgg(localPath);
+        if (convertedPath) {
+          localPath = convertedPath;
+          // Build public URL for the converted file
+          const apiUrl = process.env.API_URL || `http://${process.env.HOST || 'localhost'}:${process.env.PORT || 3001}`;
+          resultMediaUrl = `${apiUrl}/uploads/media/${path.basename(convertedPath)}`;
+          logger.info(`[MetaCloud] Using converted audio: ${resultMediaUrl}`);
+        }
+      }
       
       if (localPath && fs.existsSync(localPath)) {
         logger.info(`Meta Cloud: Using upload-first method for ${mediaType} (file: ${localPath})`);
@@ -96,7 +112,7 @@ export class WhatsAppService {
               quotedMessageId: options?.quotedMessageId,
             }
           );
-          return { ...result, finalMediaUrl: mediaUrl };
+          return { ...result, finalMediaUrl: resultMediaUrl };
         } catch (uploadError: any) {
           logger.warn(`Meta Cloud upload-first failed, falling back to URL method: ${uploadError.message}`);
           // Fall back to URL method if upload fails
@@ -111,7 +127,7 @@ export class WhatsAppService {
         mediaType,
         caption
       );
-      return { ...result, finalMediaUrl: mediaUrl };
+      return { ...result, finalMediaUrl: resultMediaUrl };
     }
   }
 
@@ -124,35 +140,20 @@ export class WhatsAppService {
       const url = new URL(mediaUrl);
       const pathname = url.pathname;
       
-      // Look for /uploads/ in the path
+      // Look for /uploads/ in the path - use shared uploads dir
       if (pathname.includes('/uploads/')) {
         const uploadsIndex = pathname.indexOf('/uploads/');
-        const relativePath = pathname.substring(uploadsIndex + 1); // Remove leading /
-        
-        // Try different base paths
-        const possiblePaths = [
-          path.join(process.cwd(), relativePath),
-          path.join(process.cwd(), 'apps', 'api', relativePath),
-        ];
-        
-        for (const p of possiblePaths) {
-          if (fs.existsSync(p)) {
-            return p;
-          }
+        const relativePath = pathname.substring(uploadsIndex + 9); // after '/uploads/'
+        const uploadsDir = getUploadsDir();
+        const fullPath = path.join(uploadsDir, relativePath);
+        if (fs.existsSync(fullPath)) {
+          return fullPath;
         }
-        
-        // Try just the uploads folder in cwd
-        const uploadsDir = path.join(process.cwd(), 'uploads');
-        if (fs.existsSync(uploadsDir)) {
-          const filename = path.basename(pathname);
-          // Check in subdirectories (audio, images, etc.)
-          const subdirs = ['', 'audio', 'audio-converted', 'images', 'videos', 'documents'];
-          for (const subdir of subdirs) {
-            const fullPath = path.join(uploadsDir, subdir, filename);
-            if (fs.existsSync(fullPath)) {
-              return fullPath;
-            }
-          }
+        // Fallback: try by filename in media/documents
+        const filename = path.basename(pathname);
+        for (const subdir of ['media', 'documents', 'avatars']) {
+          const p = path.join(uploadsDir, subdir, filename);
+          if (fs.existsSync(p)) return p;
         }
       }
       
@@ -369,6 +370,69 @@ export class WhatsAppService {
     }
 
     return this.metaService!.getTemplates();
+  }
+
+  /**
+   * Convert WebM/non-OGG audio to OGG/Opus using FFmpeg for WhatsApp compatibility.
+   * Returns the path to the converted file, or null if conversion is not needed/failed.
+   */
+  private async convertAudioToOgg(localPath: string): Promise<string | null> {
+    const ext = path.extname(localPath).toLowerCase();
+    // Only convert formats that WhatsApp doesn't accept natively
+    // WhatsApp accepts: ogg (opus), mp3, m4a, aac, amr
+    const needsConversion = ['.webm', '.wav'].includes(ext);
+    if (!needsConversion) return null;
+
+    const uploadsDir = getUploadsDir();
+    const mediaDir = path.join(uploadsDir, 'media');
+    if (!fs.existsSync(mediaDir)) {
+      fs.mkdirSync(mediaDir, { recursive: true });
+    }
+
+    const outputName = `audio-converted-${Date.now()}.ogg`;
+    const outputPath = path.join(mediaDir, outputName);
+
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const proc = spawn('ffmpeg', [
+          '-i', localPath,
+          '-avoid_negative_ts', 'make_zero',
+          '-c:a', 'libopus',
+          '-b:a', '64k',
+          '-ar', '48000',
+          '-ac', '1',
+          '-y',
+          outputPath,
+        ]);
+
+        let stderr = '';
+        proc.stderr.on('data', (d) => { stderr += d.toString(); });
+
+        proc.on('close', (code) => {
+          if (code === 0) {
+            logger.info(`[MetaCloud] Audio converted: ${localPath} -> ${outputPath}`);
+            resolve();
+          } else {
+            logger.error(`[MetaCloud] FFmpeg failed (code ${code}): ${stderr.slice(-500)}`);
+            reject(new Error(`FFmpeg exited with code ${code}`));
+          }
+        });
+
+        proc.on('error', (err) => {
+          logger.error(`[MetaCloud] FFmpeg spawn error:`, err);
+          reject(err);
+        });
+      });
+
+      return outputPath;
+    } catch (error) {
+      // Cleanup on failure
+      if (fs.existsSync(outputPath)) {
+        try { fs.unlinkSync(outputPath); } catch {}
+      }
+      logger.warn(`[MetaCloud] Audio conversion failed, will try original file: ${(error as any)?.message}`);
+      return null;
+    }
   }
 
   /**

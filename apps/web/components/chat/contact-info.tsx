@@ -175,7 +175,12 @@ export function ContactInfo({ ticket, onClose, onTicketUpdate }: ContactInfoProp
       }
     } catch (error: any) {
       console.error("Failed to transfer department:", error);
-      const errorMessage = error?.response?.data?.error || error?.message || "Erro ao transferir departamento";
+      const data = error?.response?.data;
+      let errorMessage = data?.error || error?.message || "Erro ao transferir departamento";
+      if (data?.details?.length) {
+        const details = data.details.map((d: { field?: string; message?: string }) => `${d.field || 'campo'}: ${d.message || ''}`).join('; ');
+        errorMessage = `${errorMessage} (${details})`;
+      }
       alert(errorMessage);
     } finally {
       setIsTransferring(false);
@@ -225,7 +230,12 @@ export function ContactInfo({ ticket, onClose, onTicketUpdate }: ContactInfoProp
       }
     } catch (error: any) {
       console.error("Failed to transfer user:", error);
-      const errorMessage = error?.response?.data?.error || error?.message || "Erro ao transferir para atendente";
+      const data = error?.response?.data;
+      let errorMessage = data?.error || error?.message || "Erro ao transferir para atendente";
+      if (data?.details?.length) {
+        const details = data.details.map((d: { field?: string; message?: string }) => `${d.field || 'campo'}: ${d.message || ''}`).join('; ');
+        errorMessage = `${errorMessage} (${details})`;
+      }
       alert(errorMessage);
     } finally {
       setIsTransferringUser(false);

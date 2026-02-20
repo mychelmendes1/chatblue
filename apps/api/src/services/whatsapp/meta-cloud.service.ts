@@ -2,27 +2,9 @@ import { WhatsAppConnection } from '@prisma/client';
 import { logger } from '../../config/logger.js';
 import * as fs from 'fs';
 import * as path from 'path';
+import { getUploadsDir } from '../../utils/uploads-dir.util.js';
 
 const META_API_URL = 'https://graph.facebook.com/v18.0';
-
-// Get the uploads directory path
-const getUploadsDir = () => {
-  const possiblePaths = [
-    path.join(process.cwd(), 'uploads'),
-    path.join(process.cwd(), 'apps', 'api', 'uploads'),
-  ];
-  
-  for (const p of possiblePaths) {
-    if (fs.existsSync(p)) {
-      return p;
-    }
-  }
-  
-  // Create default path if none exists
-  const defaultPath = possiblePaths[0];
-  fs.mkdirSync(defaultPath, { recursive: true });
-  return defaultPath;
-};
 
 export class MetaCloudService {
   private connection: WhatsAppConnection;
@@ -608,6 +590,14 @@ export class MetaCloudService {
    * Upload media to Meta's servers for sending
    * This is more reliable than sending by URL, especially for audio files
    */
+  /**
+   * Strip codec parameters from MIME types (e.g. "audio/ogg; codecs=opus" → "audio/ogg").
+   * Meta's upload endpoint expects simple MIME types.
+   */
+  private static stripMimeParams(mime: string): string {
+    return mime.split(';')[0].trim();
+  }
+
   async uploadMedia(
     filePath: string,
     mimeType: string
@@ -615,16 +605,19 @@ export class MetaCloudService {
     const fileBuffer = fs.readFileSync(filePath);
     const filename = path.basename(filePath);
 
-    logger.info(`Uploading media to Meta: ${filename}, type: ${mimeType}, size: ${fileBuffer.length} bytes`);
+    // Meta API expects simple MIME types without codec parameters
+    const cleanMime = MetaCloudService.stripMimeParams(mimeType);
+
+    logger.info(`Uploading media to Meta: ${filename}, type: ${cleanMime} (original: ${mimeType}), size: ${fileBuffer.length} bytes`);
 
     // Use Node.js native FormData (available in Node 18+)
     const formData = new FormData();
     
     // Create a Blob from the buffer for FormData
-    const blob = new Blob([fileBuffer], { type: mimeType });
+    const blob = new Blob([fileBuffer], { type: cleanMime });
     formData.append('file', blob, filename);
     formData.append('messaging_product', 'whatsapp');
-    formData.append('type', mimeType);
+    formData.append('type', cleanMime);
 
     const response = await fetch(
       `${META_API_URL}/${this.connection.phoneNumberId}/media`,
@@ -672,12 +665,13 @@ export class MetaCloudService {
     const mimeTypeMap: Record<string, Record<string, string>> = {
       AUDIO: {
         '.ogg': 'audio/ogg',
-        '.opus': 'audio/ogg; codecs=opus',
+        '.opus': 'audio/ogg',
         '.mp3': 'audio/mpeg',
         '.m4a': 'audio/mp4',
         '.aac': 'audio/aac',
         '.amr': 'audio/amr',
         '.wav': 'audio/wav',
+        '.webm': 'audio/webm',
       },
       IMAGE: {
         '.jpg': 'image/jpeg',
@@ -778,10 +772,9 @@ export class MetaCloudService {
   }
 
   /**
-   * Get list of message templates
+   * Get list of message templates (with pagination – Meta returns a limited set per page).
    */
   async getTemplates(): Promise<any[]> {
-    // Use businessId directly - it's the WABA ID
     const wabaId = this.connection.businessId;
 
     if (!wabaId) {
@@ -789,26 +782,40 @@ export class MetaCloudService {
       return [];
     }
 
+    const allTemplates: any[] = [];
+    const fields = 'name,status,category,language,components';
+    let url: string | null = `${META_API_URL}/${wabaId}/message_templates?fields=${fields}&limit=100`;
+
     logger.info(`Fetching templates for WABA ID: ${wabaId}`);
 
-    const response = await fetch(
-      `${META_API_URL}/${wabaId}/message_templates?fields=name,status,category,language,components`,
-      {
+    while (url) {
+      const response = await fetch(url, {
         headers: {
           Authorization: `Bearer ${this.connection.accessToken}`,
         },
+      });
+
+      const data = await response.json() as any;
+
+      if (!response.ok) {
+        logger.error('Failed to get templates:', data);
+        break;
       }
-    );
 
-    const data = await response.json() as any;
+      const page = data.data || [];
+      allTemplates.push(...page);
 
-    if (!response.ok) {
-      logger.error('Failed to get templates:', data);
-      return [];
+      const nextUrl = data.paging?.next ?? null;
+      if (nextUrl) {
+        url = nextUrl;
+        logger.debug(`Fetching next page of templates, total so far: ${allTemplates.length}`);
+      } else {
+        url = null;
+      }
     }
 
-    logger.info(`Found ${data.data?.length || 0} templates`);
-    return data.data || [];
+    logger.info(`Found ${allTemplates.length} templates`);
+    return allTemplates;
   }
 
   /**
@@ -835,14 +842,21 @@ export class MetaCloudService {
         } else if (component.type === 'BODY') {
           let bodyText = component.text || '';
           
-          // Replace variables {{1}}, {{2}}, etc. with provided values
+          // Replace variables with provided values (positional {{1}}, {{2}} and/or named {{nome}}, etc.)
           if (components) {
             const bodyComponent = components.find((c: any) => c.type === 'body');
             if (bodyComponent?.parameters) {
+              const valueFor = (param: any) => (param.text ?? param.parameter_name ?? '').toString();
               bodyComponent.parameters.forEach((param: any, index: number) => {
+                const value = valueFor(param);
+                // Replace by name first (e.g. {{nome}}, {{pedido}})
+                if (param.parameter_name) {
+                  const name = String(param.parameter_name).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                  bodyText = bodyText.replace(new RegExp(`\\{\\{\\s*${name}\\s*\\}\\}`, 'gi'), value);
+                }
+                // Replace by position ({{1}}, {{2}}) – Meta often stores body as {{1}}, {{2}} even when UI shows names
                 const placeholder = `{{${index + 1}}}`;
-                const value = param.text || param.parameter_name || '';
-                bodyText = bodyText.replace(placeholder, value);
+                bodyText = bodyText.replace(new RegExp(placeholder.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'), value);
               });
             }
           }

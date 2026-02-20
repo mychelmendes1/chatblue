@@ -7,6 +7,7 @@ import { WhatsAppService } from '../services/whatsapp/whatsapp.service.js';
 import { ExternalAIWebhookService } from '../services/external-ai/external-ai-webhook.service.js';
 import { logger } from '../config/logger.js';
 import { normalizeMediaUrl } from '../utils/media-url.util.js';
+import { sendOutboundEvent } from '../services/outbound-webhook.service.js';
 
 const router = Router();
 
@@ -136,6 +137,16 @@ router.post('/messages', async (req, res, next) => {
         senderId: req.aiUser!.id,
         connectionId: connection.id,
       },
+    });
+    sendOutboundEvent(req.aiUser!.companyId, 'message_created', {
+      ticketId: ticket.id,
+      companyId: req.aiUser!.companyId,
+      messageId: message.id,
+      type: message.type,
+      content: message.content ?? undefined,
+      mediaUrl: message.mediaUrl ?? undefined,
+      isFromMe: message.isFromMe,
+      createdAt: message.createdAt.toISOString(),
     });
 
     let result: { messageId: string; finalMediaUrl?: string };
@@ -318,6 +329,15 @@ router.post('/tickets/:id/transfer', async (req, res, next) => {
         connectionId: ticket.connectionId,
       },
     });
+    sendOutboundEvent(req.aiUser!.companyId, 'message_created', {
+      ticketId: ticket.id,
+      companyId: req.aiUser!.companyId,
+      messageId: systemMessage.id,
+      type: systemMessage.type,
+      content: systemMessage.content ?? undefined,
+      isFromMe: systemMessage.isFromMe,
+      createdAt: systemMessage.createdAt.toISOString(),
+    });
 
     // Emit socket events
     const io = (global as any).io;
@@ -418,7 +438,7 @@ router.post('/tickets/:id/resolve', async (req, res, next) => {
     });
 
     // Create system message
-    await prisma.message.create({
+    const resolveSystemMessage = await prisma.message.create({
       data: {
         type: 'SYSTEM',
         content: `Atendimento resolvido por ${req.aiUser!.name} (IA)${reason ? `: ${reason}` : ''}`,
@@ -427,6 +447,15 @@ router.post('/tickets/:id/resolve', async (req, res, next) => {
         ticketId: ticket.id,
         connectionId: ticket.connectionId,
       },
+    });
+    sendOutboundEvent(req.aiUser!.companyId, 'message_created', {
+      ticketId: ticket.id,
+      companyId: req.aiUser!.companyId,
+      messageId: resolveSystemMessage.id,
+      type: resolveSystemMessage.type,
+      content: resolveSystemMessage.content ?? undefined,
+      isFromMe: resolveSystemMessage.isFromMe,
+      createdAt: resolveSystemMessage.createdAt.toISOString(),
     });
 
     // Emit socket events

@@ -2,27 +2,9 @@ import { WhatsAppConnection } from '@prisma/client';
 import { logger } from '../../config/logger.js';
 import * as fs from 'fs';
 import * as path from 'path';
+import { getUploadsDir } from '../../utils/uploads-dir.util.js';
 
 const META_API_URL = 'https://graph.facebook.com/v18.0';
-
-// Get the uploads directory path
-const getUploadsDir = () => {
-  const possiblePaths = [
-    path.join(process.cwd(), 'uploads'),
-    path.join(process.cwd(), 'apps', 'api', 'uploads'),
-  ];
-
-  for (const p of possiblePaths) {
-    if (fs.existsSync(p)) {
-      return p;
-    }
-  }
-
-  // Create default path if none exists
-  const defaultPath = possiblePaths[0];
-  fs.mkdirSync(defaultPath, { recursive: true });
-  return defaultPath;
-};
 
 export class InstagramService {
   private connection: WhatsAppConnection;
@@ -32,23 +14,37 @@ export class InstagramService {
   }
 
   /**
-   * Test connection to Instagram API
+   * Test connection to Instagram API.
+   * Returns { valid: true } on success, or { valid: false, error: '...' } with the Meta API error message.
    */
-  async testConnection(): Promise<boolean> {
+  async testConnection(): Promise<{ valid: boolean; error?: string }> {
     try {
-      const response = await fetch(
-        `${META_API_URL}/${this.connection.instagramAccountId}?fields=id,username,name`,
-        {
-          headers: {
-            Authorization: `Bearer ${this.connection.accessToken}`,
-          },
-        }
-      );
+      const url = `${META_API_URL}/${this.connection.instagramAccountId}?fields=id,username,name`;
+      logger.info(`[Instagram] testConnection → GET ${url.replace(this.connection.accessToken || '', '***')}`);
 
-      return response.ok;
-    } catch (error) {
-      logger.error('Instagram connection test failed:', error);
-      return false;
+      const response = await fetch(url, {
+        headers: {
+          Authorization: `Bearer ${this.connection.accessToken}`,
+        },
+      });
+
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        const metaError = (body as any)?.error?.message || response.statusText || 'Erro desconhecido';
+        logger.warn('Instagram testConnection failed', {
+          status: response.status,
+          statusText: response.statusText,
+          metaError,
+          instagramAccountId: this.connection.instagramAccountId,
+        });
+        return { valid: false, error: `Meta API (${response.status}): ${metaError}` };
+      }
+      logger.info('[Instagram] testConnection → OK');
+      return { valid: true };
+    } catch (error: any) {
+      const message = error?.message || String(error);
+      logger.error('Instagram connection test exception:', { message });
+      return { valid: false, error: `Erro de rede: ${message}` };
     }
   }
 

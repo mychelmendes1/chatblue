@@ -2,9 +2,7 @@ import { logger } from '../../config/logger.js';
 import { NotionService } from '../notion/notion.service.js';
 import * as fs from 'fs';
 import * as path from 'path';
-// pdf-parse types workaround
-import pdfParseModule from 'pdf-parse';
-const pdfParse = (pdfParseModule as any).default || pdfParseModule;
+// pdf-parse: lazy-loaded to avoid crash in Docker (browser/canvas polyfills)
 // @ts-ignore - mammoth types issue
 import * as mammoth from 'mammoth';
 
@@ -82,6 +80,8 @@ export class KnowledgeIngestionService {
     }
 
     try {
+      const pdfParseModule = await import('pdf-parse');
+      const pdfParse = (pdfParseModule as any).default ?? pdfParseModule;
       const dataBuffer = fs.readFileSync(source.filePath);
       const data = await pdfParse(dataBuffer);
 

@@ -3,9 +3,10 @@ import path from "path";
 import fs from "fs";
 import { v4 as uuidv4 } from "uuid";
 import { logger } from "../../config/logger";
+import { getUploadsDir } from "../../utils/uploads-dir.util.js";
 
-// Ensure upload directories exist
-const uploadsDir = process.env.UPLOADS_DIR || path.join(process.cwd(), 'apps', 'api', 'uploads');
+// Ensure upload directories exist (single source of truth for path)
+const uploadsDir = getUploadsDir();
 const tempDir = path.join(uploadsDir, "temp");
 const mediaDir = path.join(uploadsDir, "media");
 const documentsDir = path.join(uploadsDir, "documents");
@@ -28,7 +29,16 @@ const ALLOWED_DOCUMENTS = [
   "text/plain",
   "text/csv",
 ];
-const ALLOWED_AUDIO = ["audio/ogg", "audio/mpeg", "audio/wav", "audio/webm"];
+const ALLOWED_AUDIO = [
+  "audio/ogg",
+  "audio/mpeg",
+  "audio/wav",
+  "audio/webm",
+  "audio/mp4",
+  "audio/aac",
+  "audio/amr",
+  "audio/x-m4a",
+];
 const ALLOWED_VIDEO = ["video/mp4", "video/webm", "video/quicktime"];
 
 const ALL_ALLOWED = [
@@ -68,13 +78,17 @@ const storage = multer.diskStorage({
   },
 });
 
-// File filter
+// File filter — strip codec parameters (e.g. "audio/ogg; codecs=opus" → "audio/ogg")
+// before checking the allow-list so browser-recorded audio is accepted.
+const normalizeFileMime = (mime: string): string => mime.split(';')[0].trim();
+
 const fileFilter = (
   req: Express.Request,
   file: Express.Multer.File,
   cb: multer.FileFilterCallback
 ) => {
-  if (ALL_ALLOWED.includes(file.mimetype)) {
+  const baseMime = normalizeFileMime(file.mimetype);
+  if (ALL_ALLOWED.includes(baseMime)) {
     cb(null, true);
   } else {
     cb(new Error(`File type ${file.mimetype} is not allowed`));
@@ -135,10 +149,11 @@ export class UploadService {
   static getFileType(
     mimetype: string
   ): "image" | "document" | "audio" | "video" | "unknown" {
-    if (ALLOWED_IMAGES.includes(mimetype)) return "image";
-    if (ALLOWED_DOCUMENTS.includes(mimetype)) return "document";
-    if (ALLOWED_AUDIO.includes(mimetype)) return "audio";
-    if (ALLOWED_VIDEO.includes(mimetype)) return "video";
+    const base = normalizeFileMime(mimetype);
+    if (ALLOWED_IMAGES.includes(base)) return "image";
+    if (ALLOWED_DOCUMENTS.includes(base)) return "document";
+    if (ALLOWED_AUDIO.includes(base)) return "audio";
+    if (ALLOWED_VIDEO.includes(base)) return "video";
     return "unknown";
   }
 

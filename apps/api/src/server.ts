@@ -14,6 +14,7 @@ import { userAccessRouter } from './routes/user-access.routes';
 import { departmentRouter } from './routes/department.routes';
 import { connectionRouter } from './routes/connection.routes';
 import { ticketRouter } from './routes/ticket.routes';
+import { chatSearchRouter } from './routes/chat-search.routes';
 import { messageRouter } from './routes/message.routes';
 import { contactRouter } from './routes/contact.routes';
 import { metricsRouter } from './routes/metrics.routes';
@@ -30,12 +31,15 @@ import notificationRouter from './routes/notification.routes';
 import mlLearningRouter from './routes/ml-learning.routes';
 import { predefinedMessagesRouter } from './routes/predefined-messages.routes';
 import { externalAIRouter } from './routes/external-ai.routes';
+import { externalRouter } from './routes/external.routes.js';
+import sgtRouter from './routes/sgt.routes.js';
 import { setupSocketHandlers } from './sockets/index';
 import { startWorkers, stopWorkers } from './jobs/index';
 import { prisma } from './config/database';
 import { BaileysService } from './services/whatsapp/baileys.service';
 import path from 'path';
 import fs from 'fs';
+import { getUploadsDir } from './utils/uploads-dir.util.js';
 
 // =========================================
 // Global Error Handlers - Prevent Server Crashes
@@ -132,6 +136,7 @@ app.use('/api/user-access', userAccessRouter);
 app.use('/api/departments', departmentRouter);
 app.use('/api/connections', connectionRouter);
 app.use('/api/tickets', ticketRouter);
+app.use('/api/chat', chatSearchRouter);
 app.use('/api/messages', messageRouter);
 app.use('/api/contacts', contactRouter);
 app.use('/api/metrics', metricsRouter);
@@ -147,13 +152,12 @@ app.use('/api/notifications', notificationRouter);
 app.use('/api/ml-learning', mlLearningRouter);
 app.use('/api/predefined-messages', predefinedMessagesRouter);
 app.use('/api/external-ai', externalAIRouter);
+app.use('/api/external', externalRouter);
+app.use('/api/integrations/sgt', sgtRouter);
 app.use('/webhooks', webhookRouter);
 
-// Serve uploaded files statically
-const uploadsDir = process.env.UPLOADS_DIR || path.join(process.cwd(), 'apps', 'api', 'uploads');
-if (!fs.existsSync(uploadsDir)) {
-  fs.mkdirSync(uploadsDir, { recursive: true });
-}
+// Serve uploaded files statically (same path as upload.service and Baileys)
+const uploadsDir = getUploadsDir();
 app.use('/uploads', express.static(uploadsDir));
 
 // Error handler

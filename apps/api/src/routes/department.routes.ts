@@ -148,7 +148,10 @@ router.post('/', authenticate, requireAdmin, ensureTenant, async (req, res, next
 
     const department = await prisma.department.create({
       data: {
-        ...rest,
+        name: rest.name,
+        description: rest.description,
+        color: rest.color,
+        order: rest.order,
         company: { connect: { id: req.user!.companyId } },
         ...(parentId ? { parent: { connect: { id: parentId } } } : {}),
       },

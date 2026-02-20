@@ -26,6 +26,8 @@ router.get('/', authenticate, ensureTenant, async (req, res, next) => {
       notionApiKey: settings.notionApiKey ? '••••••••' : null,
       aiApiKey: settings.aiApiKey ? '••••••••' : null,
       whisperApiKey: settings.whisperApiKey ? '••••••••' : null,
+      outboundWebhookSecret: settings.outboundWebhookSecret ? '••••••••' : null,
+      externalIntegrationApiKey: settings.externalIntegrationApiKey ? '••••••••' : null,
     };
 
     res.json(safeSettings);
@@ -53,9 +55,61 @@ router.get('/admin', authenticate, requireAdmin, ensureTenant, async (req, res, 
       notionApiKey: settings.notionApiKey ? '••••••••' : null,
       aiApiKey: settings.aiApiKey ? '••••••••' : null,
       whisperApiKey: settings.whisperApiKey ? '••••••••' : null,
+      outboundWebhookSecret: settings.outboundWebhookSecret ? '••••••••' : null,
+      externalIntegrationApiKey: settings.externalIntegrationApiKey ? '••••••••' : null,
     };
 
     res.json(safeSettings);
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Update external integration (webhook URL + secret)
+router.put('/external-integration', authenticate, requireAdmin, ensureTenant, async (req, res, next) => {
+  try {
+    const data = z.object({
+      outboundWebhookUrl: z.string().optional().nullable(),
+      outboundWebhookSecret: z.string().optional().nullable(),
+    }).parse(req.body);
+
+    const updatePayload: { outboundWebhookUrl?: string | null; outboundWebhookSecret?: string | null } = {};
+    if (data.outboundWebhookUrl !== undefined) updatePayload.outboundWebhookUrl = data.outboundWebhookUrl || null;
+    if (data.outboundWebhookSecret !== undefined) updatePayload.outboundWebhookSecret = data.outboundWebhookSecret || null;
+
+    const settings = await prisma.companySettings.upsert({
+      where: { companyId: req.user!.companyId },
+      update: Object.keys(updatePayload).length > 0 ? updatePayload : { updatedAt: new Date() },
+      create: {
+        companyId: req.user!.companyId,
+        outboundWebhookUrl: data.outboundWebhookUrl ?? null,
+        outboundWebhookSecret: data.outboundWebhookSecret ?? null,
+      },
+    });
+
+    res.json({
+      ...settings,
+      outboundWebhookSecret: settings.outboundWebhookSecret ? '••••••••' : null,
+      externalIntegrationApiKey: settings.externalIntegrationApiKey ? '••••••••' : null,
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Generate external integration API key (returns key once; store hashed or plain per product choice)
+router.post('/external-integration/generate-key', authenticate, requireAdmin, ensureTenant, async (req, res, next) => {
+  try {
+    const crypto = await import('crypto');
+    const apiKey = crypto.randomBytes(32).toString('hex');
+
+    await prisma.companySettings.upsert({
+      where: { companyId: req.user!.companyId },
+      update: { externalIntegrationApiKey: apiKey },
+      create: { companyId: req.user!.companyId, externalIntegrationApiKey: apiKey },
+    });
+
+    res.json({ externalIntegrationApiKey: apiKey });
   } catch (error) {
     next(error);
   }

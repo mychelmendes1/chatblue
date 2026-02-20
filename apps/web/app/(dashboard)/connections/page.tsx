@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Wifi,
   WifiOff,
@@ -120,10 +120,53 @@ export default function ConnectionsPage() {
   const [selectedDefaultUserId, setSelectedDefaultUserId] = useState<string>("");
   const [availableUsers, setAvailableUsers] = useState<CompanyUser[]>([]);
   const [isLoadingAISettings, setIsLoadingAISettings] = useState(false);
+  const refreshedInstagramIds = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     fetchConnections();
   }, []);
+
+  // Corrige Instagram/Meta Cloud presos em "Conectando": chama refresh e exibe resultado
+  useEffect(() => {
+    const stuck = connections.filter(
+      (c) =>
+        (c.type === "INSTAGRAM" || c.type === "META_CLOUD") &&
+        c.status === "CONNECTING" &&
+        !refreshedInstagramIds.current.has(c.id)
+    );
+    if (stuck.length === 0) return;
+    stuck.forEach((c) => {
+      refreshedInstagramIds.current.add(c.id);
+      api
+        .post<{ status: string; instagramUsername?: string; error?: string }>(`/connections/${c.id}/refresh`)
+        .then((resp) => {
+          const data = resp.data;
+          if (data.status === "CONNECTED") {
+            toast({
+              title: `${c.name} conectado!`,
+              description: data.instagramUsername ? `@${data.instagramUsername}` : undefined,
+            });
+          } else if (data.status === "DISCONNECTED") {
+            toast({
+              title: `${c.name} - falha na validação`,
+              description: data.error || "Verifique o token e as credenciais no painel da Meta.",
+              variant: "destructive",
+              duration: 12000,
+            });
+          }
+          fetchConnections();
+        })
+        .catch((err) => {
+          const msg = err?.response?.data?.message || err?.message || "Erro ao verificar conexão";
+          toast({
+            title: `Erro ao verificar ${c.name}`,
+            description: msg,
+            variant: "destructive",
+          });
+          fetchConnections();
+        });
+    });
+  }, [connections]);
 
   // Listen for company switch events to reload data
   useEffect(() => {
@@ -190,15 +233,17 @@ export default function ConnectionsPage() {
       } else {
         await api.post(`/connections/${connection.id}/connect`);
         const channelName = connection.type === "INSTAGRAM" ? "Instagram" : "WhatsApp";
-        toast({ title: `Conectando ${channelName}...` });
+        toast({ title: `${channelName} conectado` });
         fetchConnections();
       }
-    } catch (error) {
+    } catch (error: unknown) {
+      const msg = (error as { response?: { data?: { message?: string } } })?.response?.data?.message;
       toast({
-        title: "Erro",
-        description: "Falha ao conectar",
+        title: "Erro ao conectar",
+        description: msg || "Falha ao conectar. Verifique o token e a configuração.",
         variant: "destructive",
       });
+      fetchConnections();
     }
   }
 
@@ -554,6 +599,35 @@ export default function ConnectionsPage() {
                       <span className="text-sm font-mono text-pink-600">
                         @{connection.instagramUsername}
                       </span>
+                    </div>
+                  )}
+
+                  {connection.type === "INSTAGRAM" && (
+                    <div className="space-y-1.5 rounded-md border bg-muted/40 p-2">
+                      <span className="text-xs font-medium text-muted-foreground">URL do webhook (Meta)</span>
+                      <p className="text-xs font-mono break-all text-foreground">
+                        {(typeof window !== "undefined" ? process.env.NEXT_PUBLIC_API_URL : null) || "https://chat.grupoblue.com.br"}
+                        /webhooks/instagram/{connection.id}
+                      </p>
+                      {typeof window !== "undefined" &&
+                        process.env.NEXT_PUBLIC_API_URL?.startsWith("http://localhost") && (
+                          <p className="text-xs text-amber-600 dark:text-amber-400">
+                            Localhost não é acessível pela Meta. Use ngrok (ou similar) e configure a URL pública no painel.
+                          </p>
+                        )}
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="h-7 text-xs"
+                        onClick={() => {
+                          const url = `${(typeof window !== "undefined" ? process.env.NEXT_PUBLIC_API_URL : null) || "https://chat.grupoblue.com.br"}/webhooks/instagram/${connection.id}`;
+                          navigator.clipboard.writeText(url);
+                          toast({ title: "URL copiada!", description: "Cole no painel da Meta (Instagram → Webhooks)." });
+                        }}
+                      >
+                        Copiar URL
+                      </Button>
                     </div>
                   )}
 
@@ -971,14 +1045,25 @@ function NewConnectionDialog({ onSuccess }: { onSuccess: () => void }) {
       
       console.log("Connection created successfully, showing toast...");
       const baseUrl = (typeof window !== "undefined" ? process.env.NEXT_PUBLIC_API_URL : null) || "https://chat.grupoblue.com.br";
-      const callbackUrl = type === "META_CLOUD" && response?.data?.id
-        ? `${baseUrl.replace(/\/$/, "")}/webhooks/meta/${response.data.id}`
+      const baseUrlClean = baseUrl.replace(/\/$/, "");
+      const callbackUrlMeta = type === "META_CLOUD" && response?.data?.id
+        ? `${baseUrlClean}/webhooks/meta/${response.data.id}`
         : null;
-      if (type === "META_CLOUD" && callbackUrl) {
-        navigator.clipboard.writeText(callbackUrl).catch(() => {});
+      const callbackUrlInstagram = type === "INSTAGRAM" && response?.data?.id
+        ? `${baseUrlClean}/webhooks/instagram/${response.data.id}`
+        : null;
+      if (type === "META_CLOUD" && callbackUrlMeta) {
+        navigator.clipboard.writeText(callbackUrlMeta).catch(() => {});
         toast({
           title: "Conexão criada com sucesso",
           description: `Configure no Meta: WhatsApp → Configuração → Webhook. URL de callback copiada para a área de transferência.`,
+          duration: 8000,
+        });
+      } else if (type === "INSTAGRAM" && callbackUrlInstagram) {
+        navigator.clipboard.writeText(callbackUrlInstagram).catch(() => {});
+        toast({
+          title: "Conexão criada com sucesso",
+          description: "Configure o webhook no painel da Meta (Instagram). URL copiada para a área de transferência.",
           duration: 8000,
         });
       } else {
@@ -1278,6 +1363,9 @@ function NewConnectionDialog({ onSuccess }: { onSuccess: () => void }) {
                 do Instagram conectada a uma página do Facebook. O token deve ter permissões de
                 <code className="mx-1 px-1 bg-pink-100 dark:bg-pink-900 rounded">instagram_basic</code> e
                 <code className="mx-1 px-1 bg-pink-100 dark:bg-pink-900 rounded">instagram_manage_messages</code>.
+              </p>
+              <p className="text-xs text-pink-700 dark:text-pink-300 mt-2">
+                Guia completo: <code className="px-1 bg-pink-100 dark:bg-pink-900 rounded">docs/CONEXAO_INSTAGRAM.md</code>
               </p>
             </div>
           </TabsContent>

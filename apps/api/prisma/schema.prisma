@@ -223,6 +223,10 @@ model User {
   // Push notification subscription (for web push)
   pushSubscription Json? @map("push_subscription")
 
+  // Password reset
+  passwordResetToken   String?   @unique @map("password_reset_token")
+  passwordResetExpires DateTime? @map("password_reset_expires")
+
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
 
@@ -645,6 +649,11 @@ model CompanySettings {
 
   // Default department for transfers when no specific department is found
   defaultTransferDepartmentId String? @map("default_transfer_department_id")
+
+  // Integração externa (webhook de saída + API de métricas)
+  outboundWebhookUrl         String? @map("outbound_webhook_url")          // URL para enviar eventos (ex.: Supabase function)
+  outboundWebhookSecret      String? @map("outbound_webhook_secret")      // Secret no header X-Webhook-Secret
+  externalIntegrationApiKey  String? @map("external_integration_api_key")  // Token para GET /api/external/* (X-API-Key)
 
   // Blue Assistant
   blueEnabled Boolean @default(true) @map("blue_enabled")

@@ -3,6 +3,7 @@ import { logger } from '../config/logger.js';
 import { redis } from '../config/redis.js';
 import { generateProtocol } from '../utils/protocol.js';
 import { normalizeMediaUrl } from '../utils/media-url.util.js';
+import { getUploadsDir } from '../utils/uploads-dir.util.js';
 import { AIService } from './ai/ai.service.js';
 import { ContextBuilderService } from './ai/context-builder.service.js';
 import { TranscriptionService } from './ai/transcription.service.js';
@@ -11,6 +12,7 @@ import { NotionService } from './notion/notion.service.js';
 import { SLAService } from './sla/sla.service.js';
 import { ExternalAIWebhookService, BlueChatResponse, ExternalAIConfig } from './external-ai/external-ai-webhook.service.js';
 import { WhatsAppService } from './whatsapp/whatsapp.service.js';
+import { sendOutboundEvent } from './outbound-webhook.service.js';
 import * as path from 'path';
 
 // Cooldown de 4 horas para mensagens de fora do horário (em segundos)
@@ -29,6 +31,7 @@ interface IncomingMessage {
   timestamp: Date;
   quotedMessageId?: string; // WhatsApp message ID of the quoted/replied message
   metadata?: {
+    platform?: 'whatsapp' | 'instagram';
     latitude?: number;
     longitude?: number;
     locationName?: string;
@@ -183,21 +186,26 @@ export class MessageProcessor {
         logger.warn(`Phone ${normalizedPhone} appears to be a LID (WhatsApp privacy ID). User may have phone privacy enabled.`);
       }
 
-      // Get or create contact - search by normalized phone or LID
+      const isInstagram = data.metadata?.platform === 'instagram';
+
+      // Get or create contact - search by normalized phone, LID, or Instagram ID
+      const contactWhere: any = {
+        companyId,
+        OR: [
+          { phone: normalizedPhone },
+          { phone: from },
+          { lidId: normalizedPhone },
+        ],
+      };
+      if (isInstagram) {
+        contactWhere.OR.push({ instagramId: normalizedPhone }, { instagramId: from });
+      }
       let contact = await prisma.contact.findFirst({
-        where: { 
-          companyId,
-          OR: [
-            { phone: normalizedPhone },
-            { phone: from }, // Also check original format for backwards compatibility
-            { lidId: normalizedPhone }, // Also search by LID if we have it stored
-          ],
-        },
+        where: contactWhere,
       });
 
       if (!contact) {
         // Create new contact with pushName as name and profile picture
-        // If it's a LID, store it in the lidId field and use a placeholder phone
         const contactData: any = {
           name: pushName || undefined,
           avatar: profilePicUrl || undefined,
@@ -205,17 +213,19 @@ export class MessageProcessor {
         };
 
         if (isLid) {
-          // For LIDs, store the LID in both phone (for compatibility) and lidId fields
           contactData.phone = normalizedPhone;
           contactData.lidId = normalizedPhone;
           logger.warn(`Creating contact with LID: ${normalizedPhone}. Messages may not be delivered until real phone is resolved.`);
+        } else if (isInstagram) {
+          contactData.phone = normalizedPhone;
+          contactData.instagramId = normalizedPhone;
         } else {
           contactData.phone = normalizedPhone;
         }
 
         contact = await prisma.contact.create({ data: contactData });
-        
-        logger.info(`New contact created: ${normalizedPhone} (${pushName || 'sem nome'}) - original: ${from}${isLid ? ' [LID]' : ''}`);
+
+        logger.info(`New contact created: ${normalizedPhone} (${pushName || 'sem nome'}) - original: ${from}${isLid ? ' [LID]' : ''}${isInstagram ? ' [Instagram]' : ''}`);
 
         // Try to sync with Notion in background
         this.syncContactWithNotion(contact.id, companyId).catch((err) =>
@@ -242,7 +252,13 @@ export class MessageProcessor {
           updates.lidId = normalizedPhone;
           logger.info(`Associating LID ${normalizedPhone} with contact ${contact.phone}`);
         }
-        
+
+        // If this is Instagram and contact doesn't have instagramId, save it
+        if (isInstagram && !contact.instagramId) {
+          updates.instagramId = normalizedPhone;
+          logger.info(`Associating Instagram ID ${normalizedPhone} with contact ${contact.phone}`);
+        }
+
         if (Object.keys(updates).length > 0) {
           contact = await prisma.contact.update({
             where: { id: contact.id },
@@ -400,7 +416,7 @@ export class MessageProcessor {
               ? `🔄 Atendimento reaberto automaticamente - atribuído para ${connectionSettings?.defaultUser?.name || 'atendente'}`
               : `🔄 Atendimento reaberto automaticamente - aguardando atendente`;
           
-          await prisma.message.create({
+          const reopenMsg = await prisma.message.create({
             data: {
               type: 'SYSTEM',
               content: systemContent,
@@ -410,6 +426,15 @@ export class MessageProcessor {
               ticketId: ticket.id,
               connectionId,
             },
+          });
+          sendOutboundEvent(companyId, 'message_created', {
+            ticketId: ticket.id,
+            companyId,
+            messageId: reopenMsg.id,
+            type: reopenMsg.type,
+            content: reopenMsg.content ?? undefined,
+            isFromMe: reopenMsg.isFromMe,
+            createdAt: reopenMsg.createdAt.toISOString(),
           });
 
           // Emit socket event for real-time update with full ticket data
@@ -535,6 +560,16 @@ export class MessageProcessor {
           },
         });
 
+        sendOutboundEvent(companyId, 'conversation_created', {
+          ticketId: ticket.id,
+          companyId: ticket.companyId,
+          contactId: ticket.contactId,
+          protocol: ticket.protocol,
+          status: ticket.status,
+          departmentId: ticket.departmentId ?? undefined,
+          createdAt: ticket.createdAt.toISOString(),
+        });
+
         // Create activity
         await prisma.activity.create({
           data: {
@@ -557,6 +592,16 @@ export class MessageProcessor {
             ticketId: ticket.id,
             connectionId,
           },
+        });
+
+        sendOutboundEvent(companyId, 'message_created', {
+          ticketId: ticket.id,
+          companyId,
+          messageId: systemMessage.id,
+          type: systemMessage.type,
+          content: systemMessage.content ?? undefined,
+          isFromMe: systemMessage.isFromMe,
+          createdAt: systemMessage.createdAt.toISOString(),
         });
 
         // Emit socket event for new ticket
@@ -678,6 +723,17 @@ export class MessageProcessor {
         },
       });
 
+      sendOutboundEvent(companyId, 'message_created', {
+        ticketId: ticket.id,
+        companyId,
+        messageId: message.id,
+        type: message.type,
+        content: message.content ?? undefined,
+        mediaUrl: message.mediaUrl ?? undefined,
+        isFromMe: message.isFromMe,
+        createdAt: message.createdAt.toISOString(),
+      });
+
       // Horário de funcionamento: se recebemos fora do horário, enviar mensagem automática
       const companySettings = await prisma.companySettings.findUnique({
         where: { companyId },
@@ -728,6 +784,16 @@ export class MessageProcessor {
                     connectionId,
                     wamid: result.messageId,
                   },
+                });
+
+                sendOutboundEvent(companyId, 'message_created', {
+                  ticketId: ticket.id,
+                  companyId,
+                  messageId: sentMessage.id,
+                  type: sentMessage.type,
+                  content: sentMessage.content ?? undefined,
+                  isFromMe: sentMessage.isFromMe,
+                  createdAt: sentMessage.createdAt.toISOString(),
                 });
                 
                 // Salvar no Redis com cooldown de 4 horas
@@ -1036,8 +1102,8 @@ export class MessageProcessor {
 
       // Check if mediaUrl is a local file path or URL
       if (mediaUrl.startsWith('http://') || mediaUrl.startsWith('https://')) {
-        // It's a URL - download and transcribe
-        const uploadsDir = path.join(process.cwd(), 'uploads');
+        // It's a URL - download and transcribe (use shared uploads dir for temp cache)
+        const uploadsDir = getUploadsDir();
         return await transcriptionService.transcribeFromUrl(mediaUrl, uploadsDir, 'pt');
       } else {
         // It's a local file path
@@ -1189,6 +1255,15 @@ export class MessageProcessor {
               },
             },
           });
+          sendOutboundEvent(companyId, 'message_created', {
+            ticketId: ticket.id,
+            companyId,
+            messageId: aiMessage.id,
+            type: aiMessage.type,
+            content: aiMessage.content ?? undefined,
+            isFromMe: aiMessage.isFromMe,
+            createdAt: aiMessage.createdAt.toISOString(),
+          });
 
           // Atualizar status do ticket
           const ticketCurrentData = await prisma.ticket.findUnique({ where: { id: ticket.id }, select: { firstResponse: true, status: true, createdAt: true } });
@@ -1310,6 +1385,15 @@ export class MessageProcessor {
             connectionId: ticket.connectionId,
           },
         });
+        sendOutboundEvent(companyId, 'message_created', {
+          ticketId: ticket.id,
+          companyId,
+          messageId: systemMessage.id,
+          type: systemMessage.type,
+          content: systemMessage.content ?? undefined,
+          isFromMe: systemMessage.isFromMe,
+          createdAt: systemMessage.createdAt.toISOString(),
+        });
 
         // Criar atividade
         await prisma.activity.create({
@@ -1406,6 +1490,15 @@ export class MessageProcessor {
                 sender: { select: { id: true, name: true, avatar: true, isAI: true } },
               },
             });
+            sendOutboundEvent(companyId, 'message_created', {
+              ticketId: ticket.id,
+              companyId,
+              messageId: aiMessage.id,
+              type: aiMessage.type,
+              content: aiMessage.content ?? undefined,
+              isFromMe: aiMessage.isFromMe,
+              createdAt: aiMessage.createdAt.toISOString(),
+            });
 
             const io = (global as any).io;
             if (io) {
@@ -1447,6 +1540,15 @@ export class MessageProcessor {
             ticketId: ticket.id,
             connectionId: ticket.connectionId,
           },
+        });
+        sendOutboundEvent(companyId, 'message_created', {
+          ticketId: ticket.id,
+          companyId,
+          messageId: systemMessage.id,
+          type: systemMessage.type,
+          content: systemMessage.content ?? undefined,
+          isFromMe: systemMessage.isFromMe,
+          createdAt: systemMessage.createdAt.toISOString(),
         });
 
         // Criar atividade
@@ -1858,6 +1960,15 @@ export class MessageProcessor {
           connectionId: ticket.connectionId,
         },
       });
+      sendOutboundEvent(companyId, 'message_created', {
+        ticketId,
+        companyId,
+        messageId: aiMessage.id,
+        type: aiMessage.type,
+        content: aiMessage.content ?? undefined,
+        isFromMe: aiMessage.isFromMe,
+        createdAt: aiMessage.createdAt.toISOString(),
+      });
 
       // Only add name to first message
       const messageContent = i === 0 ? `*${aiName}:*\n${part}` : part;
@@ -1928,6 +2039,102 @@ export class MessageProcessor {
           createdAt: lastMessage.createdAt,
         },
       });
+    }
+  }
+
+  /**
+   * Generate and send an opening message when a ticket is assigned to internal AI.
+   * Builds context from conversation history and asks the AI to send a first message to the client.
+   */
+  static async generateAndSendOpeningMessage(ticketId: string, companyId: string): Promise<void> {
+    try {
+      const settings = await prisma.companySettings.findUnique({
+        where: { companyId },
+      });
+      if (!settings?.aiEnabled || !settings.aiApiKey) {
+        logger.debug(`[OpeningMessage] AI not enabled or no API key for company ${companyId}`);
+        return;
+      }
+
+      const ticket = await prisma.ticket.findUnique({
+        where: { id: ticketId },
+        include: {
+          contact: true,
+          connection: true,
+          department: true,
+          company: true,
+          assignedTo: {
+            select: { id: true, name: true, isAI: true, aiConfig: true },
+          },
+          messages: {
+            orderBy: { createdAt: 'desc' },
+            take: 30,
+            where: { type: { not: 'SYSTEM' } },
+          },
+        },
+      });
+
+      if (!ticket?.assignedTo?.isAI || !ticket.assignedTo.aiConfig) {
+        logger.debug(`[OpeningMessage] Ticket ${ticketId} not assigned to internal AI`);
+        return;
+      }
+      if (ExternalAIWebhookService.isExternalAI(ticket.assignedTo.aiConfig)) {
+        logger.debug(`[OpeningMessage] Ticket ${ticketId} assigned to external AI, skip opening message`);
+        return;
+      }
+
+      const aiConfig = ticket.assignedTo.aiConfig as any;
+      const syntheticMessage =
+        'Esta conversa foi transferida para você. Com base no histórico abaixo, envie uma única mensagem inicial ao cliente, apresentando-se e continuando o atendimento de forma natural. Não repita o histórico na resposta.';
+
+      const contextBuilder = new ContextBuilderService({
+        personalityConfig: {
+          tone: (aiConfig.personalityTone || settings.aiPersonalityTone || 'friendly') as any,
+          style: (aiConfig.personalityStyle || settings.aiPersonalityStyle || 'conversational') as any,
+          useEmojis: aiConfig.useEmojis ?? settings.aiUseEmojis ?? true,
+          useClientName: aiConfig.useClientName ?? settings.aiUseClientName ?? true,
+        },
+        guardrailsConfig: {
+          enabled: aiConfig.guardrailsEnabled ?? settings.aiGuardrailsEnabled ?? true,
+        },
+      });
+
+      const builtContext = await contextBuilder.buildContext(ticketId, syntheticMessage, {
+        name: ticket.assignedTo.name,
+        systemPrompt: aiConfig.systemPrompt || settings.aiSystemPrompt,
+        trainingData: aiConfig.trainingData || '',
+      });
+
+      const provider = settings.aiProvider || 'openai';
+      const aiService = new AIService(provider, settings.aiApiKey);
+      let modelToUse = aiConfig.model || settings.aiDefaultModel;
+      const isOpenAIModel = modelToUse?.startsWith('gpt-') || modelToUse?.includes('gpt');
+      const isAnthropicModel = modelToUse?.startsWith('claude-');
+      if (provider === 'anthropic' && isOpenAIModel) {
+        modelToUse = settings.aiDefaultModel || 'claude-sonnet-4-20250514';
+      } else if (provider === 'openai' && isAnthropicModel) {
+        modelToUse = settings.aiDefaultModel || 'gpt-4-turbo-preview';
+      }
+
+      const response = await aiService.generateResponse(
+        builtContext.systemPrompt,
+        syntheticMessage,
+        builtContext.context,
+        {
+          model: modelToUse,
+          temperature: aiConfig.temperature ?? 0.7,
+          maxTokens: aiConfig.maxTokens ?? 1000,
+        }
+      );
+
+      if (response?.trim()) {
+        const responseValidation = builtContext.guardrails.validateAIResponse(response, syntheticMessage);
+        const finalResponse = responseValidation.isValid ? response : (responseValidation.suggestedResponse || response);
+        await this.sendAIResponse(ticketId, companyId, finalResponse, ticket, ticket.contact);
+        logger.info(`[OpeningMessage] Sent opening message for ticket ${ticketId}`);
+      }
+    } catch (err: any) {
+      logger.error(`[OpeningMessage] Error for ticket ${ticketId}:`, { message: err?.message });
     }
   }
 

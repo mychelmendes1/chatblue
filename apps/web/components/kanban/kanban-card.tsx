@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { formatPhone } from "@/lib/utils";
 import { formatDistanceToNow } from "date-fns";
 import { ptBR } from "date-fns/locale";
+import { ConnectionTag } from "@/components/shared/connection-tag";
 
 export interface KanbanTicket {
   id: string;
@@ -20,6 +21,7 @@ export interface KanbanTicket {
     name?: string;
     phone: string;
     avatar?: string;
+    lastMessageAt?: string;
   };
   assignedTo?: {
     id: string;
@@ -31,6 +33,11 @@ export interface KanbanTicket {
     id: string;
     name: string;
     color?: string;
+  } | null;
+  connection?: {
+    id: string;
+    name: string;
+    type?: string;
   } | null;
   _count?: {
     messages: number;
@@ -89,7 +96,7 @@ export function KanbanCard({ ticket, isDragging }: KanbanCardProps) {
         </div>
       </div>
 
-      {/* Tags: Setor + Atendente */}
+      {/* Tags: Setor + Conexão */}
       <div className="flex flex-wrap gap-1 mb-2">
         {ticket.department && (
           <Badge
@@ -103,6 +110,12 @@ export function KanbanCard({ ticket, isDragging }: KanbanCardProps) {
             {ticket.department.name}
           </Badge>
         )}
+        <ConnectionTag
+          connectionName={ticket.connection?.name}
+          connectionType={ticket.connection?.type}
+          lastMessageAt={ticket.contact?.lastMessageAt}
+          compact
+        />
       </div>
 
       {/* Footer: Atendente + Tempo */}

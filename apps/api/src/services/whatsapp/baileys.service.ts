@@ -1,14 +1,12 @@
-import makeWASocket, {
-  DisconnectReason,
-  useMultiFileAuthState,
-  WASocket,
-  BaileysEventMap,
-  fetchLatestBaileysVersion,
-  downloadMediaMessage,
-} from '@whiskeysockets/baileys';
-// @ts-ignore - Boom types come from Baileys
-import { Boom } from '@hapi/boom';
+// Lazy-loaded to avoid ESM/require crash in Docker (ERR_REQUIRE_ESM)
+import type { WASocket, BaileysEventMap } from '@whiskeysockets/baileys';
 import * as QRCode from 'qrcode';
+
+let _baileys: typeof import('@whiskeysockets/baileys') | null = null;
+async function getBaileys(): Promise<typeof import('@whiskeysockets/baileys')> {
+  if (!_baileys) _baileys = await import('@whiskeysockets/baileys');
+  return _baileys;
+}
 import { logger } from '../../config/logger.js';
 import { prisma } from '../../config/database.js';
 import { Prisma } from '@prisma/client';
@@ -20,31 +18,13 @@ import { spawn } from 'child_process';
 import { promisify } from 'util';
 import { MessageProcessor } from '../message-processor.service.js';
 import { normalizeMediaUrl } from '../../utils/media-url.util.js';
+import { getUploadsDir } from '../../utils/uploads-dir.util.js';
 import { emailService } from '../email/email.service.js';
 
 const instances = new Map<string, BaileysService>();
 
-// Get the uploads directory path
-const getUploadsDir = () => {
-  // Try multiple possible paths
-  const possiblePaths = [
-    path.join(process.cwd(), 'uploads'),           // When running from apps/api
-    path.join(process.cwd(), 'apps', 'api', 'uploads'), // When running from root
-  ];
-  
-  for (const p of possiblePaths) {
-    if (fs.existsSync(p)) {
-      return p;
-    }
-  }
-  
-  // Default to uploads in current directory
-  const defaultPath = path.join(process.cwd(), 'uploads');
-  if (!fs.existsSync(defaultPath)) {
-    fs.mkdirSync(defaultPath, { recursive: true });
-  }
-  return defaultPath;
-};
+/** Fixed WhatsApp version for makeWASocket to avoid fetchLatestBaileysVersion() hang/incompatibility and reduce "connect then disconnect" issues (see Baileys docs and GH #1004, #1990) */
+const FIXED_WHATSAPP_VERSION: [number, number, number] = [2, 3000, 1015901307];
 
 // Get the sessions directory path - use process.cwd() for ESM compatibility
 const getSessionsDir = () => {
@@ -257,6 +237,9 @@ export class BaileysService extends EventEmitter {
     });
 
     try {
+      const baileys = await getBaileys();
+      const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = baileys;
+
       const sessionsDir = getSessionsDir();
       const sessionPath = path.join(sessionsDir, this.connectionId);
       
@@ -281,14 +264,11 @@ export class BaileysService extends EventEmitter {
       }
       
       const { state, saveCreds } = await useMultiFileAuthState(sessionPath);
-      
-      // Get the latest version
-      const { version } = await fetchLatestBaileysVersion();
-      logger.info(`Using Baileys version: ${version.join('.')} for: ${this.connectionId}`);
 
+      logger.info(`Using fixed WhatsApp version ${FIXED_WHATSAPP_VERSION.join('.')} for: ${this.connectionId}`);
       this.socket = makeWASocket({
         auth: state,
-        version,
+        version: FIXED_WHATSAPP_VERSION,
         printQRInTerminal: true,
         browser: ['ChatBlue', 'Chrome', '1.0.0'],
         syncFullHistory: false,
@@ -323,8 +303,8 @@ export class BaileysService extends EventEmitter {
         }
 
         if (connection === 'close') {
-          const reason = (lastDisconnect?.error as Boom)?.output?.statusCode;
-          const errorMessage = (lastDisconnect?.error as Boom)?.message || 'Unknown error';
+          const reason = (lastDisconnect?.error as any)?.output?.statusCode;
+          const errorMessage = (lastDisconnect?.error as any)?.message || 'Unknown error';
           logger.info(`WhatsApp connection closed: ${this.connectionId}, reason: ${reason}, message: ${errorMessage}`);
 
           const wasConnected = this.isConnected;
@@ -960,80 +940,106 @@ export class BaileysService extends EventEmitter {
         fs.writeFileSync(webmPath, buffer);
         logger.info(`WebM file downloaded: ${webmPath} (${buffer.length} bytes)`);
         
-        // Convert WebM to OGG/Opus using FFmpeg
-        // IMPORTANT: -avoid_negative_ts make_zero is required for WhatsApp compatibility
-        // See: https://github.com/WhiskeySockets/Baileys README
-        await new Promise<void>((resolve, reject) => {
-          const ffmpeg = spawn('ffmpeg', [
-            '-i', webmPath,
-            '-avoid_negative_ts', 'make_zero',  // Required for WhatsApp compatibility!
-            '-c:a', 'libopus',  // Use Opus codec
-            '-b:a', '64k',      // Bitrate 64kbps (good quality for voice)
-            '-ar', '48000',     // Sample rate 48kHz
-            '-ac', '1',         // Mono channel (voice)
-            '-y',               // Overwrite output file
-            oggPath
-          ]);
-          
-          let stderr = '';
-          
-          ffmpeg.stderr.on('data', (data) => {
-            stderr += data.toString();
-          });
-          
-          ffmpeg.on('close', (code) => {
-            // Clean up input file
-            try {
-              if (fs.existsSync(webmPath)) {
-                fs.unlinkSync(webmPath);
-              }
-            } catch (e) {
-              logger.warn(`Failed to cleanup WebM file: ${webmPath}`, e);
-            }
+        // Try converting WebM to OGG/Opus using FFmpeg
+        try {
+          await new Promise<void>((resolve, reject) => {
+            const ffmpeg = spawn('ffmpeg', [
+              '-i', webmPath,
+              '-avoid_negative_ts', 'make_zero',  // Required for WhatsApp compatibility!
+              '-c:a', 'libopus',  // Use Opus codec
+              '-b:a', '64k',      // Bitrate 64kbps (good quality for voice)
+              '-ar', '48000',     // Sample rate 48kHz
+              '-ac', '1',         // Mono channel (voice)
+              '-y',               // Overwrite output file
+              oggPath
+            ]);
             
-            if (code === 0) {
-              logger.info(`Audio converted successfully: ${oggPath}`);
-              convertedAudioPath = oggPath;
-              
-              // Copy converted file to uploads directory with a permanent name
-              const uploadsDir = getUploadsDir();
-              const mediaDir = path.join(uploadsDir, 'media');
-              if (!fs.existsSync(mediaDir)) {
-                fs.mkdirSync(mediaDir, { recursive: true });
-              }
-              
-              const finalFileName = `audio-converted-${Date.now()}.ogg`;
-              const finalPath = path.join(mediaDir, finalFileName);
-              fs.copyFileSync(oggPath, finalPath);
-              convertedFilePath = finalPath; // Store path for buffer sending
-              logger.info(`Converted audio saved: ${finalPath}`);
-              
-              // Update finalMediaUrl to point to the converted file
-              const apiUrl = process.env.API_URL || `http://${process.env.HOST || 'localhost'}:${process.env.PORT || 3001}`;
-              finalMediaUrl = `${apiUrl}/uploads/media/${finalFileName}`;
-              logger.info(`finalMediaUrl updated to converted OGG file: ${finalMediaUrl}`);
-              
-              // Clean up temporary OGG file (keep the final one)
+            let stderr = '';
+            
+            ffmpeg.stderr.on('data', (data) => {
+              stderr += data.toString();
+            });
+            
+            ffmpeg.on('close', (code) => {
+              // Clean up input file
               try {
-                if (fs.existsSync(oggPath)) {
-                  fs.unlinkSync(oggPath);
+                if (fs.existsSync(webmPath)) {
+                  fs.unlinkSync(webmPath);
                 }
               } catch (e) {
-                logger.warn(`Failed to cleanup temp OGG file: ${oggPath}`, e);
+                logger.warn(`Failed to cleanup WebM file: ${webmPath}`, e);
               }
               
-              resolve();
-            } else {
-              logger.error(`FFmpeg conversion failed with code ${code}:`, stderr);
-              reject(new Error(`Falha ao converter áudio: código ${code}`));
-            }
+              if (code === 0) {
+                logger.info(`Audio converted successfully: ${oggPath}`);
+                convertedAudioPath = oggPath;
+                
+                // Copy converted file to uploads directory with a permanent name
+                const uploadsDir = getUploadsDir();
+                const mediaDir = path.join(uploadsDir, 'media');
+                if (!fs.existsSync(mediaDir)) {
+                  fs.mkdirSync(mediaDir, { recursive: true });
+                }
+                
+                const finalFileName = `audio-converted-${Date.now()}.ogg`;
+                const finalPath = path.join(mediaDir, finalFileName);
+                fs.copyFileSync(oggPath, finalPath);
+                convertedFilePath = finalPath; // Store path for buffer sending
+                logger.info(`Converted audio saved: ${finalPath}`);
+                
+                // Update finalMediaUrl to point to the converted file
+                const apiUrl = process.env.API_URL || `http://${process.env.HOST || 'localhost'}:${process.env.PORT || 3001}`;
+                finalMediaUrl = `${apiUrl}/uploads/media/${finalFileName}`;
+                logger.info(`finalMediaUrl updated to converted OGG file: ${finalMediaUrl}`);
+                
+                // Clean up temporary OGG file (keep the final one)
+                try {
+                  if (fs.existsSync(oggPath)) {
+                    fs.unlinkSync(oggPath);
+                  }
+                } catch (e) {
+                  logger.warn(`Failed to cleanup temp OGG file: ${oggPath}`, e);
+                }
+                
+                resolve();
+              } else {
+                logger.error(`FFmpeg conversion failed with code ${code}:`, stderr);
+                reject(new Error(`Falha ao converter áudio: código ${code}`));
+              }
+            });
+            
+            ffmpeg.on('error', (error) => {
+              logger.error(`FFmpeg spawn error:`, error);
+              // Clean up input file on spawn error
+              try {
+                if (fs.existsSync(webmPath)) {
+                  fs.unlinkSync(webmPath);
+                }
+              } catch (e) {
+                // Ignore cleanup errors
+              }
+              reject(error);
+            });
           });
+        } catch (conversionError: any) {
+          // FFmpeg not available or conversion failed — fallback to sending the raw file as buffer
+          logger.warn(`FFmpeg conversion failed, falling back to sending raw WebM as buffer: ${conversionError?.message}`);
           
-          ffmpeg.on('error', (error) => {
-            logger.error(`FFmpeg spawn error:`, error);
-            reject(error);
-          });
-        });
+          // Try to extract the local file path from the URL to read directly from disk
+          try {
+            const uploadsDir = getUploadsDir();
+            const urlPathMatch = normalizedUrl.match(/\/uploads\/(.*)/);
+            if (urlPathMatch) {
+              const localPath = path.join(uploadsDir, urlPathMatch[1]);
+              if (fs.existsSync(localPath)) {
+                convertedFilePath = localPath; // Use the original file as buffer
+                logger.info(`Fallback: using original file as buffer: ${localPath}`);
+              }
+            }
+          } catch (fallbackError) {
+            logger.warn(`Fallback path extraction failed`, fallbackError);
+          }
+        }
       }
     } catch (error: any) {
       // Clean up on error
@@ -1044,11 +1050,37 @@ export class BaileysService extends EventEmitter {
           // Ignore cleanup errors
         }
       }
-      logger.error(`Failed to verify/convert media URL: ${normalizedUrl}`, {
-        error: error?.message || error,
-        stack: error?.stack,
-      });
-      throw new Error(`Não foi possível processar o arquivo de mídia: ${error?.message || error}`);
+      
+      // For audio files, try fallback: read file from disk directly
+      if (mediaType === 'AUDIO') {
+        try {
+          const uploadsDir = getUploadsDir();
+          const urlPathMatch = normalizedUrl.match(/\/uploads\/(.*)/);
+          if (urlPathMatch) {
+            const localPath = path.join(uploadsDir, urlPathMatch[1]);
+            if (fs.existsSync(localPath)) {
+              convertedFilePath = localPath;
+              logger.warn(`Media URL verification failed but file exists locally, using buffer fallback: ${localPath}`);
+            } else {
+              throw error; // Re-throw if file doesn't exist locally either
+            }
+          } else {
+            throw error;
+          }
+        } catch (fallbackError) {
+          logger.error(`Failed to verify/convert media URL: ${normalizedUrl}`, {
+            error: error?.message || error,
+            stack: error?.stack,
+          });
+          throw new Error(`Não foi possível processar o arquivo de mídia: ${error?.message || error}`);
+        }
+      } else {
+        logger.error(`Failed to verify media URL: ${normalizedUrl}`, {
+          error: error?.message || error,
+          stack: error?.stack,
+        });
+        throw new Error(`Não foi possível processar o arquivo de mídia: ${error?.message || error}`);
+      }
     }
     
     // Try to reconnect if socket is not available but session exists
@@ -1599,8 +1631,9 @@ export class BaileysService extends EventEmitter {
         return '';
       }
 
+      const baileys = await getBaileys();
       // Download the media buffer
-      const buffer = await downloadMediaMessage(
+      const buffer = await baileys.downloadMediaMessage(
         msg,
         'buffer',
         {},
@@ -1615,13 +1648,8 @@ export class BaileysService extends EventEmitter {
         return '';
       }
 
-      // Create uploads directory structure
-      // Use same directory structure as upload.service.ts for consistency
-      // Try UPLOADS_DIR first, then fallback to getUploadsDir()
-      let uploadsDir = process.env.UPLOADS_DIR;
-      if (!uploadsDir) {
-        uploadsDir = getUploadsDir();
-      }
+      // Use shared uploads path (same as server static and upload.service)
+      const uploadsDir = getUploadsDir();
       
       // Map folder names to match upload.service.ts structure
       // baileys uses: image, audio, video, document

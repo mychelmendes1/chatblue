@@ -5,6 +5,7 @@ import { authenticate, requireAdmin } from '../middlewares/auth.middleware.js';
 import { ensureTenant } from '../middlewares/tenant.middleware.js';
 import { NotFoundError, ValidationError } from '../middlewares/error.middleware.js';
 import { logger } from '../config/logger.js';
+import { syncFAQItem, removeFAQItem } from '../services/ai/knowledge-sync.service.js';
 
 const router = Router();
 
@@ -181,6 +182,10 @@ router.post('/', authenticate, requireAdmin, ensureTenant, async (req, res, next
     });
 
     logger.info(`FAQ item created: ${item.id}`);
+
+    // Auto-sync to AIDocument (non-blocking)
+    syncFAQItem(item.id, req.user!.companyId, data.departmentId).catch(() => {});
+
     res.status(201).json(item);
   } catch (error: any) {
     logger.error('Error creating FAQ:', {
@@ -267,6 +272,10 @@ router.put('/:id', authenticate, requireAdmin, ensureTenant, async (req, res, ne
     });
 
     logger.info(`FAQ item updated: ${item.id}`);
+
+    // Auto-sync to AIDocument (non-blocking)
+    syncFAQItem(item.id, req.user!.companyId, data.departmentId).catch(() => {});
+
     res.json(item);
   } catch (error) {
     if (error instanceof z.ZodError) {
@@ -295,6 +304,9 @@ router.delete('/:id', authenticate, requireAdmin, ensureTenant, async (req, res,
     await prisma.fAQ.delete({
       where: { id: req.params.id },
     });
+
+    // Remove from AIDocument (non-blocking)
+    removeFAQItem(req.params.id, req.user!.companyId).catch(() => {});
 
     logger.info(`FAQ item deleted: ${req.params.id}`);
     res.json({ success: true });

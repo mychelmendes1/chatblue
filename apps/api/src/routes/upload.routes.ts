@@ -12,6 +12,7 @@ import {
 import { prisma } from "../config/database.js";
 import { logger } from "../config/logger.js";
 import { normalizeMediaUrl } from "../utils/media-url.util.js";
+import { sendOutboundEvent } from "../services/outbound-webhook.service.js";
 import path from "path";
 import fs from "fs";
 
@@ -265,6 +266,16 @@ router.post(
             },
           },
         },
+      });
+      sendOutboundEvent(user.companyId, 'message_created', {
+        ticketId: ticket.id,
+        companyId: user.companyId,
+        messageId: message.id,
+        type: message.type,
+        content: message.content ?? undefined,
+        mediaUrl: message.mediaUrl ?? undefined,
+        isFromMe: message.isFromMe,
+        createdAt: message.createdAt.toISOString(),
       });
 
       // Send via WhatsApp

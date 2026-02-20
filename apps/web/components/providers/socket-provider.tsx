@@ -8,6 +8,45 @@ import { useChatStore, type Message } from "@/stores/chat.store";
 import { normalizeMediaUrl } from "@/utils/media-url.util";
 import { useToast } from "@/components/ui/use-toast";
 
+type ConversationFilters = {
+  status?: string;
+  departmentId?: string;
+  assignedToId?: string;
+  search?: string;
+  isAIHandled?: boolean;
+  mentionedUserId?: string;
+};
+
+function ticketMatchesConversationFilters(
+  ticket: Record<string, any>,
+  filters: ConversationFilters,
+  _currentUserId: string | undefined
+): boolean {
+  if (!ticket || typeof ticket !== "object") return false;
+  const hasAssignedFilter = filters.assignedToId != null && filters.assignedToId !== "";
+  const hasAIFilter = filters.isAIHandled === true;
+  const hasMentionsFilter = filters.mentionedUserId != null && filters.mentionedUserId !== "";
+  const isQueueFilter = filters.status === "PENDING" && !hasAssignedFilter && !hasMentionsFilter;
+
+  if (hasMentionsFilter) return false;
+  if (hasAssignedFilter && ticket.assignedToId !== filters.assignedToId) return false;
+  if (hasAIFilter && ticket.isAIHandled !== true) return false;
+  if (isQueueFilter) {
+    if (ticket.status !== "PENDING" || (ticket.assignedToId != null && ticket.assignedToId !== "")) return false;
+  }
+  if (filters.status != null && filters.status !== "" && !isQueueFilter && ticket.status !== filters.status) return false;
+  return true;
+}
+
+function removeTicketIfNoLongerMatches(ticketId: string) {
+  const store = useChatStore.getState();
+  const { user } = useAuthStore.getState();
+  const ticket = store.tickets.find((t) => t.id === ticketId);
+  if (ticket && !ticketMatchesConversationFilters(ticket, store.filters, user?.id)) {
+    store.removeTicket(ticketId);
+  }
+}
+
 interface SocketContextType {
   socket: Socket | null;
   isConnected: boolean;
@@ -206,8 +245,7 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
     console.log("[Socket] ticket:created", ticket);
     try {
       const store = useChatStore.getState();
-      
-      // Ensure ticket has all required fields
+      const { user } = useAuthStore.getState();
       const fullTicket = {
         ...ticket,
         contact: ticket.contact || {},
@@ -216,16 +254,10 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
         lastMessage: ticket.lastMessage || null,
         _count: ticket._count || { messages: 0 },
       };
-      
-      // Add ticket to the list (will not duplicate if already exists)
-      store.addTicket(fullTicket);
-      
-      // If tickets list is empty or we're on first page, refresh to get proper ordering
-      if (store.tickets.length === 0 || store.tickets.length < 10) {
-        // Trigger a refresh by updating the ticket list
-        // The ticket will appear at the top after refresh
-        console.log("[Socket] New ticket created, should appear in sidebar");
+      if (!ticketMatchesConversationFilters(fullTicket, store.filters, user?.id)) {
+        return;
       }
+      store.addTicket(fullTicket);
     } catch (error) {
       console.error("[Socket] ticket:created - Error processing ticket:", error);
     }
@@ -248,10 +280,10 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
       
       // If this is the currently selected ticket, update the selection WITHOUT clearing messages
       if (isCurrentTicket) {
-        // Use updateSelectedTicket instead of selectTicket to preserve messages
         store.updateSelectedTicket(data);
         console.log("[Socket] Updated selected ticket (preserving messages):", data.id);
       }
+      removeTicketIfNoLongerMatches(data.id);
     } catch (error) {
       console.error("[Socket] ticket:updated - Error processing update:", error);
     }
@@ -261,6 +293,7 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
     console.log("[Socket] ticket:assigned", { ticketId, assignedToId });
     const store = useChatStore.getState();
     store.updateTicket(ticketId, { assignedToId } as any);
+    removeTicketIfNoLongerMatches(ticketId);
   }, []);
 
   const handleTicketTransferred = useCallback((data: any) => {
@@ -279,6 +312,7 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
       isAIHandled: false,
       humanTakeoverAt: new Date().toISOString(),
     } as any);
+    removeTicketIfNoLongerMatches(data.ticketId);
   }, []);
 
   const handleTicketStatusChanged = useCallback((data: any) => {
@@ -296,6 +330,7 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
       assignedToId: data.assignedToId,
       isAIHandled: data.isAIHandled,
     } as any);
+    removeTicketIfNoLongerMatches(data.ticketId);
   }, []);
 
   const handleMessageStatus = useCallback(({ messageId, status }: { messageId: string; status: string }) => {

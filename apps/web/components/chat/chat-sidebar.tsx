@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { Search, Filter, Bot, User, Clock, Plus, Loader2, Phone, Users, CheckSquare, FileText, AlertCircle, MessageCircle } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -31,6 +31,7 @@ import { useAuthStore } from "@/stores/auth.store";
 import { api } from "@/lib/api";
 import { TemplateSelector } from "./template-selector";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { ConnectionTag } from "@/components/shared/connection-tag";
 
 interface Connection {
   id: string;
@@ -51,6 +52,11 @@ interface ContactResult {
   isClient: boolean;
 }
 
+interface UnifiedSearchContact {
+  contact: ContactResult;
+  openTicketId?: string;
+}
+
 export function ChatSidebar() {
   const { toast } = useToast();
   const { user } = useAuthStore();
@@ -58,6 +64,7 @@ export function ChatSidebar() {
     tickets,
     selectedTicket,
     setTickets,
+    addTicket,
     selectTicket,
     filters,
     setFilters,
@@ -72,6 +79,10 @@ export function ChatSidebar() {
   const [ticketsPage, setTicketsPage] = useState(1);
   const [hasMoreTickets, setHasMoreTickets] = useState(false);
   const [isLoadingMoreTickets, setIsLoadingMoreTickets] = useState(false);
+  const [unifiedSearchTickets, setUnifiedSearchTickets] = useState<any[]>([]);
+  const [unifiedSearchContacts, setUnifiedSearchContacts] = useState<UnifiedSearchContact[]>([]);
+  const [isUnifiedSearchLoading, setIsUnifiedSearchLoading] = useState(false);
+  const unifiedSearchDebounceRef = useRef<NodeJS.Timeout | null>(null);
 
   // New conversation states
   const [showNewConversationDialog, setShowNewConversationDialog] = useState(false);
@@ -93,8 +104,47 @@ export function ChatSidebar() {
   const isInstagram = selectedConnection?.type === "INSTAGRAM";
 
   useEffect(() => {
-    fetchTickets();
+    if (search.trim().length < 2) {
+      fetchTickets();
+    }
   }, [filters, showResolved]);
+
+  useEffect(() => {
+    const term = search.trim();
+    if (term.length < 2) {
+      setUnifiedSearchTickets([]);
+      setUnifiedSearchContacts([]);
+      if (term.length === 0) {
+        fetchTickets();
+      }
+      return;
+    }
+    if (unifiedSearchDebounceRef.current) {
+      clearTimeout(unifiedSearchDebounceRef.current);
+    }
+    unifiedSearchDebounceRef.current = setTimeout(async () => {
+      setIsUnifiedSearchLoading(true);
+      try {
+        const res = await api.get<{ tickets: any[]; contacts: UnifiedSearchContact[] }>(
+          `/chat/search?q=${encodeURIComponent(term)}&limit=30`
+        );
+        setUnifiedSearchTickets(res.data.tickets ?? []);
+        setUnifiedSearchContacts(res.data.contacts ?? []);
+      } catch (err) {
+        console.error("Unified search failed:", err);
+        setUnifiedSearchTickets([]);
+        setUnifiedSearchContacts([]);
+      } finally {
+        setIsUnifiedSearchLoading(false);
+        unifiedSearchDebounceRef.current = null;
+      }
+    }, 300);
+    return () => {
+      if (unifiedSearchDebounceRef.current) {
+        clearTimeout(unifiedSearchDebounceRef.current);
+      }
+    };
+  }, [search]);
 
   // Listen for company switch events to reload data
   useEffect(() => {
@@ -159,8 +209,40 @@ export function ChatSidebar() {
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
-    fetchTickets();
+    if (search.trim().length >= 2) {
+      api.get<{ tickets: any[]; contacts: UnifiedSearchContact[] }>(`/chat/search?q=${encodeURIComponent(search.trim())}&limit=30`)
+        .then((res) => {
+          setUnifiedSearchTickets(res.data.tickets ?? []);
+          setUnifiedSearchContacts(res.data.contacts ?? []);
+        })
+        .catch(() => {});
+    } else {
+      fetchTickets();
+    }
   };
+
+  async function handleUnifiedContactClick(item: UnifiedSearchContact) {
+    if (item.openTicketId) {
+      try {
+        const res = await api.get<any>(`/tickets/${item.openTicketId}`);
+        const ticket = res.data;
+        addTicket(ticket);
+        selectTicket(ticket);
+        setSearch("");
+        setUnifiedSearchTickets([]);
+        setUnifiedSearchContacts([]);
+      } catch (err) {
+        console.error("Failed to load ticket:", err);
+      }
+      return;
+    }
+    setSelectedContact(item.contact);
+    setShowNewConversationDialog(true);
+    fetchConnections();
+    setSearch("");
+    setUnifiedSearchTickets([]);
+    setUnifiedSearchContacts([]);
+  }
 
   async function fetchConnections() {
     try {
@@ -384,7 +466,7 @@ export function ChatSidebar() {
           <div className="relative flex-1">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
             <Input
-              placeholder="Buscar por nome, telefone ou nº do ticket..."
+              placeholder="Buscar por email, nome, telefone ou nº do ticket..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               className="pl-9"
@@ -456,9 +538,64 @@ export function ChatSidebar() {
         </div>
       </div>
 
-      {/* Ticket List */}
+      {/* Ticket List or Unified Search Results */}
       <ScrollArea className="flex-1">
-        {isLoadingTickets ? (
+        {search.trim().length >= 2 ? (
+          isUnifiedSearchLoading ? (
+            <div className="flex items-center justify-center py-8">
+              <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-primary" />
+            </div>
+          ) : unifiedSearchTickets.length === 0 && unifiedSearchContacts.length === 0 ? (
+            <div className="text-center text-muted-foreground py-8">
+              <p>Nenhum resultado encontrado</p>
+            </div>
+          ) : (
+            <div className="divide-y">
+              {unifiedSearchTickets.map((ticket) => (
+                <TicketItem
+                  key={ticket.id}
+                  ticket={ticket}
+                  isSelected={selectedTicket?.id === ticket.id}
+                  onSelect={() => {
+                    addTicket(ticket);
+                    selectTicket(ticket);
+                    setSearch("");
+                    setUnifiedSearchTickets([]);
+                    setUnifiedSearchContacts([]);
+                  }}
+                />
+              ))}
+              {unifiedSearchContacts
+                .filter(
+                  (item) =>
+                    !unifiedSearchTickets.some((t) => t.contact?.id === item.contact.id)
+                )
+                .map((item) => (
+                  <button
+                    key={item.contact.id}
+                    type="button"
+                    className="w-full flex items-center gap-3 p-3 text-left hover:bg-muted/50 transition-colors border-b last:border-b-0"
+                    onClick={() => handleUnifiedContactClick(item)}
+                  >
+                    <Avatar className="w-10 h-10 flex-shrink-0">
+                      <AvatarImage src={item.contact.avatar} />
+                      <AvatarFallback>
+                        {(item.contact.name || item.contact.phone).slice(0, 2).toUpperCase()}
+                      </AvatarFallback>
+                    </Avatar>
+                    <div className="flex-1 min-w-0">
+                      <p className="font-medium truncate">
+                        {item.contact.name || formatPhone(item.contact.phone)}
+                      </p>
+                      <p className="text-xs text-muted-foreground truncate">
+                        {item.openTicketId ? "Conversa aberta — clique para abrir" : "Nova conversa — clique para iniciar"}
+                      </p>
+                    </div>
+                  </button>
+                ))}
+            </div>
+          )
+        ) : isLoadingTickets ? (
           <div className="flex items-center justify-center py-8">
             <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-primary" />
           </div>
@@ -972,6 +1109,11 @@ function TicketItem({ ticket, isSelected, onSelect }: TicketItemProps) {
               {ticket.assignedTo.name?.split(" ")[0]}
             </span>
           )}
+          <ConnectionTag
+            connectionName={ticket.connection?.name}
+            connectionType={ticket.connection?.type}
+            lastMessageAt={ticket.contact?.lastMessageAt}
+          />
         </div>
 
         {lastMessage && (

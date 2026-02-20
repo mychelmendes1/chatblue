@@ -5,6 +5,7 @@ import { logger } from '../config/logger.js';
 import { generateProtocol } from '../utils/protocol.js';
 import { WhatsAppService } from '../services/whatsapp/whatsapp.service.js';
 import { normalizeMediaUrl } from '../utils/media-url.util.js';
+import { sendOutboundEvent } from '../services/outbound-webhook.service.js';
 
 const router = Router();
 
@@ -192,7 +193,7 @@ router.post('/submit', authenticateWebform, async (req, res, next) => {
       );
 
       // Criar mensagem no banco de dados
-      await prisma.message.create({
+      const welcomeMessage = await prisma.message.create({
         data: {
           type: 'TEXT',
           content: message,
@@ -204,6 +205,15 @@ router.post('/submit', authenticateWebform, async (req, res, next) => {
           connectionId: ticket.connectionId,
           sentAt: new Date(),
         },
+      });
+      sendOutboundEvent(companyId, 'message_created', {
+        ticketId: ticket.id,
+        companyId,
+        messageId: welcomeMessage.id,
+        type: welcomeMessage.type,
+        content: welcomeMessage.content ?? undefined,
+        isFromMe: welcomeMessage.isFromMe,
+        createdAt: welcomeMessage.createdAt.toISOString(),
       });
 
       // Emitir evento socket

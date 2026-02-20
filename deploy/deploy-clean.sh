@@ -36,6 +36,21 @@ if [ -f .env ]; then
   echo "Backup do .env criado"
 fi
 
+# Preservar sessions e uploads (dados persistentes do Baileys e arquivos enviados)
+if [ -d app/apps/api/sessions ]; then
+  cp -r app/apps/api/sessions /tmp/chatblue-sessions-backup
+  echo "Backup das sessões Baileys criado"
+fi
+# Também preservar sessões do path duplicado (apps/api/apps/api/sessions) usado em runtime
+if [ -d app/apps/api/apps/api/sessions ]; then
+  cp -r app/apps/api/apps/api/sessions /tmp/chatblue-sessions-doubled-backup
+  echo "Backup das sessões Baileys (path alternativo) criado"
+fi
+if [ -d app/apps/api/uploads ]; then
+  cp -r app/apps/api/uploads /tmp/chatblue-uploads-backup
+  echo "Backup dos uploads criado"
+fi
+
 # Limpar diretório app
 rm -rf app
 mkdir -p app
@@ -45,9 +60,38 @@ cd app
 tar -xzf /tmp/chatblue-deploy.tar.gz
 rm /tmp/chatblue-deploy.tar.gz
 
-# Restaurar .env se existir backup
+# Restaurar .env principal se existir backup
 if [ -f ../.env.backup ]; then
   cp ../.env.backup ../.env
+fi
+
+# Copiar .env de produção para o diretório da API (evita usar .env de desenvolvimento)
+echo "Configurando .env de produção para API..."
+cp /opt/chatblue/.env /opt/chatblue/app/apps/api/.env
+
+# Configurar .env.local do Web para produção (API via Nginx, não localhost)
+echo "Configurando .env.local de produção para Web..."
+echo 'NEXT_PUBLIC_API_URL=' > /opt/chatblue/app/apps/web/.env.local
+
+# Restaurar sessions e uploads
+if [ -d /tmp/chatblue-sessions-backup ]; then
+  mkdir -p apps/api/sessions
+  cp -r /tmp/chatblue-sessions-backup/* apps/api/sessions/ 2>/dev/null || true
+  rm -rf /tmp/chatblue-sessions-backup
+  echo "Sessões Baileys restauradas"
+fi
+# Também restaurar do path duplicado (apps/api/apps/api/sessions) se existir
+if [ -d /tmp/chatblue-sessions-doubled-backup ]; then
+  mkdir -p apps/api/apps/api/sessions
+  cp -r /tmp/chatblue-sessions-doubled-backup/* apps/api/apps/api/sessions/ 2>/dev/null || true
+  rm -rf /tmp/chatblue-sessions-doubled-backup
+  echo "Sessões Baileys (path alternativo) restauradas"
+fi
+if [ -d /tmp/chatblue-uploads-backup ]; then
+  mkdir -p apps/api/uploads
+  cp -r /tmp/chatblue-uploads-backup/* apps/api/uploads/ 2>/dev/null || true
+  rm -rf /tmp/chatblue-uploads-backup
+  echo "Uploads restaurados"
 fi
 
 # Instalar dependências
@@ -62,6 +106,10 @@ sed -i '/"type": "module",/d' package.json
 # Garantir CommonJS no tsconfig
 sed -i 's/"module": "NodeNext"/"module": "CommonJS"/' tsconfig.json
 sed -i 's/"moduleResolution": "NodeNext"/"moduleResolution": "node"/' tsconfig.json
+
+# Gerar Prisma Client
+echo "Gerando Prisma Client..."
+npx prisma generate
 
 # Build API
 echo "[5/6] Compilando API..."

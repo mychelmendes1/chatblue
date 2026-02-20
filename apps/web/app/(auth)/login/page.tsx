@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -21,6 +21,7 @@ type LoginForm = z.infer<typeof loginSchema>;
 
 export default function LoginPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { toast } = useToast();
   const login = useAuthStore((state) => state.login);
   const [isLoading, setIsLoading] = useState(false);
@@ -37,7 +38,8 @@ export default function LoginPage() {
     setIsLoading(true);
     try {
       await login(data.email, data.password);
-      router.push("/chat");
+      const redirectPath = searchParams.get("redirect");
+      router.push(redirectPath || "/chat");
     } catch (error: any) {
       toast({
         title: "Erro ao fazer login",
@@ -91,6 +93,12 @@ export default function LoginPage() {
           {isLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
           Entrar
         </Button>
+
+        <div className="text-center pt-2">
+          <a href="/forgot-password" className="text-sm text-chatblue hover:underline">
+            Esqueci minha senha
+          </a>
+        </div>
       </form>
     </div>
     </div>

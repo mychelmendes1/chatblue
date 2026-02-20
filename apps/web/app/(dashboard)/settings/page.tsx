@@ -22,6 +22,8 @@ import {
   Mic,
   Bot,
   FileText,
+  Link2,
+  Copy,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -97,6 +99,11 @@ interface CompanySettings {
   businessHoursStartTime?: string | null;
   businessHoursEndTime?: string | null;
   outOfHoursMessage?: string | null;
+  // Integração externa (webhook de saída + API métricas)
+  outboundWebhookUrl?: string | null;
+  outboundWebhookSecret?: string | null;
+  externalIntegrationApiKey?: string | null;
+  companyId?: string;
 }
 
 interface DepartmentUser {
@@ -268,6 +275,15 @@ export default function SettingsPage() {
   const [editingPredefinedMessage, setEditingPredefinedMessage] = useState<PredefinedMessage | null>(null);
   const [predefinedMessageForm, setPredefinedMessageForm] = useState({ shortcut: "", name: "", content: "" });
 
+  // Integração externa (webhook de saída + API métricas)
+  const [externalIntegrationForm, setExternalIntegrationForm] = useState({
+    outboundWebhookUrl: "",
+    outboundWebhookSecret: "",
+  });
+  const [generatedApiKey, setGeneratedApiKey] = useState<string | null>(null);
+  const [isSavingExternal, setIsSavingExternal] = useState(false);
+  const [isGeneratingKey, setIsGeneratingKey] = useState(false);
+
   useEffect(() => {
     fetchSettings();
     fetchDepartments();
@@ -420,10 +436,17 @@ export default function SettingsPage() {
         aiGuardrailsEnabled: data.aiGuardrailsEnabled ?? true,
         blueEnabled: data.blueEnabled ?? true,
       });
-    } catch (error) {
+
+      setExternalIntegrationForm((prev) => ({
+        ...prev,
+        outboundWebhookUrl: data.outboundWebhookUrl ?? "",
+        // Secret nunca preenchemos no form (sempre mascarado no GET)
+      }));
+    } catch (error: any) {
+      const message = error?.message || error?.response?.data?.message || error?.response?.data?.error || "Falha ao carregar configurações";
       toast({
         title: "Erro",
-        description: "Falha ao carregar configurações",
+        description: message,
         variant: "destructive",
       });
     } finally {
@@ -825,6 +848,10 @@ export default function SettingsPage() {
           <TabsTrigger value="users">
             <Users className="w-4 h-4 mr-2" />
             Usuários
+          </TabsTrigger>
+          <TabsTrigger value="external-integration">
+            <Link2 className="w-4 h-4 mr-2" />
+            Integração externa
           </TabsTrigger>
         </TabsList>
 
@@ -1876,6 +1903,177 @@ export default function SettingsPage() {
                   ))}
                 </div>
               )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* Integração externa (webhook de saída + API métricas) */}
+        <TabsContent value="external-integration">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Link2 className="w-5 h-5" />
+                Integração externa
+              </CardTitle>
+              <CardDescription>
+                Webhook de saída para eventos (tickets/mensagens) e API de métricas para sistemas externos (ex.: Supabase).
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              <div className="space-y-2">
+                <Label htmlFor="outboundWebhookUrl">URL do webhook de saída</Label>
+                <Input
+                  id="outboundWebhookUrl"
+                  type="url"
+                  placeholder="https://..."
+                  value={externalIntegrationForm.outboundWebhookUrl}
+                  onChange={(e) =>
+                    setExternalIntegrationForm((prev) => ({ ...prev, outboundWebhookUrl: e.target.value }))
+                  }
+                />
+                <p className="text-xs text-muted-foreground">
+                  Eventos (conversation_created, conversation_updated, conversation_resolved, message_created) serão enviados em POST com header X-Webhook-Secret.
+                </p>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="outboundWebhookSecret">Secret (X-Webhook-Secret)</Label>
+                <Input
+                  id="outboundWebhookSecret"
+                  type="password"
+                  placeholder={settings?.outboundWebhookSecret ? "••••••••" : "Deixe vazio para não alterar"}
+                  value={externalIntegrationForm.outboundWebhookSecret}
+                  onChange={(e) =>
+                    setExternalIntegrationForm((prev) => ({ ...prev, outboundWebhookSecret: e.target.value }))
+                  }
+                />
+              </div>
+              <Button
+                disabled={isSavingExternal}
+                onClick={async () => {
+                  setIsSavingExternal(true);
+                  try {
+                    await api.put("/settings/external-integration", {
+                      outboundWebhookUrl: externalIntegrationForm.outboundWebhookUrl || null,
+                      outboundWebhookSecret: externalIntegrationForm.outboundWebhookSecret || undefined,
+                    });
+                    await fetchSettings();
+                    setExternalIntegrationForm((prev) => ({ ...prev, outboundWebhookSecret: "" }));
+                    toast({ title: "Salvo", description: "Configurações de integração externa atualizadas." });
+                  } catch (err: any) {
+                    toast({
+                      title: "Erro",
+                      description: err?.message || "Falha ao salvar",
+                      variant: "destructive",
+                    });
+                  } finally {
+                    setIsSavingExternal(false);
+                  }
+                }}
+              >
+                {isSavingExternal ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Save className="w-4 h-4 mr-2" />}
+                Salvar URL e Secret
+              </Button>
+
+              <hr className="my-6" />
+
+              <div className="space-y-2">
+                <Label>Chave de API para métricas (api_token)</Label>
+                <p className="text-sm text-muted-foreground">
+                  Use no sistema externo no header <code className="bg-muted px-1 rounded">X-API-Key</code> para acessar GET /api/external/health e GET /api/external/metrics.
+                </p>
+                <div className="flex items-center gap-2">
+                  <Input
+                    readOnly
+                    value={
+                      generatedApiKey ?? (settings?.externalIntegrationApiKey === "••••••••" ? "••••••••" : "Não configurada")
+                    }
+                    className="font-mono text-sm"
+                  />
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    onClick={() => {
+                      const v = generatedApiKey ?? (settings?.externalIntegrationApiKey !== "••••••••" && settings?.externalIntegrationApiKey ? settings.externalIntegrationApiKey : null);
+                      if (v && v !== "••••••••") {
+                        navigator.clipboard.writeText(v);
+                        toast({ title: "Copiado", description: "Chave copiada para a área de transferência." });
+                      }
+                    }}
+                    title="Copiar"
+                  >
+                    <Copy className="w-4 h-4" />
+                  </Button>
+                  <Button
+                    disabled={isGeneratingKey}
+                    variant="secondary"
+                    onClick={async () => {
+                      setIsGeneratingKey(true);
+                      try {
+                        const res = await api.post<{ externalIntegrationApiKey: string }>(
+                          "/settings/external-integration/generate-key"
+                        );
+                        setGeneratedApiKey(res.data.externalIntegrationApiKey);
+                        await fetchSettings();
+                        toast({
+                          title: "Chave gerada",
+                          description: "Copie e guarde a chave agora. Ela não será exibida novamente em texto claro.",
+                        });
+                      } catch (err: any) {
+                        toast({
+                          title: "Erro",
+                          description: err?.message || "Falha ao gerar chave",
+                          variant: "destructive",
+                        });
+                      } finally {
+                        setIsGeneratingKey(false);
+                      }
+                    }}
+                  >
+                    {isGeneratingKey ? <Loader2 className="w-4 h-4 animate-spin" /> : "Gerar chave"}
+                  </Button>
+                </div>
+              </div>
+
+              <div className="p-4 bg-muted/50 rounded-lg text-sm space-y-2">
+                <p className="font-medium">Dados para configurar no sistema externo:</p>
+                <ul className="text-muted-foreground space-y-1 list-disc list-inside">
+                  <li>
+                    <strong>api_url</strong>:{" "}
+                    <code className="bg-background px-1 rounded">
+                      {typeof window !== "undefined" ? (process.env.NEXT_PUBLIC_API_URL || window.location.origin) : ""}
+                    </code>
+                  </li>
+                  <li>
+                    <strong>api_token</strong>: valor da chave de API acima (gerar e copiar uma vez).
+                  </li>
+                  <li>
+                    <strong>webhook_secret</strong>: mesmo valor do campo Secret configurado acima (para validar X-Webhook-Secret).
+                  </li>
+                  <li>
+                    <strong>company_id</strong>: identificador da empresa (CUID). Empresa atual:{" "}
+                    {settings?.companyId ? (
+                      <span className="inline-flex items-center gap-1">
+                        <code className="bg-background px-1 rounded">{settings.companyId}</code>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-6 w-6"
+                          onClick={() => {
+                            if (settings?.companyId) {
+                              navigator.clipboard.writeText(settings.companyId);
+                              toast({ title: "Copiado", description: "ID da empresa copiado." });
+                            }
+                          }}
+                        >
+                          <Copy className="w-3 h-3" />
+                        </Button>
+                      </span>
+                    ) : (
+                      "—"
+                    )}
+                  </li>
+                </ul>
+              </div>
             </CardContent>
           </Card>
         </TabsContent>

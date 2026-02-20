@@ -13,10 +13,8 @@ import {
   Bot,
   Shield,
   Book,
-  HelpCircle,
   Menu,
   X,
-  Database,
   Sparkles,
   Inbox,
   LayoutGrid,
@@ -32,6 +30,12 @@ import {
   SheetTitle,
   SheetTrigger,
 } from "@/components/ui/sheet";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 const navigation = [
   { name: "Chat", href: "/chat", icon: MessageSquare },
@@ -42,10 +46,8 @@ const navigation = [
   { name: "Usuários", href: "/users", icon: Shield, adminOnly: true },
   { name: "Conexões", href: "/connections", icon: Wifi },
   { name: "Atendente IA", href: "/ai-agent", icon: Bot },
-  { name: "Base IA", href: "/ai-knowledge", icon: Database, adminOnly: true },
+  { name: "Conhecimento", href: "/knowledge", icon: Book, adminOnly: true },
   { name: "Agentes IA", href: "/ai-agents", icon: Sparkles, adminOnly: true },
-  { name: "Knowledge Base", href: "/knowledge-base", icon: Book, adminOnly: true },
-  { name: "FAQ", href: "/faq", icon: HelpCircle, adminOnly: true },
   { name: "Configurações", href: "/settings", icon: Settings },
 ];
 
@@ -104,23 +106,38 @@ export function Sidebar() {
           })}
         </nav>
 
-        {/* User */}
-        <div className="flex flex-col items-center py-4 space-y-2 border-t border-white/10">
-          <Avatar className="w-10 h-10">
-            <AvatarImage src={user?.avatar} />
-            <AvatarFallback className="bg-chatblue text-white text-sm">
-              {initials}
-            </AvatarFallback>
-          </Avatar>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="w-12 h-12 text-white/70 hover:text-white hover:bg-white/10"
-            onClick={() => logout()}
-            title="Sair"
-          >
-            <LogOut className="w-5 h-5" />
-          </Button>
+        {/* User: um único botão com dropdown (Configurações → /profile, Sair) */}
+        <div className="flex flex-col items-center py-4 border-t border-white/10">
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button
+                className="rounded-full focus:outline-none focus:ring-2 focus:ring-white/40 focus:ring-offset-2 focus:ring-offset-chatblue-dark"
+                title="Conta"
+              >
+                <Avatar className="w-10 h-10 cursor-pointer ring-2 ring-transparent hover:ring-white/40 transition-all">
+                  <AvatarImage src={user?.avatar} />
+                  <AvatarFallback className="bg-chatblue text-white text-sm">
+                    {initials}
+                  </AvatarFallback>
+                </Avatar>
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-48">
+              <DropdownMenuItem asChild>
+                <Link href="/profile" className="flex items-center gap-2 cursor-pointer">
+                  <Settings className="w-4 h-4" />
+                  Configurações
+                </Link>
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onClick={() => logout()}
+                className="flex items-center gap-2 cursor-pointer text-red-600 focus:text-red-600"
+              >
+                <LogOut className="w-4 h-4" />
+                Sair
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       </div>
 
@@ -180,31 +197,38 @@ export function Sidebar() {
                 })}
               </nav>
               
-              {/* User section */}
-              <div className="flex items-center justify-between pt-4 border-t border-white/10">
-                <div className="flex items-center gap-3">
-                  <Avatar className="w-10 h-10">
-                    <AvatarImage src={user?.avatar} />
-                    <AvatarFallback className="bg-chatblue text-white text-sm">
-                      {initials}
-                    </AvatarFallback>
-                  </Avatar>
-                  <div>
-                    <p className="text-sm font-medium text-white">{user?.name}</p>
-                    <p className="text-xs text-white/60">{user?.email}</p>
-                  </div>
+              {/* User section: Configurações (perfil) e Sair */}
+              <div className="flex items-center gap-3 pt-4 border-t border-white/10">
+                <Avatar className="w-10 h-10 shrink-0">
+                  <AvatarImage src={user?.avatar} />
+                  <AvatarFallback className="bg-chatblue text-white text-sm">
+                    {initials}
+                  </AvatarFallback>
+                </Avatar>
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-medium text-white truncate">{user?.name}</p>
+                  <p className="text-xs text-white/60 truncate">{user?.email}</p>
                 </div>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="text-white/70 hover:text-white hover:bg-white/10"
-                  onClick={() => {
-                    logout();
-                    setMobileMenuOpen(false);
-                  }}
-                >
-                  <LogOut className="w-5 h-5" />
-                </Button>
+                <div className="flex gap-1 shrink-0">
+                  <Button variant="ghost" size="sm" className="text-white/80" asChild>
+                    <Link href="/profile" onClick={() => setMobileMenuOpen(false)}>
+                      <Settings className="w-4 h-4 mr-1" />
+                      Configurações
+                    </Link>
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="text-red-400 hover:text-red-300"
+                    onClick={() => {
+                      logout();
+                      setMobileMenuOpen(false);
+                    }}
+                  >
+                    <LogOut className="w-4 h-4 mr-1" />
+                    Sair
+                  </Button>
+                </div>
               </div>
             </SheetContent>
           </Sheet>

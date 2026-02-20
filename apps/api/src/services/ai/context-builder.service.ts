@@ -4,6 +4,7 @@ import { PersonalityService, PersonalityConfig, DEFAULT_PERSONALITY } from './pe
 import { GuardrailsService, GuardrailsConfig, DEFAULT_GUARDRAILS } from './guardrails.service.js';
 import { AIContext } from './ai.service.js';
 import { ContextRetrievalService } from '../knowledge/context-retrieval.service.js';
+import { EmbeddingService, SearchResult } from './embedding.service.js';
 
 export interface ContextBuilderConfig {
   maxHistoryMessages: number;
@@ -109,19 +110,55 @@ export class ContextBuilderService {
         agentName: aiAgentConfig?.name || 'Assistente Virtual',
       };
 
-      // Fetch relevant knowledge base items
-      const knowledgeBaseContext = await this.fetchRelevantKnowledge(
+      // Try semantic search first (via AIDocument), fall back to keyword matching
+      const aiProvider = settings?.aiProvider;
+      const aiApiKey = settings?.aiApiKey;
+
+      let knowledgeBaseContext = '';
+      let faqContext = '';
+
+      const semanticResults = await this.trySemanticSearch(
         company.id,
         department?.id,
-        userMessage
+        userMessage,
+        aiProvider,
+        aiApiKey
       );
 
-      // Fetch relevant FAQ items
-      const faqContext = await this.fetchRelevantFAQ(
-        company.id,
-        department?.id,
-        userMessage
-      );
+      if (semanticResults) {
+        // Semantic search found results - split into KB and FAQ contexts
+        const kbResults = semanticResults.filter(r => r.source?.type === 'INTERNAL' && !r.title.includes('?'));
+        const faqResults = semanticResults.filter(r => r.source?.type === 'INTERNAL' && r.title.includes('?'));
+        const otherResults = semanticResults.filter(r => r.source?.type !== 'INTERNAL');
+
+        if (kbResults.length > 0 || otherResults.length > 0) {
+          knowledgeBaseContext = [...kbResults, ...otherResults]
+            .map(r => `### ${r.title}\n${r.content}`)
+            .join('\n\n');
+        }
+        if (faqResults.length > 0) {
+          faqContext = faqResults
+            .map(r => `**P:** ${r.title}\n**R:** ${r.content.replace(/^Pergunta:.*?\n\nResposta:\s*/s, '')}`)
+            .join('\n\n');
+        }
+      }
+
+      // Fall back to keyword matching if semantic search didn't produce results
+      if (!knowledgeBaseContext) {
+        knowledgeBaseContext = await this.fetchRelevantKnowledge(
+          company.id,
+          department?.id,
+          userMessage
+        );
+      }
+
+      if (!faqContext) {
+        faqContext = await this.fetchRelevantFAQ(
+          company.id,
+          department?.id,
+          userMessage
+        );
+      }
 
       // NOVO: Buscar contexto de conhecimento relevante
       const knowledgeContext = await this.contextRetrieval.findRelevantContext(
@@ -168,6 +205,42 @@ export class ContextBuilderService {
         role: msg.isFromMe ? 'assistant' : 'user',
         content: msg.content,
       }));
+  }
+
+  /**
+   * Try semantic/hybrid search via AIDocument embeddings.
+   * Returns null if embedding service is not available or no results found.
+   */
+  private async trySemanticSearch(
+    companyId: string,
+    departmentId: string | undefined,
+    message: string,
+    aiProvider?: string | null,
+    aiApiKey?: string | null
+  ): Promise<SearchResult[] | null> {
+    if (!aiProvider || !aiApiKey) {
+      return null;
+    }
+
+    try {
+      const embeddingService = new EmbeddingService(aiProvider, aiApiKey);
+      const results = await embeddingService.hybridSearch(message, companyId, {
+        limit: this.config.maxKnowledgeBaseItems + this.config.maxFAQItems,
+        threshold: 0.4,
+        departmentId,
+        includeContent: true,
+      });
+
+      if (results.length === 0) {
+        return null;
+      }
+
+      logger.debug(`Semantic search returned ${results.length} results for context building`);
+      return results;
+    } catch (error) {
+      logger.debug('Semantic search not available, falling back to keyword matching:', error);
+      return null;
+    }
   }
 
   /**

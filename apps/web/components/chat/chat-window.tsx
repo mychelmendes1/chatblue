@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, Component, ErrorInfo, ReactNode, useCallback } from "react";
+import React, { useEffect, useRef, useState, Component, ErrorInfo, ReactNode, useCallback } from "react";
 import {
   Phone,
   Video,
@@ -35,6 +35,7 @@ import {
   ArrowLeft,
   CalendarClock,
   Calendar,
+  Plus,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -54,6 +55,35 @@ import { cn, formatPhone, getStatusLabel } from "@/lib/utils";
 import { useChatStore } from "@/stores/chat.store";
 import { useSocket } from "@/components/providers/socket-provider";
 import { api } from "@/lib/api";
+import { TemplateSelector } from "@/components/chat/template-selector";
+import { useToast } from "@/components/ui/use-toast";
+
+/** Retorna chave YYYY-MM-DD para comparar se duas datas são do mesmo dia */
+function getDayKey(createdAt: string): string {
+  const d = new Date(createdAt);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+/** Rótulo de data para separador (Hoje, Ontem, ou data formatada) */
+function getMessageDateLabel(createdAt: string): string {
+  const d = new Date(createdAt);
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const msgDay = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  const diffDays = Math.floor((today.getTime() - msgDay.getTime()) / (1000 * 60 * 60 * 24));
+  if (diffDays === 0) return "Hoje";
+  if (diffDays === 1) return "Ontem";
+  return d.toLocaleDateString("pt-BR", { day: "2-digit", month: "short", year: "numeric" });
+}
+
+/** Data + hora para exibir na bolha (ex.: "Hoje, 14:32" ou "20/02/2025 14:32") */
+function getMessageDateTime(createdAt: string): string {
+  const d = new Date(createdAt);
+  const time = d.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+  const label = getMessageDateLabel(createdAt);
+  if (label === "Hoje" || label === "Ontem") return `${label}, ${time}`;
+  return `${d.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric" })} ${time}`;
+}
 
 interface User {
   id: string;
@@ -109,9 +139,13 @@ class MessageErrorBoundary extends Component<
 }
 
 export function ChatWindow({ ticket, onShowContactInfo, onMobileBack }: ChatWindowProps) {
-  // Subscribe to messages to ensure re-renders on changes - filter by current ticket
+  // Subscribe to messages - show current ticket or full contact history when historyTicketIds is set
   const allMessages = useChatStore((state) => state.messages);
-  const messages = allMessages.filter((m) => !m.ticketId || m.ticketId === ticket.id);
+  const messages = allMessages.filter((m) => {
+    if (!m.ticketId) return true;
+    if (historyTicketIds.length > 0) return historyTicketIds.includes(m.ticketId);
+    return m.ticketId === ticket.id;
+  });
   const { setMessages, addMessage, setLoadingMessages, markTicketAsRead } = useChatStore();
   const store = useChatStore.getState();
   const { socket } = useSocket();
@@ -147,6 +181,9 @@ export function ChatWindow({ ticket, onShowContactInfo, onMobileBack }: ChatWind
   const [showPredefinedList, setShowPredefinedList] = useState(false);
   const [predefinedFilter, setPredefinedFilter] = useState("");
   const [selectedPredefinedIndex, setSelectedPredefinedIndex] = useState(0);
+  const [showPredefinedCreateForm, setShowPredefinedCreateForm] = useState(false);
+  const [predefinedCreateForm, setPredefinedCreateForm] = useState({ shortcut: "", name: "", content: "" });
+  const [isCreatingPredefined, setIsCreatingPredefined] = useState(false);
 
   // Messaging window state (for Meta Cloud API 24h rule)
   const [messagingWindow, setMessagingWindow] = useState<{
@@ -154,6 +191,10 @@ export function ChatWindow({ ticket, onShowContactInfo, onMobileBack }: ChatWind
     hoursRemaining: number | null;
     requiresTemplate: boolean;
   } | null>(null);
+
+  // Template selector in chat (for Meta Cloud - send template without closing conversation)
+  const [showTemplateSelectorInChat, setShowTemplateSelectorInChat] = useState(false);
+  const { toast } = useToast();
 
   const contactName = ticket.contact?.name || formatPhone(ticket.contact?.phone);
 
@@ -198,6 +239,7 @@ export function ChatWindow({ ticket, onShowContactInfo, onMobileBack }: ChatWind
   const [messagePage, setMessagePage] = useState(1);
   const [hasMoreMessages, setHasMoreMessages] = useState(false);
   const [isLoadingOlderMessages, setIsLoadingOlderMessages] = useState(false);
+  const [historyTicketIds, setHistoryTicketIds] = useState<string[]>([]);
   
   // Audio recording state
   const [isRecording, setIsRecording] = useState(false);
@@ -249,6 +291,7 @@ export function ChatWindow({ ticket, onShowContactInfo, onMobileBack }: ChatWind
   }, []);
 
   useEffect(() => {
+    setHistoryTicketIds([]);
     fetchMessages();
 
     // Join ticket room for real-time updates
@@ -349,27 +392,29 @@ export function ChatWindow({ ticket, onShowContactInfo, onMobileBack }: ChatWind
     }
     
     try {
-      // Fetch messages and mark as read in parallel (only on first load)
       const [response] = await Promise.all([
-        api.get<{ messages: any[]; pagination: any }>(`/messages/ticket/${ticket.id}?page=${pageToFetch}&limit=100`),
-        resetPage ? api.post(`/messages/ticket/${ticket.id}/read`) : Promise.resolve(), // Mark as read only on first load
+        api.get<{ messages: any[]; pagination: any; ticketIds?: string[] }>(
+          `/messages/ticket/${ticket.id}?page=${pageToFetch}&limit=100&includeHistory=contact`
+        ),
+        resetPage ? api.post(`/messages/ticket/${ticket.id}/read`) : Promise.resolve(),
       ]);
       
       console.log("[ChatWindow] fetchMessages got", response.data.messages.length, "messages, page:", pageToFetch);
       
-      // Ensure all messages have ticketId
-      const messagesWithTicketId = response.data.messages.map((msg: any) => ({
+      const rawMessages = response.data.messages || [];
+      const messagesWithTicketId = rawMessages.map((msg: any) => ({
         ...msg,
-        ticketId: ticket.id,
+        ticketId: msg.ticketId ?? msg.ticket?.id ?? ticket.id,
       }));
       
       if (resetPage) {
-        // First load: replace all messages
         setMessages(messagesWithTicketId);
         setMessagePage(1);
         setHasMoreMessages(response.data.pagination?.hasMore || false);
+        if (Array.isArray(response.data.ticketIds) && response.data.ticketIds.length > 0) {
+          setHistoryTicketIds(response.data.ticketIds);
+        }
       } else {
-        // Loading older messages: prepend to existing messages
         const currentMessages = store.messages;
         setMessages([...messagesWithTicketId, ...currentMessages]);
         setMessagePage(pageToFetch);
@@ -420,12 +465,12 @@ export function ChatWindow({ ticket, onShowContactInfo, onMobileBack }: ChatWind
       setShowPredefinedList(false);
     }
 
-    // Check for @ mention trigger
+    // Check for @ mention trigger (only when @ is at start or preceded by space, e.g. not in "email@domain.com")
     const lastAtIndex = value.lastIndexOf("@");
     if (lastAtIndex !== -1) {
+      const isMentionTrigger = lastAtIndex === 0 || value[lastAtIndex - 1] === " ";
       const textAfterAt = value.substring(lastAtIndex + 1);
-      // Check if there's no space after @, meaning user is typing a mention
-      if (!textAfterAt.includes(" ")) {
+      if (isMentionTrigger && !textAfterAt.includes(" ")) {
         setMentionFilter(textAfterAt.toLowerCase());
         setShowMentions(true);
         setIsInternalMode(true);
@@ -434,7 +479,6 @@ export function ChatWindow({ ticket, onShowContactInfo, onMobileBack }: ChatWind
       }
     } else {
       setShowMentions(false);
-      // If no @ and no selected mentions, exit internal mode
       if (selectedMentions.length === 0) {
         setIsInternalMode(false);
       }
@@ -460,6 +504,48 @@ export function ChatWindow({ ticket, onShowContactInfo, onMobileBack }: ChatWind
     setShowPredefinedList(false);
     setPredefinedFilter("");
     inputRef.current?.focus();
+  }
+
+  function handleClosePredefinedList() {
+    setShowPredefinedList(false);
+    setPredefinedFilter("");
+  }
+
+  const shortcutRegex = /^[a-z0-9_-]+$/i;
+  async function handleCreatePredefinedMessage() {
+    const shortcut = predefinedCreateForm.shortcut.trim().toLowerCase();
+    const name = predefinedCreateForm.name.trim() || null;
+    const content = predefinedCreateForm.content.trim();
+    if (!shortcut || !content) {
+      toast({ title: "Preencha atalho e conteúdo", variant: "destructive" });
+      return;
+    }
+    if (!shortcutRegex.test(shortcut)) {
+      toast({ title: "Atalho só pode conter letras, números, _ e -", variant: "destructive" });
+      return;
+    }
+    setIsCreatingPredefined(true);
+    try {
+      const res = await api.post<{ id: string; shortcut: string; name: string | null; content: string }>("/predefined-messages", {
+        shortcut,
+        name,
+        content,
+      });
+      setPredefinedMessages((prev) => [...prev, res.data].sort((a, b) => a.shortcut.localeCompare(b.shortcut)));
+      setPredefinedCreateForm({ shortcut: "", name: "", content: "" });
+      setShowPredefinedCreateForm(false);
+      toast({ title: "Mensagem pré-definida criada" });
+    } catch (error: any) {
+      const status = error?.response?.status;
+      const msg = error?.response?.data?.message ?? error?.response?.data?.error ?? error?.message;
+      if (status === 403) {
+        toast({ title: "Apenas administradores podem criar mensagens pré-definidas.", variant: "destructive" });
+      } else {
+        toast({ title: msg || "Erro ao criar mensagem pré-definida", variant: "destructive" });
+      }
+    } finally {
+      setIsCreatingPredefined(false);
+    }
   }
 
   // Handle Enter key: send message if Enter alone, new line if Shift+Enter
@@ -648,17 +734,19 @@ export function ChatWindow({ ticket, onShowContactInfo, onMobileBack }: ChatWind
     return "DOCUMENT";
   }
 
-  // Send file
-  async function handleSendFile() {
-    if (!selectedFile || isUploading) return;
+  // Send file — accepts optional `fileOverride` so callers (e.g. audio recorder)
+  // don't depend on the async React state update of `selectedFile`.
+  async function handleSendFile(fileOverride?: File) {
+    const fileToSend = fileOverride || selectedFile;
+    if (!fileToSend || isUploading) return;
 
     setIsUploading(true);
     try {
       // Create FormData
       const formData = new FormData();
-      formData.append("file", selectedFile);
+      formData.append("file", fileToSend);
       formData.append("ticketId", ticket.id);
-      formData.append("mediaType", getMediaType(selectedFile));
+      formData.append("mediaType", getMediaType(fileToSend));
       if (newMessage.trim()) {
         formData.append("caption", newMessage.trim());
       }
@@ -668,7 +756,7 @@ export function ChatWindow({ ticket, onShowContactInfo, onMobileBack }: ChatWind
       const accessToken = token ? JSON.parse(token).state?.accessToken : null;
       
       const response = await fetch(
-        `${process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001"}/api/upload/message`,
+        `${process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001"}/api/upload/message`,
         {
           method: "POST",
           headers: {
@@ -701,6 +789,47 @@ export function ChatWindow({ ticket, onShowContactInfo, onMobileBack }: ChatWind
       alert("Erro ao enviar arquivo. Tente novamente.");
     } finally {
       setIsUploading(false);
+    }
+  }
+
+  // Send template from open conversation (Meta Cloud API - 24h window)
+  async function handleSendTemplateFromChat(template: any, variables: Record<string, string>) {
+    if (!ticket.connection?.id) return;
+    const templateVars = Object.keys(variables);
+    const isNamedParams = templateVars.length > 0 && templateVars.some((v) => isNaN(parseInt(v)));
+    let bodyParameters: Array<{ type: "text"; text: string; parameter_name?: string }>;
+    if (isNamedParams) {
+      bodyParameters = templateVars.map((v) => ({
+        type: "text" as const,
+        parameter_name: v,
+        text: variables[v],
+      }));
+    } else {
+      const sortedVars = [...templateVars].sort((a, b) => parseInt(a) - parseInt(b));
+      bodyParameters = sortedVars.map((v) => ({
+        type: "text" as const,
+        text: variables[v],
+      }));
+    }
+    const components = bodyParameters.length > 0 ? [{ type: "body" as const, parameters: bodyParameters }] : [];
+    try {
+      const response = await api.post<any>("/messages/template", {
+        ticketId: ticket.id,
+        templateName: template.name,
+        languageCode: template.language,
+        components,
+      });
+      const messageWithTicketId = { ...response.data, ticketId: ticket.id };
+      addMessage(messageWithTicketId);
+      setShowTemplateSelectorInChat(false);
+      toast({ title: "Template enviado" });
+      setTimeout(() => scrollToBottom(false), 150);
+    } catch (error: any) {
+      toast({
+        title: "Erro ao enviar template",
+        description: error?.response?.data?.error || error?.message || "Falha ao enviar template",
+        variant: "destructive",
+      });
     }
   }
 
@@ -741,9 +870,10 @@ export function ChatWindow({ ticket, onShowContactInfo, onMobileBack }: ChatWind
         // Stop all tracks
         stream.getTracks().forEach(track => track.stop());
         
-        // Auto send after recording stops
+        // Auto send after recording stops — pass file directly to avoid
+        // React state race condition (setSelectedFile is async)
         if (audioChunksRef.current.length > 0) {
-          await handleSendFile();
+          await handleSendFile(audioFile);
         }
       };
       
@@ -1086,18 +1216,45 @@ export function ChatWindow({ ticket, onShowContactInfo, onMobileBack }: ChatWind
             </div>
           )}
           
-          {messages
-            .map((message) => (
-              <MessageErrorBoundary key={message?.id || Math.random()} messageId={message?.id}>
-                <MessageBubble 
-                  message={message} 
-                  onReply={() => {
-                    setReplyingTo(message);
-                    inputRef.current?.focus();
-                  }}
-                />
-              </MessageErrorBoundary>
-            ))}
+          {messages.map((message, index) => {
+            const prevMessage = index > 0 ? messages[index - 1] : null;
+            const prevTicketId = prevMessage?.ticketId ?? null;
+            const showSeparator = index > 0 && message?.ticketId && prevTicketId && message.ticketId !== prevTicketId;
+            const protocol = (message as any)?.ticket?.protocol;
+            const showDateSeparator =
+              !prevMessage || getDayKey(prevMessage.createdAt) !== getDayKey(message.createdAt);
+            return (
+              <React.Fragment key={message?.id || index}>
+                {showDateSeparator && (
+                  <div className="flex items-center gap-2 py-2">
+                    <div className="flex-1 border-t border-border" />
+                    <span className="text-[10px] md:text-xs text-muted-foreground px-2 font-medium">
+                      {getMessageDateLabel(message.createdAt)}
+                    </span>
+                    <div className="flex-1 border-t border-border" />
+                  </div>
+                )}
+                {showSeparator && (
+                  <div className="flex items-center gap-2 py-2">
+                    <div className="flex-1 border-t border-border" />
+                    <span className="text-[10px] md:text-xs text-muted-foreground px-2">
+                      Conversa anterior #{protocol || message.ticketId}
+                    </span>
+                    <div className="flex-1 border-t border-border" />
+                  </div>
+                )}
+                <MessageErrorBoundary key={message?.id || Math.random()} messageId={message?.id}>
+                  <MessageBubble 
+                    message={message} 
+                    onReply={() => {
+                      setReplyingTo(message);
+                      inputRef.current?.focus();
+                    }}
+                  />
+                </MessageErrorBoundary>
+              </React.Fragment>
+            );
+          })}
           <div ref={messagesEndRef} />
         </div>
       </ScrollArea>
@@ -1299,6 +1456,18 @@ export function ChatWindow({ ticket, onShowContactInfo, onMobileBack }: ChatWind
           >
             <Paperclip className="w-4 h-4 md:w-5 md:h-5" />
           </Button>
+          {ticket.connection?.type === "META_CLOUD" && ticket.connection?.id && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8 md:h-10 md:w-10 flex-shrink-0"
+              onClick={() => setShowTemplateSelectorInChat(true)}
+              title="Enviar template (API oficial)"
+            >
+              <FileText className="w-4 h-4 md:w-5 md:h-5" />
+            </Button>
+          )}
           <Button 
             type="button" 
             variant={isInternalMode ? "default" : "ghost"} 
@@ -1329,29 +1498,104 @@ export function ChatWindow({ ticket, onShowContactInfo, onMobileBack }: ChatWind
               className={cn("flex-1 min-w-0 min-h-[32px] md:min-h-[40px] max-h-32 md:max-h-40 text-sm md:text-base resize-none", isInternalMode && "border-amber-400 focus-visible:ring-amber-400")}
             />
             {showPredefinedList && (
-              <div className="absolute bottom-full left-0 right-0 mb-1 bg-background border rounded-lg shadow-lg max-h-48 overflow-y-auto z-50 py-1">
-                <p className="px-3 py-1.5 text-xs text-muted-foreground border-b">Mensagens pré-definidas</p>
-                {filteredPredefined.length === 0 ? (
-                  <p className="px-3 py-2 text-sm text-muted-foreground">Nenhum atalho encontrado</p>
-                ) : (
-                  filteredPredefined.map((msg, i) => (
-                    <button
-                      key={msg.id}
+              <div className="absolute bottom-full left-0 right-0 mb-1 bg-background border rounded-lg shadow-lg max-h-[320px] overflow-y-auto z-50 py-1 flex flex-col">
+                <div className="flex items-center justify-between px-3 py-1.5 text-xs text-muted-foreground border-b flex-shrink-0">
+                  <span>Mensagens pré-definidas</span>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="h-6 w-6 -mr-1"
+                    onClick={handleClosePredefinedList}
+                    title="Fechar"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </Button>
+                </div>
+                <div className="min-h-0 overflow-y-auto">
+                  {filteredPredefined.length === 0 && !showPredefinedCreateForm ? (
+                    <p className="px-3 py-2 text-sm text-muted-foreground">Nenhum atalho encontrado</p>
+                  ) : (
+                    filteredPredefined.map((msg, i) => (
+                      <button
+                        key={msg.id}
+                        type="button"
+                        className={cn(
+                          "w-full text-left px-3 py-2 text-sm hover:bg-muted transition-colors flex flex-col gap-0.5",
+                          i === selectedPredefinedIndex && "bg-muted"
+                        )}
+                        onClick={() => handleSelectPredefined(msg)}
+                      >
+                        <span className="font-medium">
+                          <code className="text-primary">/{msg.shortcut}</code>
+                          {msg.name && <span className="text-muted-foreground ml-1">— {msg.name}</span>}
+                        </span>
+                        <span className="text-muted-foreground truncate text-xs">{msg.content}</span>
+                      </button>
+                    ))
+                  )}
+                </div>
+                <div className="border-t px-3 py-2 flex-shrink-0 space-y-2">
+                  {showPredefinedCreateForm ? (
+                    <>
+                      <div className="space-y-1.5">
+                        <Input
+                          placeholder="ex: ola"
+                          value={predefinedCreateForm.shortcut}
+                          onChange={(e) => setPredefinedCreateForm((f) => ({ ...f, shortcut: e.target.value }))}
+                          className="h-8 text-sm"
+                        />
+                        <Input
+                          placeholder="Ex: Boas-vindas"
+                          value={predefinedCreateForm.name}
+                          onChange={(e) => setPredefinedCreateForm((f) => ({ ...f, name: e.target.value }))}
+                          className="h-8 text-sm"
+                        />
+                        <Textarea
+                          placeholder="Texto que será enviado ao usar /atalho"
+                          value={predefinedCreateForm.content}
+                          onChange={(e) => setPredefinedCreateForm((f) => ({ ...f, content: e.target.value }))}
+                          rows={2}
+                          className="text-sm min-h-[52px] resize-none"
+                        />
+                      </div>
+                      <div className="flex gap-2">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="flex-1 h-8 text-xs"
+                          onClick={() => {
+                            setShowPredefinedCreateForm(false);
+                            setPredefinedCreateForm({ shortcut: "", name: "", content: "" });
+                          }}
+                        >
+                          Cancelar
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          className="flex-1 h-8 text-xs"
+                          disabled={isCreatingPredefined}
+                          onClick={handleCreatePredefinedMessage}
+                        >
+                          {isCreatingPredefined ? <Loader2 className="w-3 h-3 animate-spin" /> : "Criar"}
+                        </Button>
+                      </div>
+                    </>
+                  ) : (
+                    <Button
                       type="button"
-                      className={cn(
-                        "w-full text-left px-3 py-2 text-sm hover:bg-muted transition-colors flex flex-col gap-0.5",
-                        i === selectedPredefinedIndex && "bg-muted"
-                      )}
-                      onClick={() => handleSelectPredefined(msg)}
+                      variant="outline"
+                      size="sm"
+                      className="w-full h-8 text-xs"
+                      onClick={() => setShowPredefinedCreateForm(true)}
                     >
-                      <span className="font-medium">
-                        <code className="text-primary">/{msg.shortcut}</code>
-                        {msg.name && <span className="text-muted-foreground ml-1">— {msg.name}</span>}
-                      </span>
-                      <span className="text-muted-foreground truncate text-xs">{msg.content}</span>
-                    </button>
-                  ))
-                )}
+                      <Plus className="w-3 h-3 mr-1.5" />
+                      Nova mensagem pré-definida
+                    </Button>
+                  )}
+                </div>
               </div>
             )}
           </div>
@@ -1369,6 +1613,25 @@ export function ChatWindow({ ticket, onShowContactInfo, onMobileBack }: ChatWind
           </Button>
         </form>
       </div>
+
+      {/* Template selector dialog (Meta Cloud - send template from open conversation) */}
+      <Dialog open={showTemplateSelectorInChat} onOpenChange={setShowTemplateSelectorInChat}>
+        <DialogContent className="sm:max-w-[480px]">
+          <DialogHeader>
+            <DialogTitle>Enviar template</DialogTitle>
+            <DialogDescription>
+              Escolha um template aprovado para enviar ao cliente. Use quando a janela de 24h estiver fechada.
+            </DialogDescription>
+          </DialogHeader>
+          {ticket.connection?.id && (
+            <TemplateSelector
+              connectionId={ticket.connection.id}
+              onSelect={handleSendTemplateFromChat}
+              onCancel={() => setShowTemplateSelectorInChat(false)}
+            />
+          )}
+        </DialogContent>
+      </Dialog>
 
       {/* Resolve Modal */}
       <Dialog open={showResolveModal} onOpenChange={setShowResolveModal}>
@@ -1499,16 +1762,16 @@ function MessageBubble({ message, onReply }: { message: any; onReply: () => void
   const isFromMe = message.isFromMe ?? false;
   const messageType = message.type || "TEXT";
   const isDeleted = !!message.deletedAt;
+  const isAudioMessage =
+    messageType === "AUDIO" ||
+    /\.(ogg|mp3|m4a|webm)(\?|$)/i.test(message.mediaUrl || "");
   
-  // Safe date formatting
-  let time = "";
+  // Data e hora para exibição (estilo WhatsApp)
+  let dateTime = "";
   try {
-    time = new Date(message.createdAt).toLocaleTimeString("pt-BR", {
-      hour: "2-digit",
-      minute: "2-digit",
-    });
+    dateTime = getMessageDateTime(message.createdAt);
   } catch (e) {
-    time = "--:--";
+    dateTime = "--/-- ---- --:--";
   }
 
   // Handle delete message
@@ -1532,7 +1795,7 @@ function MessageBubble({ message, onReply }: { message: any; onReply: () => void
       <div className="flex justify-center my-4">
         <div className="bg-muted/80 text-muted-foreground text-xs px-4 py-2 rounded-full max-w-[80%] text-center">
           <span>{message.content || ""}</span>
-          <span className="ml-2 opacity-70">{time}</span>
+          <span className="ml-2 opacity-70">{dateTime}</span>
         </div>
       </div>
     );
@@ -1552,7 +1815,7 @@ function MessageBubble({ message, onReply }: { message: any; onReply: () => void
           </div>
           <p className="whitespace-pre-wrap">{message.content}</p>
           <div className="flex justify-end mt-1">
-            <span className="text-xs text-amber-600 dark:text-amber-400">{time}</span>
+            <span className="text-xs text-amber-600 dark:text-amber-400">{dateTime}</span>
           </div>
         </div>
       </div>
@@ -1667,9 +1930,9 @@ function MessageBubble({ message, onReply }: { message: any; onReply: () => void
           </div>
         )}
 
-        {!isDeleted && messageType === "AUDIO" && message.mediaUrl && (
+        {!isDeleted && isAudioMessage && message.mediaUrl && (
           <div className="space-y-2">
-            <audio controls src={message.mediaUrl} className="max-w-[200px] md:max-w-[300px] w-full" crossOrigin="anonymous" />
+            <audio controls src={message.mediaUrl} className="min-w-[250px] max-w-[360px] w-full h-10" crossOrigin="anonymous" preload="metadata" />
             {message.transcription && (
               <div className="text-sm bg-muted/30 p-2 rounded-md border-l-2 border-primary/50">
                 <span className="text-xs text-muted-foreground block mb-1">Transcrição:</span>
@@ -1771,7 +2034,7 @@ function MessageBubble({ message, onReply }: { message: any; onReply: () => void
             isFromMe ? "justify-end" : "justify-start"
           )}
         >
-          <span className="text-xs text-muted-foreground">{time}</span>
+          <span className="text-xs text-muted-foreground">{dateTime}</span>
           {isFromMe && <MessageStatus status={message.status} />}
         </div>
       </div>
