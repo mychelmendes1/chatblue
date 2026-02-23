@@ -50,6 +50,20 @@ export class NPSService {
         return;
       }
 
+      // Don't send NPS if there was no real conversation (no messages from the contact)
+      const contactMessageCount = await prisma.message.count({
+        where: {
+          ticketId,
+          isFromMe: false,
+          type: { not: 'SYSTEM' },
+        },
+      });
+
+      if (contactMessageCount === 0) {
+        logger.info(`NPS skipped for ticket ${ticket.protocol}: no messages from contact`);
+        return;
+      }
+
       // Generate unique token for NPS survey
       const token = crypto.randomBytes(32).toString('hex');
       const baseUrl = process.env.FRONTEND_URL || process.env.WEB_URL || 'https://chat.grupoblue.com.br';

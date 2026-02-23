@@ -32,6 +32,10 @@ router.get('/', authenticate, ensureTenant, async (req, res, next) => {
       hideResolved,
       hasMentions,
       noHumanAssigned, // Filter for inbox: tickets without human assignee (null or AI)
+      unreadOnly,
+      waitingReply,
+      massDispatchOnly,
+      sortOrder,
       page = '1',
       limit = '100',
     } = req.query;
@@ -68,6 +72,7 @@ router.get('/', authenticate, ensureTenant, async (req, res, next) => {
       ...(hideResolved === 'true' && !status && {
         status: { notIn: ['RESOLVED', 'CLOSED'] },
       }),
+      ...(massDispatchOnly === 'true' && { campaignId: { not: null } }),
     };
 
     // Filter by mentions - tickets where user was mentioned
@@ -272,6 +277,15 @@ router.get('/', authenticate, ensureTenant, async (req, res, next) => {
       },
     });
 
+    // Optional filters (applied after findMany)
+    let filteredTickets = allTickets;
+    if (unreadOnly === 'true') {
+      filteredTickets = filteredTickets.filter((t) => (t._count?.messages ?? 0) > 0);
+    }
+    if (waitingReply === 'true') {
+      filteredTickets = filteredTickets.filter((t) => t.messages[0]?.isFromMe === false);
+    }
+
     // Custom sorting:
     // 0. Snoozed tickets that are due (snoozedUntil <= now) - HIGHEST PRIORITY
     // 1. Unread messages OR transferred from AI (needs human attention)
@@ -280,7 +294,7 @@ router.get('/', authenticate, ensureTenant, async (req, res, next) => {
     // 4. Snoozed tickets (not yet due) - go to the bottom
     // Within each group, sort by updatedAt desc
     const now = new Date();
-    const sortedTickets = allTickets.sort((a, b) => {
+    const sortedTickets = filteredTickets.sort((a, b) => {
       const aUnread = a._count?.messages || 0;
       const bUnread = b._count?.messages || 0;
       const aIsAI = a.isAIHandled;
@@ -346,11 +360,26 @@ router.get('/', authenticate, ensureTenant, async (req, res, next) => {
       return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
     });
 
+    // Optional: "mais antigas" = ascending order by date
+    const orderAsc = sortOrder === 'asc';
+    const finalSorted = orderAsc ? [...sortedTickets].reverse() : sortedTickets;
+
     // Apply pagination
     const pageNum = parseInt(page as string);
     const limitNum = parseInt(limit as string);
-    const total = sortedTickets.length;
-    const tickets = sortedTickets.slice((pageNum - 1) * limitNum, pageNum * limitNum);
+    const total = finalSorted.length;
+    const tickets = finalSorted.slice((pageNum - 1) * limitNum, pageNum * limitNum);
+
+    // Count leads stuck with AI: replied to AI, still with AI for > 15 min (no transfer)
+    const fifteenMinAgo = new Date(Date.now() - 15 * 60 * 1000);
+    const aiStuckCount = await prisma.ticket.count({
+      where: {
+        companyId: req.user!.companyId,
+        isAIHandled: true,
+        aiTakeoverAt: { not: null, lt: fifteenMinAgo },
+        messages: { some: { isFromMe: false } },
+      },
+    });
 
     logger.info('Tickets found', { 
       companyId: req.user!.companyId,
@@ -358,7 +387,8 @@ router.get('/', authenticate, ensureTenant, async (req, res, next) => {
       role: req.user!.role,
       total,
       returned: tickets.length,
-      ticketIds: tickets.map(t => t.id)
+      ticketIds: tickets.map(t => t.id),
+      aiStuckCount,
     });
 
     res.json({
@@ -369,6 +399,7 @@ router.get('/', authenticate, ensureTenant, async (req, res, next) => {
         total,
         pages: Math.ceil(total / parseInt(limit as string)),
       },
+      aiStuckCount,
     });
   } catch (error) {
     next(error);
@@ -1197,6 +1228,19 @@ router.post('/:id/transfer', authenticate, ensureTenant, async (req, res, next) 
       }
     }
 
+    // Check if direct transfer to an external AI user
+    let directExternalAI: { id: string; name: string; aiConfig: any } | null = null;
+    if (toUserId) {
+      const targetUser = await prisma.user.findUnique({
+        where: { id: toUserId },
+        select: { id: true, name: true, isAI: true, aiConfig: true },
+      });
+      if (targetUser?.isAI && ExternalAIWebhookService.isExternalAI(targetUser.aiConfig)) {
+        directExternalAI = targetUser;
+        logger.info(`[ExternalAI] Direct transfer of ticket ${ticket.id} to external AI ${directExternalAI.name}`);
+      }
+    }
+
     // Build update data: when transferring to user, use their department by default
     const transferUpdateData: any = {
       ...(effectiveToDepartmentId && { departmentId: effectiveToDepartmentId }),
@@ -1207,6 +1251,13 @@ router.post('/:id/transfer', authenticate, ensureTenant, async (req, res, next) 
     // If auto-assigning to external AI
     if (autoAssignExternalAI) {
       transferUpdateData.assignedToId = autoAssignExternalAI.id;
+      transferUpdateData.isAIHandled = true;
+      transferUpdateData.status = 'IN_PROGRESS';
+      transferUpdateData.aiTakeoverAt = new Date();
+    }
+
+    // If direct transfer to external AI user
+    if (directExternalAI) {
       transferUpdateData.isAIHandled = true;
       transferUpdateData.status = 'IN_PROGRESS';
       transferUpdateData.aiTakeoverAt = new Date();
@@ -1259,11 +1310,12 @@ router.post('/:id/transfer', authenticate, ensureTenant, async (req, res, next) 
     });
 
     // Create activity
+    const aiUser = autoAssignExternalAI || directExternalAI;
     await prisma.activity.create({
       data: {
         type: 'TICKET_TRANSFERRED',
-        description: autoAssignExternalAI
-          ? `Ticket transferred to external AI ${autoAssignExternalAI.name}`
+        description: aiUser
+          ? `Ticket transferred to external AI ${aiUser.name}`
           : `Ticket transferred`,
         ticketId: ticket.id,
         userId: req.user!.userId,
@@ -1359,19 +1411,46 @@ router.post('/:id/transfer', authenticate, ensureTenant, async (req, res, next) 
       }
     }
 
-    // If auto-assigned to external AI, send assigned webhook
-    if (autoAssignExternalAI) {
-      ExternalAIWebhookService.sendTicketAssigned(
-        autoAssignExternalAI,
-        {
-          id: updatedTicket.id,
-          protocol: updatedTicket.protocol,
-          status: updatedTicket.status,
-          departmentId: updatedTicket.departmentId,
-          department: updatedTicket.department,
-          contact: updatedTicket.contact as any,
+    // If assigned to external AI (auto or direct), send assigned webhook with conversation history
+    const externalAITarget = autoAssignExternalAI || directExternalAI;
+    if (externalAITarget) {
+      try {
+        const webhookResult = await ExternalAIWebhookService.sendTicketAssigned(
+          externalAITarget,
+          {
+            id: updatedTicket.id,
+            protocol: updatedTicket.protocol,
+            status: updatedTicket.status,
+            departmentId: updatedTicket.departmentId,
+            department: updatedTicket.department,
+            contact: updatedTicket.contact as any,
+          }
+        );
+
+        if (webhookResult.success && webhookResult.data) {
+          logger.info(`[ExternalAI] Processing synchronous response from transfer webhook for ticket ${updatedTicket.id}`);
+          await MessageProcessor.processExternalAIResponse(
+            webhookResult.data,
+            {
+              id: updatedTicket.id,
+              protocol: updatedTicket.protocol,
+              status: updatedTicket.status,
+              departmentId: updatedTicket.departmentId,
+              department: updatedTicket.department as any,
+              contact: updatedTicket.contact as any,
+              connectionId: updatedTicket.connectionId,
+            },
+            {
+              id: externalAITarget.id,
+              name: externalAITarget.name || 'IA Externa',
+              aiConfig: externalAITarget.aiConfig,
+            },
+            req.user!.companyId
+          );
         }
-      ).catch(err => logger.error('[ExternalAI] Error sending assigned webhook:', err));
+      } catch (err: any) {
+        logger.error('[ExternalAI] Error sending/processing assigned webhook on transfer:', err?.message);
+      }
     }
 
     sendOutboundEvent(req.user!.companyId, 'conversation_updated', {

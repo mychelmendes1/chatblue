@@ -192,6 +192,7 @@ model Company {
 
   // AI Assistant relations
   aiDataSources  AIDataSource[]
+  campaignDispatches CampaignDispatch[]
   aiAgentConfigs AIAgentConfig[]
 
   // ML Learning System relations
@@ -469,6 +470,10 @@ model Ticket {
   companyId String  @map("company_id")
   company   Company @relation(fields: [companyId], references: [id])
 
+  // Disparo em massa (Mensageria): campanha que originou o ticket
+  campaignId          Int?      @map("campaign_id")
+  campaignDispatchedAt DateTime? @map("campaign_dispatched_at")
+
   // Referência ao ticket anterior (para histórico visual)
   previousTicketId String?  @map("previous_ticket_id")
   previousTicket   Ticket?  @relation("TicketHistory", fields: [previousTicketId], references: [id])
@@ -487,7 +492,22 @@ model Ticket {
   @@index([departmentId, status])
   @@index([contactId, status])
   @@index([status, snoozedUntil])
+  @@index([companyId, campaignId])
   @@map("tickets")
+}
+
+/// Idempotência de webhook campaign.dispatched (Mensageria)
+model CampaignDispatch {
+  id          String   @id @default(cuid())
+  companyId   String   @map("company_id")
+  company     Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  campaignId  Int      @map("campaign_id")
+  dispatchedAt DateTime @map("dispatched_at")
+  processedAt DateTime @default(now()) @map("processed_at")
+
+  @@unique([companyId, campaignId, dispatchedAt])
+  @@index([companyId, campaignId, dispatchedAt])
+  @@map("campaign_dispatches")
 }
 
 /// Transferência de Ticket

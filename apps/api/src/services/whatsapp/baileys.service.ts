@@ -23,26 +23,34 @@ import { emailService } from '../email/email.service.js';
 
 const instances = new Map<string, BaileysService>();
 
-/** Fixed WhatsApp version for makeWASocket to avoid fetchLatestBaileysVersion() hang/incompatibility and reduce "connect then disconnect" issues (see Baileys docs and GH #1004, #1990) */
-const FIXED_WHATSAPP_VERSION: [number, number, number] = [2, 3000, 1015901307];
+/** WhatsApp version for makeWASocket - updated to avoid 405 Connection Failure (see Baileys GH #807, #999, #1939) */
+const FIXED_WHATSAPP_VERSION: [number, number, number] = [2, 3000, 1027934701];
 
-// Get the sessions directory path - use process.cwd() for ESM compatibility
+// Get the sessions directory path
+// When PM2 runs with cwd = apps/api, process.cwd() is already apps/api,
+// so we must NOT prepend apps/api again.
 const getSessionsDir = () => {
-  // Try multiple possible paths
-  const possiblePaths = [
-    path.join(process.cwd(), 'apps', 'api', 'sessions'),
-    path.join(process.cwd(), 'sessions'),
-    path.resolve('./sessions'),
-  ];
-  
+  const cwd = process.cwd();
+  const cwdEndsWithApi = cwd.endsWith(path.join('apps', 'api'));
+
+  const possiblePaths = cwdEndsWithApi
+    ? [
+        path.join(cwd, 'sessions'),
+        path.resolve('./sessions'),
+      ]
+    : [
+        path.join(cwd, 'apps', 'api', 'sessions'),
+        path.join(cwd, 'sessions'),
+        path.resolve('./sessions'),
+      ];
+
   for (const p of possiblePaths) {
     if (fs.existsSync(p)) {
       return p;
     }
   }
-  
-  // Default to apps/api/sessions and create if needed
-  const defaultPath = path.join(process.cwd(), 'apps', 'api', 'sessions');
+
+  const defaultPath = possiblePaths[0];
   if (!fs.existsSync(defaultPath)) {
     fs.mkdirSync(defaultPath, { recursive: true });
   }
@@ -58,6 +66,8 @@ export class BaileysService extends EventEmitter {
   private isDeleted = false; // Flag to track if connection was deleted
   private retryCount = 0;
   private maxRetries = 3;
+  private conflictCount = 0;
+  private maxConflicts = 5;
   private connectionPromise: Promise<void> | null = null;
   private connectionResolve: (() => void) | null = null;
   private connectionReject: ((error: Error) => void) | null = null;
@@ -269,7 +279,6 @@ export class BaileysService extends EventEmitter {
       this.socket = makeWASocket({
         auth: state,
         version: FIXED_WHATSAPP_VERSION,
-        printQRInTerminal: true,
         browser: ['ChatBlue', 'Chrome', '1.0.0'],
         syncFullHistory: false,
         markOnlineOnConnect: false,
@@ -342,14 +351,13 @@ export class BaileysService extends EventEmitter {
                 newInstance.connect();
               }
             }, 2000);
-          } else if (reason === 405 || reason === DisconnectReason.connectionReplaced) {
-            // Error 405 means we should retry with delay
+          } else if (reason === 405) {
+            // Error 405: protocol version mismatch - clear session and retry
             this.retryCount++;
             if (this.retryCount <= this.maxRetries) {
               const delay = Math.min(5000 * Math.pow(2, this.retryCount - 1), 30000);
               logger.warn(`Got 405 error (attempt ${this.retryCount}/${this.maxRetries}), retrying in ${delay}ms: ${this.connectionId}`);
               
-              // Clear the session for a fresh start
               const sessionPath = path.join(getSessionsDir(), this.connectionId);
               if (fs.existsSync(sessionPath)) {
                 fs.rmSync(sessionPath, { recursive: true, force: true });
@@ -360,9 +368,26 @@ export class BaileysService extends EventEmitter {
               logger.error(`Max retries reached for: ${this.connectionId}`);
               this.retryCount = 0;
               await this.safeUpdateConnection({ status: 'DISCONNECTED', qrCode: null });
-              // Send disconnection alert email
               await this.sendDisconnectionAlert("Número máximo de tentativas de reconexão atingido (erro 405)");
               this.emit('connection_error', 'Erro de conexão. O WhatsApp pode estar temporariamente indisponível. Aguarde alguns minutos e tente novamente.');
+            }
+          } else if (reason === DisconnectReason.connectionReplaced || reason === 440) {
+            // Conflict: another device/session replaced ours.
+            // Session creds are still valid - do NOT delete them.
+            this.conflictCount++;
+            logger.warn(`Connection replaced/conflict (attempt ${this.conflictCount}/${this.maxConflicts}) for: ${this.connectionId}`);
+            
+            if (this.conflictCount <= this.maxConflicts) {
+              const delay = Math.min(10000 * this.conflictCount, 60000);
+              logger.info(`Will reconnect with existing session in ${delay}ms: ${this.connectionId}`);
+              await this.safeUpdateConnection({ status: 'CONNECTING' });
+              setTimeout(() => this.connect(), delay);
+            } else {
+              logger.error(`Max conflict retries reached for: ${this.connectionId}. Another device may be actively using this number.`);
+              this.conflictCount = 0;
+              await this.safeUpdateConnection({ status: 'DISCONNECTED', qrCode: null });
+              await this.sendDisconnectionAlert("Conflito de sessão - outro dispositivo pode estar usando este número");
+              this.emit('connection_error', 'Conflito de sessão. Outro dispositivo pode estar usando este número no WhatsApp Web. Desconecte os outros dispositivos e tente novamente.');
             }
           } else if (reason === DisconnectReason.restartRequired || reason === 515) {
             // Restart required after pairing - reconnect immediately
@@ -376,32 +401,17 @@ export class BaileysService extends EventEmitter {
             setTimeout(() => this.connect(), 5000);
           } else if (reason === 428 || errorMessage.includes('Connection Terminated by Server')) {
             // Error 428: Connection Terminated by Server
-            // This usually happens when WhatsApp detects suspicious activity or multiple connections
-            // Wait longer before reconnecting to avoid rate limiting
-            logger.warn(`Connection terminated by server (428) for: ${this.connectionId}. This may indicate multiple connections or suspicious activity. Waiting before reconnect...`);
+            // Session creds are still valid - do NOT delete them.
+            // Just wait and reconnect with existing session.
+            logger.warn(`Connection terminated by server (428) for: ${this.connectionId}. Reconnecting with existing session...`);
             
-            // Clear the session
-            const sessionPath = path.join(getSessionsDir(), this.connectionId);
-            if (fs.existsSync(sessionPath)) {
-              fs.rmSync(sessionPath, { recursive: true, force: true });
-            }
-            
-            await this.safeUpdateConnection({ 
-              status: 'DISCONNECTED', 
-              sessionData: Prisma.DbNull, 
-              qrCode: null 
-            });
-            
-            // Send disconnection alert email
-            await this.sendDisconnectionAlert("Conexão terminada pelo servidor (428) - possível atividade suspeita ou múltiplas conexões");
+            await this.safeUpdateConnection({ status: 'CONNECTING' });
             
             if (!this.isDeleted) {
-              // Wait longer (30-60 seconds) before reconnecting to avoid rate limiting
-              const delay = 30000 + Math.random() * 30000; // 30-60 seconds
-              logger.info(`Will attempt to reconnect ${this.connectionId} in ${Math.round(delay/1000)} seconds...`);
+              const delay = 5000 + Math.random() * 10000; // 5-15 seconds
+              logger.info(`Will reconnect ${this.connectionId} in ${Math.round(delay/1000)}s (keeping session)...`);
               setTimeout(() => {
                 if (!this.isDeleted) {
-                  logger.info(`Attempting to reconnect after 428 error: ${this.connectionId}`);
                   this.connect();
                 }
               }, delay);
@@ -436,6 +446,7 @@ export class BaileysService extends EventEmitter {
           this.qrCode = null;
           this.isConnected = true;
           this.retryCount = 0;
+          this.conflictCount = 0;
           const phone = this.socket?.user?.id?.split(':')[0];
 
           const updated = await this.safeUpdateConnection({

@@ -726,6 +726,43 @@ router.post('/ticket/:ticketId/read', authenticate, ensureTenant, async (req, re
   }
 });
 
+// Mark messages as unread (so the conversation shows highlighted in the sidebar)
+router.post('/ticket/:ticketId/unread', authenticate, ensureTenant, async (req, res, next) => {
+  try {
+    const ticket = await prisma.ticket.findFirst({
+      where: {
+        id: req.params.ticketId,
+        companyId: req.user!.companyId,
+      },
+    });
+    if (!ticket) {
+      throw new NotFoundError('Ticket not found');
+    }
+
+    await prisma.message.updateMany({
+      where: {
+        ticketId: req.params.ticketId,
+        isFromMe: false,
+      },
+      data: {
+        readAt: null,
+      },
+    });
+
+    const unreadCount = await prisma.message.count({
+      where: {
+        ticketId: req.params.ticketId,
+        isFromMe: false,
+        readAt: null,
+      },
+    });
+
+    res.json({ message: 'Messages marked as unread', unreadCount });
+  } catch (error) {
+    next(error);
+  }
+});
+
 // Send template message (Meta Cloud API only)
 router.post('/template', authenticate, ensureTenant, async (req, res, next) => {
   try {

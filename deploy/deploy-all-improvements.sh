@@ -17,11 +17,15 @@ spawn rsync -avz \
   --exclude=.next \
   --exclude=dist \
   --exclude=.env \
+  --exclude=.env.local \
+  --exclude=.env.production \
+  --exclude=.env.*.local \
   --exclude=apps/api/node_modules \
   --exclude=apps/web/node_modules \
   --exclude=apps/web/.next \
   --exclude=packages/*/node_modules \
   --exclude=.git \
+  --exclude=sessions \
   -e "ssh -o StrictHostKeyChecking=no" \
   "$local_dir/" ${user}@${server}:${remote_dir}/
 

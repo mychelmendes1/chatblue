@@ -38,6 +38,12 @@ import {
   Plus,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -139,6 +145,9 @@ class MessageErrorBoundary extends Component<
 }
 
 export function ChatWindow({ ticket, onShowContactInfo, onMobileBack }: ChatWindowProps) {
+  // historyTicketIds must be declared before the message filter that uses it
+  const [historyTicketIds, setHistoryTicketIds] = useState<string[]>([]);
+
   // Subscribe to messages - show current ticket or full contact history when historyTicketIds is set
   const allMessages = useChatStore((state) => state.messages);
   const messages = allMessages.filter((m) => {
@@ -146,7 +155,7 @@ export function ChatWindow({ ticket, onShowContactInfo, onMobileBack }: ChatWind
     if (historyTicketIds.length > 0) return historyTicketIds.includes(m.ticketId);
     return m.ticketId === ticket.id;
   });
-  const { setMessages, addMessage, setLoadingMessages, markTicketAsRead } = useChatStore();
+  const { setMessages, addMessage, setLoadingMessages, markTicketAsRead, markTicketAsUnread } = useChatStore();
   const store = useChatStore.getState();
   const { socket } = useSocket();
   
@@ -171,6 +180,7 @@ export function ChatWindow({ ticket, onShowContactInfo, onMobileBack }: ChatWind
   const [isDragging, setIsDragging] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [filePreview, setFilePreview] = useState<string | null>(null);
+  const [audioPreviewUrl, setAudioPreviewUrl] = useState<string | null>(null);
   const [isUploading, setIsUploading] = useState(false);
 
   // Reply state
@@ -239,7 +249,6 @@ export function ChatWindow({ ticket, onShowContactInfo, onMobileBack }: ChatWind
   const [messagePage, setMessagePage] = useState(1);
   const [hasMoreMessages, setHasMoreMessages] = useState(false);
   const [isLoadingOlderMessages, setIsLoadingOlderMessages] = useState(false);
-  const [historyTicketIds, setHistoryTicketIds] = useState<string[]>([]);
   
   // Audio recording state
   const [isRecording, setIsRecording] = useState(false);
@@ -658,15 +667,28 @@ export function ChatWindow({ ticket, onShowContactInfo, onMobileBack }: ChatWind
 
     setSelectedFile(file);
 
-    // Create preview for images
     if (file.type.startsWith("image/")) {
+      setAudioPreviewUrl((prev) => {
+        if (prev) URL.revokeObjectURL(prev);
+        return null;
+      });
       const reader = new FileReader();
       reader.onload = (e) => {
         setFilePreview(e.target?.result as string);
       };
       reader.readAsDataURL(file);
+    } else if (file.type.startsWith("audio/")) {
+      setFilePreview(null);
+      setAudioPreviewUrl((prev) => {
+        if (prev) URL.revokeObjectURL(prev);
+        return URL.createObjectURL(file);
+      });
     } else {
       setFilePreview(null);
+      setAudioPreviewUrl((prev) => {
+        if (prev) URL.revokeObjectURL(prev);
+        return null;
+      });
     }
   }
 
@@ -721,6 +743,10 @@ export function ChatWindow({ ticket, onShowContactInfo, onMobileBack }: ChatWind
   function handleCancelFile() {
     setSelectedFile(null);
     setFilePreview(null);
+    setAudioPreviewUrl((prev) => {
+      if (prev) URL.revokeObjectURL(prev);
+      return null;
+    });
     if (fileInputRef.current) {
       fileInputRef.current.value = "";
     }
@@ -767,12 +793,13 @@ export function ChatWindow({ ticket, onShowContactInfo, onMobileBack }: ChatWind
       );
 
       if (!response.ok) {
-        throw new Error("Failed to upload file");
+        const errorData = await response.json().catch(() => null);
+        const serverMsg = errorData?.error;
+        throw new Error(serverMsg || "Falha ao enviar arquivo");
       }
 
       const data = await response.json();
       console.log("[handleSendFile] Response from API:", { mediaUrl: data.mediaUrl, type: data.type, id: data.id });
-      // Ensure message has ticketId before adding
       const messageWithTicketId = {
         ...data,
         ticketId: ticket.id,
@@ -780,13 +807,12 @@ export function ChatWindow({ ticket, onShowContactInfo, onMobileBack }: ChatWind
       console.log("[handleSendFile] Adding message with mediaUrl:", messageWithTicketId.mediaUrl);
       addMessage(messageWithTicketId);
       
-      // Clear file and message
       handleCancelFile();
       setNewMessage("");
       setTimeout(() => scrollToBottom(false), 150);
-    } catch (error) {
+    } catch (error: any) {
       console.error("Failed to send file:", error);
-      alert("Erro ao enviar arquivo. Tente novamente.");
+      alert(error?.message || "Erro ao enviar arquivo. Tente novamente.");
     } finally {
       setIsUploading(false);
     }
@@ -861,20 +887,19 @@ export function ChatWindow({ ticket, onShowContactInfo, onMobileBack }: ChatWind
         }
       };
       
-      mediaRecorder.onstop = async () => {
+      mediaRecorder.onstop = () => {
+        if (audioChunksRef.current.length === 0) {
+          stream.getTracks().forEach(track => track.stop());
+          return;
+        }
         const audioBlob = new Blob(audioChunksRef.current, { type: mimeType });
-        // Use OGG extension if available, otherwise WebM
         const audioFile = new File([audioBlob], `audio-${Date.now()}.${fileExtension}`, { type: mimeType });
         setSelectedFile(audioFile);
-        
-        // Stop all tracks
+        setAudioPreviewUrl((prev) => {
+          if (prev) URL.revokeObjectURL(prev);
+          return URL.createObjectURL(audioFile);
+        });
         stream.getTracks().forEach(track => track.stop());
-        
-        // Auto send after recording stops — pass file directly to avoid
-        // React state race condition (setSelectedFile is async)
-        if (audioChunksRef.current.length > 0) {
-          await handleSendFile(audioFile);
-        }
       };
       
       mediaRecorder.start();
@@ -1166,9 +1191,40 @@ export function ChatWindow({ ticket, onShowContactInfo, onMobileBack }: ChatWind
           <Button variant="ghost" size="icon" className="hidden md:inline-flex">
             <Video className="w-5 h-5" />
           </Button>
-          <Button variant="ghost" size="icon" className="h-8 w-8 md:h-10 md:w-10" onClick={onShowContactInfo}>
-            <MoreVertical className="w-4 h-4 md:w-5 md:h-5" />
-          </Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" size="icon" className="h-8 w-8 md:h-10 md:w-10">
+                <MoreVertical className="w-4 h-4 md:w-5 md:h-5" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onClick={onShowContactInfo}>
+                Ver contato
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onClick={async () => {
+                  try {
+                    const { data } = await api.post<{ unreadCount?: number }>(
+                      `/messages/ticket/${ticket.id}/unread`
+                    );
+                    markTicketAsUnread(ticket.id, data.unreadCount);
+                    toast({ title: "Conversa marcada como não lida" });
+                  } catch (err: any) {
+                    const msg = err?.message || "Erro desconhecido";
+                    toast({
+                      title: "Erro ao marcar como não lida",
+                      description: msg.includes("404")
+                        ? "Rota não encontrada. Reinicie o servidor da API para carregar a nova rota."
+                        : msg,
+                      variant: "destructive",
+                    });
+                  }
+                }}
+              >
+                Marcar como não lido
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       </div>
 
@@ -1358,6 +1414,9 @@ export function ChatWindow({ ticket, onShowContactInfo, onMobileBack }: ChatWind
               <p className="text-xs text-muted-foreground">
                 {(selectedFile.size / 1024).toFixed(1)} KB
               </p>
+              {getMediaType(selectedFile) === "AUDIO" && audioPreviewUrl && (
+                <audio controls src={audioPreviewUrl} className="mt-2 w-full max-w-xs h-9" />
+              )}
             </div>
             <Button
               type="button"

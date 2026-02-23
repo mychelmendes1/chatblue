@@ -14,6 +14,7 @@ import {
   RefreshCw,
   ArrowRight,
   UserPlus,
+  Bot,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -123,7 +124,7 @@ export function ContactInfo({ ticket, onClose, onTicketUpdate }: ContactInfoProp
   useEffect(() => {
     async function fetchUsers() {
       try {
-        const response = await api.get<any[]>("/users?isActive=true&isAI=false");
+        const response = await api.get<any[]>("/users?isActive=true");
         setUsers(response.data || []);
       } catch (error) {
         console.error("Failed to fetch users:", error);
@@ -488,6 +489,7 @@ export function ContactInfo({ ticket, onClose, onTicketUpdate }: ContactInfoProp
                             </AvatarFallback>
                           </Avatar>
                           <span>{user.name}</span>
+                          {user.isAI && <Bot className="w-3 h-3 text-purple-500" />}
                           {user.isOnline && (
                             <span className="text-xs text-green-600">●</span>
                           )}

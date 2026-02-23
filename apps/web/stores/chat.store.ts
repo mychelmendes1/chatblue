@@ -100,6 +100,10 @@ interface ChatState {
     search?: string;
     isAIHandled?: boolean;
     mentionedUserId?: string;
+    unreadOnly?: boolean;
+    waitingReply?: boolean;
+    massDispatchOnly?: boolean;
+    sortOrder?: 'asc' | 'desc';
   };
   setTickets: (tickets: Ticket[]) => void;
   addTicket: (ticket: Ticket) => void;
@@ -112,11 +116,14 @@ interface ChatState {
   updateTicket: (ticketId: string, updates: Partial<Ticket>) => void;
   updateTicketUnread: (ticketId: string) => void;
   markTicketAsRead: (ticketId: string) => void;
+  markTicketAsUnread: (ticketId: string, unreadCount?: number) => void;
   setFilters: (filters: Partial<ChatState["filters"]>) => void;
   setShowResolved: (show: boolean) => void;
   setLoadingTickets: (loading: boolean) => void;
   setLoadingMessages: (loading: boolean) => void;
   clearData: () => void;
+  aiStuckCount: number;
+  setAiStuckCount: (count: number) => void;
 }
 
 export const useChatStore = create<ChatState>((set, get) => ({
@@ -127,8 +134,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
   isLoadingMessages: false,
   showResolved: false,
   filters: {},
+  aiStuckCount: 0,
 
   setTickets: (tickets) => set({ tickets }),
+
+  setAiStuckCount: (count) => set({ aiStuckCount: count }),
 
   addTicket: (ticket) =>
     set((state) => {
@@ -340,6 +350,20 @@ export const useChatStore = create<ChatState>((set, get) => ({
           : state.selectedTicket,
     })),
 
+  markTicketAsUnread: (ticketId, unreadCount) =>
+    set((state) => {
+      const count = unreadCount ?? 1;
+      return {
+        tickets: state.tickets.map((t) =>
+          t.id === ticketId ? { ...t, _count: { messages: count } } : t
+        ),
+        selectedTicket:
+          state.selectedTicket?.id === ticketId
+            ? { ...state.selectedTicket, _count: { messages: count } }
+            : state.selectedTicket,
+      };
+    }),
+
   setFilters: (filters) =>
     set((state) => ({
       filters: { ...state.filters, ...filters },
@@ -355,5 +379,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
     selectedTicket: null,
     messages: [],
     filters: {},
+    aiStuckCount: 0,
   }),
 }));

@@ -360,16 +360,20 @@ router.post(
         }
 
         res.json(updatedMessage);
-      } catch (whatsappError) {
-        logger.error("Error sending media via WhatsApp:", whatsappError);
+      } catch (whatsappError: any) {
+        logger.error({ err: whatsappError }, "Error sending media via WhatsApp");
         
-        // Update message status to failed
         await prisma.message.update({
           where: { id: message.id },
           data: { status: "FAILED" },
         });
 
-        res.status(500).json({ error: "Failed to send media via WhatsApp" });
+        const userMsg = whatsappError?.message?.includes("não conectado")
+          || whatsappError?.message?.includes("reconectar")
+          || whatsappError?.message?.includes("QR Code")
+          ? whatsappError.message
+          : "Falha ao enviar mídia via WhatsApp. Verifique se a conexão está ativa.";
+        res.status(500).json({ error: userMsg });
       }
     } catch (error) {
       logger.error("Error uploading message media:", error);

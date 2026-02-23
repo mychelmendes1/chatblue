@@ -1,4 +1,30 @@
 import 'dotenv/config';
+
+// Em desenvolvimento, impedir uso acidental do banco de produção
+if (process.env.NODE_ENV !== 'production') {
+  const dbUrl = process.env.DATABASE_URL || '';
+  try {
+    const url = new URL(dbUrl.replace(/^postgresql:/i, 'https:'));
+    const host = url.hostname;
+    const isLocal =
+      host === 'localhost' ||
+      host === '127.0.0.1' ||
+      host === '';
+    if (!isLocal) {
+      console.error('');
+      console.error('*** SEGURANÇA: ambiente de desenvolvimento ***');
+      console.error('DATABASE_URL está apontando para um host remoto:', host);
+      console.error('Em dev, use apenas banco local (localhost/127.0.0.1).');
+      console.error('Ajuste apps/api/.env ou .env com DATABASE_URL para seu Postgres local.');
+      console.error('Exemplo: postgresql://chatblue:chatblue123@localhost:5432/chatblue');
+      console.error('');
+      process.exit(1);
+    }
+  } catch {
+    // URL inválida será tratada pelo Prisma ao conectar
+  }
+}
+
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
@@ -33,6 +59,7 @@ import { predefinedMessagesRouter } from './routes/predefined-messages.routes';
 import { externalAIRouter } from './routes/external-ai.routes';
 import { externalRouter } from './routes/external.routes.js';
 import sgtRouter from './routes/sgt.routes.js';
+import { campaignDispatchRouter } from './routes/campaign-dispatch.routes.js';
 import { setupSocketHandlers } from './sockets/index';
 import { startWorkers, stopWorkers } from './jobs/index';
 import { prisma } from './config/database';
@@ -154,6 +181,7 @@ app.use('/api/predefined-messages', predefinedMessagesRouter);
 app.use('/api/external-ai', externalAIRouter);
 app.use('/api/external', externalRouter);
 app.use('/api/integrations/sgt', sgtRouter);
+app.use('/api/webhooks', campaignDispatchRouter);
 app.use('/webhooks', webhookRouter);
 
 // Serve uploaded files statically (same path as upload.service and Baileys)
@@ -188,8 +216,8 @@ async function reconnectBaileysConnections() {
           logger.error(`Failed to reconnect ${connection.id}:`, err);
         });
         
-        // Small delay between connections to avoid overwhelming
-        await new Promise(resolve => setTimeout(resolve, 1000));
+        // Stagger connections to avoid 405 errors from WhatsApp
+        await new Promise(resolve => setTimeout(resolve, 5000));
       } catch (error) {
         logger.error(`Error reconnecting ${connection.id}:`, error);
       }

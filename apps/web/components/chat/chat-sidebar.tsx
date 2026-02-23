@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useRef } from "react";
-import { Search, Filter, Bot, User, Clock, Plus, Loader2, Phone, Users, CheckSquare, FileText, AlertCircle, MessageCircle } from "lucide-react";
+import { Search, Filter, Bot, User, Clock, Plus, Loader2, Phone, Users, CheckSquare, FileText, AlertCircle, MessageCircle, Mail, ArrowDownUp, MessageSquareReply, UserCircle, Building2 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -73,6 +73,8 @@ export function ChatSidebar() {
     showResolved,
     setShowResolved,
     clearData,
+    aiStuckCount,
+    setAiStuckCount,
   } = useChatStore();
 
   const [search, setSearch] = useState("");
@@ -97,6 +99,9 @@ export function ChatSidebar() {
   const [isCreating, setIsCreating] = useState(false);
   const [isSearching, setIsSearching] = useState(false);
   const [showTemplateSelector, setShowTemplateSelector] = useState(false);
+  const [attendants, setAttendants] = useState<{ id: string; name: string }[]>([]);
+  const [departments, setDepartments] = useState<{ id: string; name: string }[]>([]);
+  const [filtersExpanded, setFiltersExpanded] = useState(true);
 
   // Check if selected connection is Meta Cloud or Instagram
   const selectedConnection = connections.find(c => c.id === selectedConnectionId);
@@ -146,6 +151,20 @@ export function ChatSidebar() {
     };
   }, [search]);
 
+  useEffect(() => {
+    api.get<{ id: string; name: string }[]>("/users?isActive=true&isAI=false").then((res) => {
+      const list = Array.isArray(res.data) ? res.data : [];
+      setAttendants(list.map((u: { id: string; name: string }) => ({ id: u.id, name: u.name || "" })));
+    }).catch(() => setAttendants([]));
+  }, []);
+
+  useEffect(() => {
+    api.get<{ id: string; name: string }[]>("/departments").then((res) => {
+      const list = Array.isArray(res.data) ? res.data : [];
+      setDepartments(list.map((d: { id: string; name: string }) => ({ id: d.id, name: d.name || "" })));
+    }).catch(() => setDepartments([]));
+  }, []);
+
   // Listen for company switch events to reload data
   useEffect(() => {
     const handleCompanySwitch = (e: Event) => {
@@ -182,13 +201,21 @@ export function ChatSidebar() {
       if (filters.assignedToId) params.set("assignedToId", filters.assignedToId);
       if (filters.isAIHandled !== undefined) params.set("isAIHandled", String(filters.isAIHandled));
       if (filters.mentionedUserId) params.set("hasMentions", "true");
+      if (filters.unreadOnly) params.set("unreadOnly", "true");
+      if (filters.waitingReply) params.set("waitingReply", "true");
+      if (filters.massDispatchOnly) params.set("massDispatchOnly", "true");
+      if (filters.sortOrder === "asc") params.set("sortOrder", "asc");
       if (search) params.set("search", search);
       if (!showResolved) params.set("hideResolved", "true");
       params.set("page", String(pageToFetch));
       params.set("limit", String(TICKETS_PER_PAGE));
 
-      const response = await api.get<{ tickets: any[]; pagination: { page: number; limit: number; total: number; pages: number } }>(`/tickets?${params}`);
-      const { tickets: newTickets, pagination } = response.data;
+      const response = await api.get<{ tickets: any[]; pagination: { page: number; limit: number; total: number; pages: number }; aiStuckCount?: number }>(`/tickets?${params}`);
+      const { tickets: newTickets, pagination, aiStuckCount: count } = response.data;
+
+      if (count !== undefined) {
+        setAiStuckCount(count);
+      }
 
       if (loadMore) {
         const currentTickets = useChatStore.getState().tickets;
@@ -449,21 +476,19 @@ export function ChatSidebar() {
     <div className="w-full md:w-80 border-r flex flex-col bg-card h-full">
       {/* Header */}
       <div className="p-3 md:p-4 border-b">
-        <div className="flex items-center justify-between mb-2 md:mb-3">
-          <h2 className="text-base md:text-lg font-semibold">Conversas</h2>
+        {/* Search + Nova conversa */}
+        <form onSubmit={handleSearch} className="flex gap-2 items-center">
           <Button
+            type="button"
             size="icon"
             variant="outline"
+            className="shrink-0"
             onClick={handleOpenNewConversation}
             title="Nova conversa"
           >
             <Plus className="w-4 h-4" />
           </Button>
-        </div>
-
-        {/* Search */}
-        <form onSubmit={handleSearch} className="flex gap-2">
-          <div className="relative flex-1">
+          <div className="relative flex-1 min-w-0">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
             <Input
               placeholder="Buscar por email, nome, telefone ou nº do ticket..."
@@ -472,12 +497,21 @@ export function ChatSidebar() {
               className="pl-9"
             />
           </div>
-          <Button variant="outline" size="icon">
+          <Button
+            type="button"
+            variant={filtersExpanded ? "default" : "outline"}
+            size="icon"
+            className="shrink-0"
+            onClick={() => setFiltersExpanded((prev) => !prev)}
+            title={filtersExpanded ? "Recolher filtros" : "Expandir filtros"}
+          >
             <Filter className="w-4 h-4" />
           </Button>
         </form>
 
-        {/* Quick Filters */}
+        {/* Quick Filters + Second row (expand/collapse) */}
+        {filtersExpanded && (
+        <>
         <div className="flex gap-1 md:gap-1.5 mt-2 md:mt-3">
           <Button
             variant={!filters.status && !filters.assignedToId && filters.isAIHandled === undefined && !filters.mentionedUserId ? "default" : "outline"}
@@ -503,14 +537,24 @@ export function ChatSidebar() {
           >
             Meus
           </Button>
-          <Button
-            variant={filters.isAIHandled === true ? "default" : "outline"}
-            size="sm"
-            className="text-xs md:text-sm px-2 md:px-2.5 h-7 md:h-8 flex-shrink-0 w-8 md:w-9"
-            onClick={() => setFilters({ status: undefined, assignedToId: undefined, isAIHandled: true, mentionedUserId: undefined })}
-          >
-            🤖
-          </Button>
+          <div className="relative flex-shrink-0">
+            <Button
+              variant={filters.isAIHandled === true ? "default" : "outline"}
+              size="sm"
+              className="text-xs md:text-sm px-2 md:px-2.5 h-7 md:h-8 w-8 md:w-9"
+              onClick={() => setFilters({ status: undefined, assignedToId: undefined, isAIHandled: true, mentionedUserId: undefined })}
+            >
+              🤖
+            </Button>
+            {aiStuckCount > 0 && (
+              <span
+                className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 flex items-center justify-center rounded-full bg-green-500 text-[10px] font-bold text-white ring-2 ring-background"
+                title="Lead(s) com retorno travado na IA há mais de 15 min - requer intervenção"
+              >
+                {aiStuckCount > 99 ? "99+" : aiStuckCount}
+              </span>
+            )}
+          </div>
           <Button
             variant={filters.mentionedUserId === user?.id ? "default" : "outline"}
             size="sm"
@@ -519,23 +563,97 @@ export function ChatSidebar() {
           >
             @
           </Button>
+          <Button
+            variant={filters.massDispatchOnly ? "default" : "outline"}
+            size="sm"
+            className="text-xs md:text-sm px-2 md:px-2.5 h-7 md:h-8 flex-shrink-0 w-8 md:w-9"
+            onClick={() => setFilters({ massDispatchOnly: filters.massDispatchOnly ? undefined : true })}
+            title="Disparo em massa"
+          >
+            <WhatsAppIcon className="w-4 h-4" />
+          </Button>
         </div>
 
-        {/* Show Resolved Toggle */}
-        <div className="flex items-center justify-between mt-2 md:mt-3 pt-2 md:pt-3 border-t">
-          <label
-            htmlFor="showResolved"
-            className="text-xs md:text-sm text-muted-foreground cursor-pointer select-none flex items-center gap-1.5 md:gap-2"
+        {/* Second row: extra filters (combinable with above) */}
+        <div className="flex flex-wrap gap-1.5 mt-2 items-center">
+          <Button
+            variant={filters.unreadOnly ? "default" : "outline"}
+            size="sm"
+            className="text-xs h-7 px-2 gap-1"
+            onClick={() => setFilters({ unreadOnly: filters.unreadOnly ? undefined : true })}
           >
-            <CheckSquare className="w-3.5 h-3.5 md:w-4 md:h-4" />
-            Mostrar resolvidas
-          </label>
-          <Switch
-            id="showResolved"
-            checked={showResolved}
-            onCheckedChange={setShowResolved}
-          />
+            <Mail className="w-3.5 h-3.5" />
+            Não lidas
+          </Button>
+          <Button
+            variant={filters.sortOrder === "asc" ? "default" : "outline"}
+            size="sm"
+            className="text-xs h-7 px-2 gap-1"
+            onClick={() => setFilters({ sortOrder: filters.sortOrder === "asc" ? undefined : "asc" })}
+          >
+            <ArrowDownUp className="w-3.5 h-3.5" />
+            {filters.sortOrder === "asc" ? "Mais antigas" : "Mais recentes"}
+          </Button>
+          <Button
+            variant={filters.waitingReply ? "default" : "outline"}
+            size="sm"
+            className="text-xs h-7 px-2 gap-1"
+            onClick={() => setFilters({ waitingReply: filters.waitingReply ? undefined : true })}
+          >
+            <MessageSquareReply className="w-3.5 h-3.5" />
+            Aguardando retorno
+          </Button>
+          <Select
+            value={filters.assignedToId ?? "__any__"}
+            onValueChange={(value) => setFilters({ assignedToId: value === "__any__" ? undefined : value })}
+          >
+            <SelectTrigger className="w-[140px] h-7 text-xs border-muted">
+              <UserCircle className="w-3.5 h-3.5 mr-1 shrink-0" />
+              <SelectValue placeholder="Atendente" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__any__">Qualquer atendente</SelectItem>
+              {attendants.map((a) => (
+                <SelectItem key={a.id} value={a.id}>
+                  {a.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Select
+            value={filters.departmentId ?? "__any__"}
+            onValueChange={(value) => setFilters({ departmentId: value === "__any__" ? undefined : value })}
+          >
+            <SelectTrigger className="w-[140px] h-7 text-xs border-muted">
+              <Building2 className="w-3.5 h-3.5 mr-1 shrink-0" />
+              <SelectValue placeholder="Departamento" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__any__">Qualquer departamento</SelectItem>
+              {departments.map((d) => (
+                <SelectItem key={d.id} value={d.id}>
+                  {d.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <div className="flex items-center gap-1.5 ml-auto shrink-0">
+            <label
+              htmlFor="showResolved"
+              className="text-xs text-muted-foreground cursor-pointer select-none flex items-center gap-1.5"
+            >
+              <CheckSquare className="w-3.5 h-3.5 shrink-0" />
+              Mostrar resolvidas
+            </label>
+            <Switch
+              id="showResolved"
+              checked={showResolved}
+              onCheckedChange={setShowResolved}
+            />
+          </div>
         </div>
+        </>
+        )}
       </div>
 
       {/* Ticket List or Unified Search Results */}
@@ -1021,22 +1139,37 @@ function TicketItem({ ticket, isSelected, onSelect }: TicketItemProps) {
   const sla = ticket.slaDeadline ? formatSLATime(ticket.slaDeadline) : null;
   const unreadCount = ticket._count?.messages || 0;
   const hasUnread = unreadCount > 0;
+  const slaBreached = sla?.status === "breached";
 
   // Determine channel type
   const connectionType = ticket.connection?.type;
   const isInstagram = connectionType === 'INSTAGRAM';
+
+  // Highlight: red = unread + SLA breached, yellow = unread only
+  const unreadHighlight =
+    !isSelected &&
+    hasUnread &&
+    (slaBreached
+      ? "bg-red-50 dark:bg-red-950/30 border-l-4 border-l-red-500"
+      : "bg-amber-50 dark:bg-amber-950/30 border-l-4 border-l-amber-500");
 
   return (
     <button
       className={cn(
         "w-full p-2.5 md:p-3 flex items-start gap-2.5 md:gap-3 text-left hover:bg-muted/50 transition-colors active:bg-muted/70",
         isSelected && "bg-muted",
-        hasUnread && !isSelected && "bg-primary/5 border-l-2 border-l-primary"
+        unreadHighlight
       )}
       onClick={onSelect}
     >
       <div className="relative flex-shrink-0">
-        <Avatar className={cn("w-10 h-10 md:w-10 md:h-10", hasUnread && "ring-2 ring-primary ring-offset-2")}>
+        <Avatar
+          className={cn(
+            "w-10 h-10 md:w-10 md:h-10",
+            hasUnread && slaBreached && "ring-2 ring-red-500 ring-offset-2",
+            hasUnread && !slaBreached && "ring-2 ring-amber-500 ring-offset-2"
+          )}
+        >
           <AvatarImage src={ticket.contact?.avatar} />
           <AvatarFallback className="text-sm">{initials}</AvatarFallback>
         </Avatar>

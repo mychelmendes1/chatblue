@@ -43,6 +43,50 @@ export class NotionService {
     }
   }
 
+  private phonePropertyType: string | null = null;
+  private dbHasEmailProperty: boolean | null = null;
+
+  private async getPhonePropertyType(databaseId: string): Promise<string> {
+    if (this.phonePropertyType) return this.phonePropertyType;
+    try {
+      const db = await this.client.databases.retrieve({ database_id: databaseId }) as any;
+      const telefone = db.properties?.Telefone || db.properties?.Phone;
+      this.phonePropertyType = telefone?.type || 'phone_number';
+    } catch {
+      this.phonePropertyType = 'phone_number';
+    }
+    return this.phonePropertyType;
+  }
+
+  private buildPhoneFilter(cleanPhone: string, propType: string): any {
+    const last9 = cleanPhone.slice(-9);
+    const phonePropName = 'Telefone';
+
+    switch (propType) {
+      case 'number':
+        return {
+          property: phonePropName,
+          number: { equals: Number(cleanPhone) },
+        };
+      case 'rich_text':
+        return {
+          property: phonePropName,
+          rich_text: { contains: last9 },
+        };
+      case 'title':
+        return {
+          property: phonePropName,
+          title: { contains: last9 },
+        };
+      case 'phone_number':
+      default:
+        return {
+          property: phonePropName,
+          phone_number: { contains: last9 },
+        };
+    }
+  }
+
   async findContact(
     databaseId: string,
     phone?: string | null,
@@ -56,25 +100,38 @@ export class NotionService {
       const filters: any[] = [];
 
       if (phone) {
-        // Try different phone formats
         const cleanPhone = phone.replace(/\D/g, '');
-        filters.push({
-          property: 'Telefone',
-          phone_number: { contains: cleanPhone.slice(-9) }, // Last 9 digits
-        });
+        const propType = await this.getPhonePropertyType(databaseId);
+        filters.push(this.buildPhoneFilter(cleanPhone, propType));
       }
 
-      if (email) {
+      if (email && this.dbHasEmailProperty !== false) {
         filters.push({
           property: 'Email',
           email: { equals: email },
         });
       }
 
-      const response = await this.client.databases.query({
-        database_id: databaseId,
-        filter: filters.length === 1 ? filters[0] : { or: filters },
-      });
+      let response;
+      try {
+        response = await this.client.databases.query({
+          database_id: databaseId,
+          filter: filters.length === 1 ? filters[0] : { or: filters },
+        });
+      } catch (filterError: any) {
+        // If "Email" property doesn't exist, retry with phone only
+        if (filterError?.code === 'validation_error' && filterError?.message?.includes('Email')) {
+          this.dbHasEmailProperty = false;
+          const phoneFilter = filters.find((f) => f.property !== 'Email');
+          if (!phoneFilter) return null;
+          response = await this.client.databases.query({
+            database_id: databaseId,
+            filter: phoneFilter,
+          });
+        } else {
+          throw filterError;
+        }
+      }
 
       if (response.results.length === 0) {
         return null;
@@ -83,14 +140,42 @@ export class NotionService {
       const page = response.results[0] as any;
       const properties = page.properties;
 
+      const contactName = this.extractText(properties['Nome do Cliente'] || properties.Nome || properties.Name);
+      const contactEmail = this.extractEmail(properties['E-mail Principal'] || properties.Email);
+
+      // Determine client status:
+      // 1. "Cliente inativo?" checkbox → false = active, true = inactive
+      // 2. "Data de Cancelamento" date → if set, is ex-client
+      // 3. Fallback to "Status" property for other databases
+      let isClient = false;
+      let isExClient = false;
+
+      const inativoCheckbox = properties['Cliente inativo?'];
+      const cancelDate = properties['Data de Cancelamento'];
+
+      if (inativoCheckbox && inativoCheckbox.type === 'checkbox') {
+        isClient = !inativoCheckbox.checkbox;
+        isExClient = inativoCheckbox.checkbox;
+        if (cancelDate?.date?.start) {
+          isClient = false;
+          isExClient = true;
+        }
+      } else if (properties.Status) {
+        isClient = this.checkStatus(properties.Status, ['cliente', 'ativo', 'active']);
+        isExClient = this.checkStatus(properties.Status, ['ex-cliente', 'inativo', 'churned']);
+      } else {
+        // Found in the database = is a client by default
+        isClient = true;
+      }
+
       return {
         pageId: page.id,
-        name: this.extractText(properties.Nome || properties.Name),
-        email: this.extractEmail(properties.Email),
-        phone: this.extractPhone(properties.Telefone || properties.Phone),
-        isClient: this.checkStatus(properties.Status, ['cliente', 'ativo', 'active']),
-        isExClient: this.checkStatus(properties.Status, ['ex-cliente', 'inativo', 'churned']),
-        clientSince: this.extractDate(properties['Data de Início'] || properties['Start Date']),
+        name: contactName,
+        email: contactEmail,
+        phone: this.extractPhoneValue(properties.Telefone || properties['Telefone 1'] || properties.Phone),
+        isClient,
+        isExClient,
+        clientSince: this.extractDate(properties['Data de Início'] || properties['Start Date'] || properties['Criado em']),
         metadata: this.extractMetadata(properties),
       };
     } catch (error) {
@@ -235,6 +320,22 @@ export class NotionService {
   private extractPhone(property: any): string | undefined {
     if (!property || property.type !== 'phone_number') return undefined;
     return property.phone_number || undefined;
+  }
+
+  private extractPhoneValue(property: any): string | undefined {
+    if (!property) return undefined;
+    switch (property.type) {
+      case 'phone_number':
+        return property.phone_number || undefined;
+      case 'number':
+        return property.number != null ? String(property.number) : undefined;
+      case 'rich_text':
+        return property.rich_text?.[0]?.plain_text || undefined;
+      case 'title':
+        return property.title?.[0]?.plain_text || undefined;
+      default:
+        return undefined;
+    }
   }
 
   private extractDate(property: any): Date | undefined {
