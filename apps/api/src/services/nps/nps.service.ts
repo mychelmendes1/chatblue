@@ -1,6 +1,7 @@
 import { prisma } from '../../config/database.js';
 import { logger } from '../../config/logger.js';
 import { WhatsAppService } from '../whatsapp/whatsapp.service.js';
+import { getActiveConnectionForTicket } from '../../utils/connection-for-ticket.js';
 import crypto from 'crypto';
 
 export class NPSService {
@@ -87,8 +88,11 @@ ${npsUrl}
 
 Sua opinião é muito importante para nós! 😊`;
 
+      // Resolve active connection (handles orphaned tickets after session delete)
+      const { connection: connectionToUse } = await getActiveConnectionForTicket(ticket);
+
       // Send message via WhatsApp
-      const whatsappService = new WhatsAppService(ticket.connection);
+      const whatsappService = new WhatsAppService(connectionToUse);
 
       try {
         const result = await whatsappService.sendMessage(ticket.contact.phone, message);
@@ -104,7 +108,7 @@ Sua opinião é muito importante para nós! 😊`;
             status: 'SENT',
             sentAt: new Date(),
             ticketId: ticket.id,
-            connectionId: ticket.connectionId,
+            connectionId: connectionToUse.id,
             wamid: result.messageId,
           },
         });

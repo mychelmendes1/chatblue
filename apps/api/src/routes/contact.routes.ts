@@ -4,6 +4,7 @@ import { prisma } from '../config/database.js';
 import { authenticate, requireAdmin } from '../middlewares/auth.middleware.js';
 import { ensureTenant } from '../middlewares/tenant.middleware.js';
 import { NotFoundError, ValidationError } from '../middlewares/error.middleware.js';
+import { toCanonicalPhone } from '../utils/canonical-phone.js';
 import { NotionService } from '../services/notion/notion.service.js';
 
 const router = Router();
@@ -327,14 +328,16 @@ router.post('/', authenticate, ensureTenant, async (req, res, next) => {
       notes: z.string().optional(),
     }).parse(req.body);
 
-    // Normalize phone number
     const normalizedPhone = data.phone.replace(/\D/g, '');
+    const canonicalPhone = toCanonicalPhone(normalizedPhone);
 
-    // Check if contact already exists
     const existingContact = await prisma.contact.findFirst({
       where: {
-        phone: normalizedPhone,
         companyId: req.user!.companyId,
+        OR: [
+          { phone: normalizedPhone },
+          ...(canonicalPhone ? [{ canonicalPhone }] : []),
+        ],
       },
     });
 
@@ -350,6 +353,7 @@ router.post('/', authenticate, ensureTenant, async (req, res, next) => {
         tags: data.tags || [],
         notes: data.notes,
         companyId: req.user!.companyId,
+        ...(canonicalPhone ? { canonicalPhone } : {}),
       },
     });
 
@@ -381,7 +385,6 @@ router.post('/import', authenticate, requireAdmin, ensureTenant, async (req, res
 
     for (const contact of contacts) {
       try {
-        // Normalize phone number
         const normalizedPhone = contact.phone.replace(/\D/g, '');
 
         if (!normalizedPhone || normalizedPhone.length < 10) {
@@ -389,11 +392,14 @@ router.post('/import', authenticate, requireAdmin, ensureTenant, async (req, res
           continue;
         }
 
-        // Check if contact already exists
+        const canonicalPhone = toCanonicalPhone(normalizedPhone);
         const existingContact = await prisma.contact.findFirst({
           where: {
-            phone: normalizedPhone,
             companyId: req.user!.companyId,
+            OR: [
+              { phone: normalizedPhone },
+              ...(canonicalPhone ? [{ canonicalPhone }] : []),
+            ],
           },
         });
 
@@ -415,13 +421,13 @@ router.post('/import', authenticate, requireAdmin, ensureTenant, async (req, res
           }
         }
 
-        // Create new contact
         await prisma.contact.create({
           data: {
             phone: normalizedPhone,
             name: contact.name,
             email: contact.email || undefined,
             companyId: req.user!.companyId,
+            ...(canonicalPhone ? { canonicalPhone } : {}),
           },
         });
 

@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { prisma } from '../config/database.js';
 import { logger } from '../config/logger.js';
 import { generateProtocol } from '../utils/protocol.js';
+import { toCanonicalPhone } from '../utils/canonical-phone.js';
 import { ExternalAIWebhookService } from '../services/external-ai/external-ai-webhook.service.js';
 import { MessageProcessor } from '../services/message-processor.service.js';
 import { SLAService } from '../services/sla/sla.service.js';
@@ -66,11 +67,14 @@ router.post('/inbound', authenticateSgt, async (req, res, next) => {
       return res.status(400).json({ error: 'Telefone inválido (mínimo 10 dígitos)' });
     }
 
-    // Contato: buscar ou criar
+    const canonicalPhone = toCanonicalPhone(normalizedPhone);
     let contact = await prisma.contact.findFirst({
       where: {
         companyId,
-        phone: normalizedPhone,
+        OR: [
+          { phone: normalizedPhone },
+          ...(canonicalPhone ? [{ canonicalPhone }] : []),
+        ],
       },
     });
 
@@ -91,6 +95,7 @@ router.post('/inbound', authenticateSgt, async (req, res, next) => {
           phone: normalizedPhone,
           name: body.name || undefined,
           email: body.email && body.email !== '' ? body.email : undefined,
+          ...(canonicalPhone ? { canonicalPhone } : {}),
         },
       });
     }

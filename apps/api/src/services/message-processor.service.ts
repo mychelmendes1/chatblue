@@ -4,6 +4,8 @@ import { redis } from '../config/redis.js';
 import { generateProtocol } from '../utils/protocol.js';
 import { normalizeMediaUrl } from '../utils/media-url.util.js';
 import { getUploadsDir } from '../utils/uploads-dir.util.js';
+import { getActiveConnectionForTicket } from '../utils/connection-for-ticket.js';
+import { toCanonicalPhone } from '../utils/canonical-phone.js';
 import { AIService } from './ai/ai.service.js';
 import { ContextBuilderService } from './ai/context-builder.service.js';
 import { TranscriptionService } from './ai/transcription.service.js';
@@ -180,6 +182,9 @@ export class MessageProcessor {
 
       logger.debug(`Normalized phone: ${from} -> ${normalizedPhone}`);
 
+      // Canonical phone for contact unification (e.g. Brazil 9th digit: 554298067510 and 5542998067510 -> same contact)
+      const canonicalPhone = !normalizedPhone ? undefined : toCanonicalPhone(normalizedPhone);
+
       // Check if this looks like a LID (Linked ID) instead of a real phone number
       const isLid = this.isLikelyLid(normalizedPhone);
       if (isLid) {
@@ -188,7 +193,7 @@ export class MessageProcessor {
 
       const isInstagram = data.metadata?.platform === 'instagram';
 
-      // Get or create contact - search by normalized phone, LID, or Instagram ID
+      // Get or create contact - search by normalized phone, canonical phone, LID, or Instagram ID
       const contactWhere: any = {
         companyId,
         OR: [
@@ -197,6 +202,9 @@ export class MessageProcessor {
           { lidId: normalizedPhone },
         ],
       };
+      if (canonicalPhone) {
+        contactWhere.OR.push({ canonicalPhone: canonicalPhone });
+      }
       if (isInstagram) {
         contactWhere.OR.push({ instagramId: normalizedPhone }, { instagramId: from });
       }
@@ -275,20 +283,47 @@ export class MessageProcessor {
             data: { phone: normalizedPhone },
           });
         }
+
+        // If we found contact by canonicalPhone but phone format differs (e.g. 12 vs 13 digits), keep latest format for sending
+        if (!isLid && contact.phone !== normalizedPhone && contact.canonicalPhone === canonicalPhone) {
+          logger.info(`Updating contact phone to latest format: ${contact.phone} -> ${normalizedPhone}`);
+          contact = await prisma.contact.update({
+            where: { id: contact.id },
+            data: { phone: normalizedPhone },
+          });
+        }
+
+        // Ensure canonicalPhone is set (e.g. backfill missed or old contact)
+        if (canonicalPhone && !contact.canonicalPhone) {
+          await prisma.contact.update({
+            where: { id: contact.id },
+            data: { canonicalPhone },
+          });
+          contact = { ...contact, canonicalPhone };
+        }
       }
 
       // Get or create ticket
-      // First, look for an open ticket for this contact AND connection
+      // Look for an open ticket for this contact (any connection or orphaned) so conversations follow when they reconnect
       let ticket = await prisma.ticket.findFirst({
         where: {
           contactId: contact.id,
-          connectionId, // Same WhatsApp connection
           status: { in: ['PENDING', 'IN_PROGRESS', 'WAITING'] },
         },
+        orderBy: { updatedAt: 'desc' },
         include: {
           assignedTo: true,
         },
       });
+
+      if (ticket) {
+        // Reattach ticket to current connection (e.g. after session was deleted and they reconnected)
+        await prisma.ticket.update({
+          where: { id: ticket.id },
+          data: { connectionId },
+        });
+        ticket = { ...ticket, connectionId };
+      }
 
       // If no open ticket, check if there's a resolved/closed ticket to reopen
       let wasReopened = false;
@@ -296,7 +331,6 @@ export class MessageProcessor {
         const closedTicket = await prisma.ticket.findFirst({
           where: {
             contactId: contact.id,
-            connectionId, // Same WhatsApp connection
             status: { in: ['RESOLVED', 'CLOSED'] },
           },
           orderBy: { updatedAt: 'desc' },
@@ -365,6 +399,7 @@ export class MessageProcessor {
               status: 'PENDING', // Back to triage/pending
               resolvedAt: null,
               closedAt: null,
+              connectionId, // Reattach to current connection (e.g. after session was deleted and they reconnected)
               isAIHandled: shouldUseAI && !!aiUser, // Only if AI enabled and AI user exists
               assignedToId: assignedUserId, // Assign to AI or default user
               departmentId: null, // Reset department - goes back to Triage
@@ -1199,29 +1234,8 @@ export class MessageProcessor {
     // ========================================================================
     if (autoReply && response.action === 'RESPOND' && response.response?.text) {
       try {
-        // Obter conexão WhatsApp para envio
-        let connection = ticket.connection;
-        if (!connection) {
-          connection = await prisma.whatsAppConnection.findUnique({
-            where: { id: ticket.connectionId },
-          });
-        }
-
-        if (!connection || connection.status !== 'CONNECTED' || !connection.isActive) {
-          // Tentar encontrar outra conexão ativa
-          connection = await prisma.whatsAppConnection.findFirst({
-            where: {
-              companyId,
-              status: 'CONNECTED',
-              isActive: true,
-            },
-            orderBy: [
-              { isDefault: 'desc' },
-              { lastConnected: 'desc' },
-            ],
-          });
-        }
-
+        // Obter conexão ativa para envio (reatribui ticket se sessão foi excluída)
+        const { connection } = await getActiveConnectionForTicket(ticket);
         if (connection) {
           const whatsappService = new WhatsAppService(connection);
           const aiName = aiUser.name || 'Assistente IA';
@@ -1452,20 +1466,7 @@ export class MessageProcessor {
 
         // Enviar mensagem de despedida se houver texto na resposta
         if (autoReply && response.response?.text) {
-          let connection = ticket.connection;
-          if (!connection) {
-            connection = await prisma.whatsAppConnection.findUnique({
-              where: { id: ticket.connectionId },
-            });
-          }
-
-          if (!connection || connection.status !== 'CONNECTED' || !connection.isActive) {
-            connection = await prisma.whatsAppConnection.findFirst({
-              where: { companyId, status: 'CONNECTED', isActive: true },
-              orderBy: [{ isDefault: 'desc' }, { lastConnected: 'desc' }],
-            });
-          }
-
+          const { connection } = await getActiveConnectionForTicket(ticket);
           if (connection) {
             const whatsappService = new WhatsAppService(connection);
             const aiName = aiUser.name || 'Assistente IA';

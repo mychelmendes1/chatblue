@@ -213,7 +213,7 @@ router.post(
         return res.status(400).json({ error: "Ticket ID is required" });
       }
 
-      // Get ticket with connection and contact
+      // Get ticket with contact (connection may be null if session was deleted)
       const ticket = await prisma.ticket.findFirst({
         where: {
           id: ticketId,
@@ -229,6 +229,10 @@ router.post(
         await UploadService.deleteFile(req.file.path);
         return res.status(404).json({ error: "Ticket not found" });
       }
+
+      // Resolve active connection for sending (handles orphaned tickets)
+      const { getActiveConnectionForTicket } = await import("../utils/connection-for-ticket.js");
+      const { connection: connectionToUse } = await getActiveConnectionForTicket(ticket);
 
       // Get file URL - use correct folder based on file type
       const fileType = UploadService.getFileType(req.file.mimetype);
@@ -254,7 +258,7 @@ router.post(
           status: "PENDING",
           ticketId: ticket.id,
           senderId: user.userId,
-          connectionId: ticket.connectionId,
+          connectionId: connectionToUse.id,
         },
         include: {
           sender: {
@@ -281,7 +285,7 @@ router.post(
       // Send via WhatsApp
       try {
         const { WhatsAppService } = await import("../services/whatsapp/whatsapp.service.js");
-        const whatsappService = new WhatsAppService(ticket.connection);
+        const whatsappService = new WhatsAppService(connectionToUse);
         
         // Get sender name
         const sender = await prisma.user.findUnique({

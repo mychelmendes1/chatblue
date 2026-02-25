@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { prisma } from '../config/database.js';
 import { logger } from '../config/logger.js';
 import { generateProtocol } from '../utils/protocol.js';
+import { toCanonicalPhone } from '../utils/canonical-phone.js';
 
 const router = Router();
 
@@ -118,10 +119,14 @@ router.post('/campaign-dispatched', optionalWebhookAuth, async (req, res, next) 
         const normalizedPhone = c.phone.replace(/\D/g, '');
         if (normalizedPhone.length < 10) continue;
 
+        const canonicalPhone = toCanonicalPhone(normalizedPhone);
         let contact = await prisma.contact.findFirst({
           where: {
             companyId: company.id,
-            phone: normalizedPhone,
+            OR: [
+              { phone: normalizedPhone },
+              ...(canonicalPhone ? [{ canonicalPhone }] : []),
+            ],
           },
         });
 
@@ -140,6 +145,7 @@ router.post('/campaign-dispatched', optionalWebhookAuth, async (req, res, next) 
               companyId: company.id,
               phone: normalizedPhone,
               name: c.name || undefined,
+              ...(canonicalPhone ? { canonicalPhone } : {}),
             },
           });
         }

@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { prisma } from '../config/database.js';
 import { logger } from '../config/logger.js';
 import { generateProtocol } from '../utils/protocol.js';
+import { toCanonicalPhone } from '../utils/canonical-phone.js';
 import { WhatsAppService } from '../services/whatsapp/whatsapp.service.js';
 import { normalizeMediaUrl } from '../utils/media-url.util.js';
 import { sendOutboundEvent } from '../services/outbound-webhook.service.js';
@@ -63,15 +64,18 @@ router.post('/submit', authenticateWebform, async (req, res, next) => {
     // Normalizar telefone (remover caracteres não numéricos)
     const normalizedPhone = phone.replace(/\D/g, '');
 
-    // Verificar se já existe um contato com esse telefone
+    // Find by phone or canonical (unify with/without 9th digit)
+    const canonicalPhone = toCanonicalPhone(normalizedPhone);
     let contact = await prisma.contact.findFirst({
       where: {
         companyId,
-        phone: normalizedPhone,
+        OR: [
+          { phone: normalizedPhone },
+          ...(canonicalPhone ? [{ canonicalPhone }] : []),
+        ],
       },
     });
 
-    // Criar ou atualizar contato
     if (contact) {
       // Atualizar informações do contato se necessário
       const updateData: any = {};
@@ -89,7 +93,6 @@ router.post('/submit', authenticateWebform, async (req, res, next) => {
         });
       }
     } else {
-      // Criar novo contato
       contact = await prisma.contact.create({
         data: {
           name,
@@ -98,6 +101,7 @@ router.post('/submit', authenticateWebform, async (req, res, next) => {
           companyId,
           isClient: true,
           isActive: true,
+          ...(canonicalPhone ? { canonicalPhone } : {}),
         },
       });
     }

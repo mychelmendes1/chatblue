@@ -58,41 +58,43 @@ async function validateTicketAccess(ticketId: string, aiUser: { id: string; comp
 }
 
 /**
- * Helper: Get an active WhatsApp connection for sending messages
+ * Helper: Get an active WhatsApp connection for sending messages.
+ * Handles ticket.connectionId null (orphaned after session delete) or connection not found/inactive.
  */
 async function getActiveConnection(ticket: any) {
-  const connection = await prisma.whatsAppConnection.findUnique({
-    where: { id: ticket.connectionId },
-  });
+  const connection = ticket.connectionId
+    ? await prisma.whatsAppConnection.findUnique({
+        where: { id: ticket.connectionId },
+      })
+    : null;
 
-  if (!connection || connection.status !== 'CONNECTED' || !connection.isActive) {
-    // Try to find another active connection
-    const activeConnection = await prisma.whatsAppConnection.findFirst({
-      where: {
-        companyId: ticket.companyId,
-        status: 'CONNECTED',
-        isActive: true,
-      },
-      orderBy: [
-        { isDefault: 'desc' },
-        { lastConnected: 'desc' },
-      ],
-    });
-
-    if (!activeConnection) {
-      throw new ValidationError('No active WhatsApp connection available');
-    }
-
-    // Update ticket to use the new connection
-    await prisma.ticket.update({
-      where: { id: ticket.id },
-      data: { connectionId: activeConnection.id },
-    });
-
-    return activeConnection;
+  if (connection?.status === 'CONNECTED' && connection?.isActive) {
+    return connection;
   }
 
-  return connection;
+  // Find an active connection (ticket orphaned or current one disconnected)
+  const activeConnection = await prisma.whatsAppConnection.findFirst({
+    where: {
+      companyId: ticket.companyId,
+      status: 'CONNECTED',
+      isActive: true,
+    },
+    orderBy: [
+      { isDefault: 'desc' },
+      { lastConnected: 'desc' },
+    ],
+  });
+
+  if (!activeConnection) {
+    throw new ValidationError('No active WhatsApp connection available');
+  }
+
+  await prisma.ticket.update({
+    where: { id: ticket.id },
+    data: { connectionId: activeConnection.id },
+  });
+
+  return activeConnection;
 }
 
 // ============================================================================

@@ -23,8 +23,31 @@ import { emailService } from '../email/email.service.js';
 
 const instances = new Map<string, BaileysService>();
 
-/** WhatsApp version for makeWASocket - updated to avoid 405 Connection Failure (see Baileys GH #807, #999, #1939) */
-const FIXED_WHATSAPP_VERSION: [number, number, number] = [2, 3000, 1027934701];
+// Cached WhatsApp version — fetched once at startup and refreshed every 6h to avoid 405 errors.
+// Fallback to a recent known-good version if fetch fails.
+const FALLBACK_WHATSAPP_VERSION: [number, number, number] = [2, 3000, 1034030014];
+let _cachedWAVersion: [number, number, number] | null = null;
+let _versionFetchedAt = 0;
+const VERSION_TTL_MS = 6 * 60 * 60 * 1000; // 6 hours
+
+async function getWhatsAppVersion(): Promise<[number, number, number]> {
+  const now = Date.now();
+  if (_cachedWAVersion && (now - _versionFetchedAt) < VERSION_TTL_MS) {
+    return _cachedWAVersion;
+  }
+  try {
+    const baileys = await getBaileys();
+    const { version, isLatest } = await (baileys as any).fetchLatestBaileysVersion();
+    _cachedWAVersion = version;
+    _versionFetchedAt = now;
+    logger.info(`Fetched WhatsApp version: ${version.join('.')}, isLatest: ${isLatest}`);
+    return version;
+  } catch (error: any) {
+    logger.warn(`Failed to fetch WhatsApp version, using fallback: ${error?.message}`);
+    if (_cachedWAVersion) return _cachedWAVersion;
+    return FALLBACK_WHATSAPP_VERSION;
+  }
+}
 
 // Get the sessions directory path
 // When PM2 runs with cwd = apps/api, process.cwd() is already apps/api,
@@ -236,6 +259,18 @@ export class BaileysService extends EventEmitter {
       logger.error(`Error checking connection existence: ${error?.message}`);
     }
 
+    // Clean up any existing socket to prevent stale event listeners from firing
+    if (this.socket) {
+      try {
+        this.socket.ev.removeAllListeners('connection.update');
+        this.socket.ev.removeAllListeners('creds.update');
+        this.socket.ev.removeAllListeners('messages.upsert');
+        this.socket.ev.removeAllListeners('messages.update');
+        this.socket.end(undefined);
+      } catch (_) { /* ignore cleanup errors */ }
+      this.socket = null;
+    }
+
     this.isConnecting = true;
     this.isConnected = false;
     this.qrCode = null;
@@ -248,7 +283,7 @@ export class BaileysService extends EventEmitter {
 
     try {
       const baileys = await getBaileys();
-      const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = baileys;
+      const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, Browsers } = baileys;
 
       const sessionsDir = getSessionsDir();
       const sessionPath = path.join(sessionsDir, this.connectionId);
@@ -275,11 +310,14 @@ export class BaileysService extends EventEmitter {
       
       const { state, saveCreds } = await useMultiFileAuthState(sessionPath);
 
-      logger.info(`Using fixed WhatsApp version ${FIXED_WHATSAPP_VERSION.join('.')} for: ${this.connectionId}`);
+      // Fetch latest WhatsApp version to avoid 405 Connection Failure
+      const waVersion = await getWhatsAppVersion();
+      logger.info(`Using WhatsApp version ${waVersion.join('.')} for: ${this.connectionId}`);
       this.socket = makeWASocket({
         auth: state,
-        version: FIXED_WHATSAPP_VERSION,
-        browser: ['ChatBlue', 'Chrome', '1.0.0'],
+        logger,
+        version: waVersion,
+        browser: Browsers.ubuntu('Chrome'),
         syncFullHistory: false,
         markOnlineOnConnect: false,
         generateHighQualityLinkPreview: false,
@@ -824,6 +862,30 @@ export class BaileysService extends EventEmitter {
     }
     
     return null;
+  }
+
+  /**
+   * Wait for the next QR code to be emitted (or return existing one).
+   * Resolves with the QR data URL when received, or null after timeoutMs.
+   */
+  waitForQRCode(timeoutMs: number): Promise<string | null> {
+    return new Promise((resolve) => {
+      const existing = this.qrCode;
+      if (existing) {
+        resolve(existing);
+        return;
+      }
+      const timer = setTimeout(() => {
+        this.off('qr', onQr);
+        resolve(this.qrCode);
+      }, timeoutMs);
+      const onQr = (dataUrl: string) => {
+        clearTimeout(timer);
+        this.off('qr', onQr);
+        resolve(dataUrl);
+      };
+      this.once('qr', onQr);
+    });
   }
 
   async sendTextMessage(

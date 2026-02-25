@@ -292,13 +292,13 @@ export default function ConnectionsPage() {
   }
 
   async function handleDelete(connectionId: string) {
-    if (!confirm("Tem certeza que deseja remover esta conexão? Todas as mensagens e conversas serão preservadas.")) return;
+    if (!confirm("Tem certeza que deseja remover esta sessão? As conversas serão preservadas e continuarão disponíveis ao reconectar.")) return;
 
     try {
       const response = await api.delete(`/connections/${connectionId}`);
-      toast({ 
-        title: "Conexão removida",
-        description: (response.data as any)?.message || "A conexão foi desativada e todas as mensagens foram preservadas."
+      toast({
+        title: "Sessão removida",
+        description: (response.data as any)?.message || "As conversas foram preservadas e continuarão disponíveis ao reconectar.",
       });
       fetchConnections();
     } catch (error: any) {

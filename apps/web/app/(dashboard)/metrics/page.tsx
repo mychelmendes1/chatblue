@@ -447,43 +447,45 @@ export default function MetricsPage() {
   async function fetchData() {
     setIsLoading(true);
     try {
-      const [
-        dashboardRes,
-        agentsRes,
-        deptsRes,
-        slaRes,
-        npsRes,
-        comparisonRes,
-        qualityRes,
-        aiRes,
-        executiveRes,
-        goalsRes,
-        alertsRes,
-      ] = await Promise.all([
+      const results = await Promise.allSettled([
         api.get<DashboardMetrics>(`/metrics/dashboard?period=${period}`),
         api.get<AgentMetrics[]>(`/metrics/agents?period=${period}`),
         api.get<DepartmentMetrics[]>(`/metrics/departments?period=${period}`),
         api.get<{ criticalTickets: CriticalTicket[] }>(`/metrics/sla?period=${period}`),
-        api.get<NPSData>(`/metrics/nps?period=${period}`).catch(() => ({ data: null })),
-        api.get<ComparisonData>(`/metrics/comparison`).catch(() => ({ data: null })),
-        api.get<QualityData>(`/metrics/quality?period=${period}`).catch(() => ({ data: null })),
-        api.get<AIMetrics>(`/metrics/ai?period=${period}`).catch(() => ({ data: null })),
-        api.get<ExecutiveData>(`/metrics/executive`).catch(() => ({ data: null })),
-        api.get<Goal[]>(`/metrics/goals`).catch(() => ({ data: [] })),
-        api.get<Alert[]>(`/metrics/alerts`).catch(() => ({ data: [] })),
+        api.get<NPSData>(`/metrics/nps?period=${period}`),
+        api.get<ComparisonData>(`/metrics/comparison`),
+        api.get<QualityData>(`/metrics/quality?period=${period}`),
+        api.get<AIMetrics>(`/metrics/ai?period=${period}`),
+        api.get<ExecutiveData>(`/metrics/executive`),
+        api.get<Goal[]>(`/metrics/goals`),
+        api.get<Alert[]>(`/metrics/alerts`),
       ]);
 
-      setDashboard(dashboardRes.data);
-      setAgents(agentsRes.data);
-      setDepartments(deptsRes.data);
-      setCriticalTickets(slaRes.data.criticalTickets || []);
-      setNpsData(npsRes.data);
-      setComparison(comparisonRes.data);
-      setQuality(qualityRes.data);
-      setAiMetrics(aiRes.data);
-      setExecutive(executiveRes.data);
-      setGoals(goalsRes.data || []);
-      setAlerts(alertsRes.data || []);
+      const getData = <T,>(i: number, def: T): T =>
+        results[i].status === "fulfilled" && results[i].value?.data !== undefined
+          ? (results[i].value as { data: T }).data
+          : def;
+
+      setDashboard(getData(0, null));
+      setAgents(getData(1, []));
+      setDepartments(getData(2, []));
+      setCriticalTickets(getData(3, { criticalTickets: [] })?.criticalTickets ?? []);
+      setNpsData(getData(4, null));
+      setComparison(getData(5, null));
+      setQuality(getData(6, null));
+      setAiMetrics(getData(7, null));
+      setExecutive(getData(8, null));
+      setGoals(getData(9, []));
+      setAlerts(getData(10, []));
+
+      const failed = results.filter((r) => r.status === "rejected").length;
+      if (failed > 0) {
+        toast({
+          title: "Aviso",
+          description: failed === 1 ? "Uma métrica não carregou." : `${failed} métricas não carregaram.`,
+          variant: "destructive",
+        });
+      }
     } catch (error) {
       toast({
         title: "Erro",

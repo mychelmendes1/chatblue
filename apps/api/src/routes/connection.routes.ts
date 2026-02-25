@@ -323,16 +323,20 @@ router.get('/:id/qr', authenticate, ensureTenant, async (req, res, next) => {
 
     const baileysService = BaileysService.getInstance(connection.id);
     
-    // Start connection if not already started
-    await baileysService.connect();
+    // Start connection if not already started. Do NOT await: when we only need the QR,
+    // awaiting would hang if the connection is already in "connecting" state (connectionPromise
+    // only resolves when connection opens, i.e. after the user scans the QR).
+    void baileysService.connect();
     
-    // Wait for QR code to be generated (max 10 seconds)
-    let qrCode = await baileysService.getQRCode();
-    let attempts = 0;
-    while (!qrCode && attempts < 20) {
-      await new Promise(resolve => setTimeout(resolve, 500));
-      qrCode = await baileysService.getQRCode();
-      attempts++;
+    // Wait for QR via event first (up to 20s), then poll getQRCode as fallback (up to 5s)
+    let qrCode = await baileysService.waitForQRCode(20000);
+    if (!qrCode) {
+      let attempts = 0;
+      while (!qrCode && attempts < 10) {
+        await new Promise(resolve => setTimeout(resolve, 500));
+        qrCode = await baileysService.getQRCode();
+        attempts++;
+      }
     }
 
     res.json({ qrCode });
@@ -751,19 +755,22 @@ router.delete('/:id', authenticate, requireAdmin, ensureTenant, async (req, res,
       }
     }
 
-    // SOFT DELETE: Mark connection as inactive instead of deleting
-    // This preserves all messages and tickets for historical reference
-    await prisma.whatsAppConnection.update({
-      where: { id: connection.id },
-      data: { 
-        isActive: false,
-        status: 'DISCONNECTED',
-        qrCode: null,
-        sessionData: null,
-      },
+    // Orphan messages and tickets so we can delete the connection row (preserve conversations by company + contact)
+    await prisma.message.updateMany({
+      where: { connectionId: connection.id },
+      data: { connectionId: null },
+    });
+    await prisma.ticket.updateMany({
+      where: { connectionId: connection.id },
+      data: { connectionId: null },
     });
 
-    res.json({ message: 'Connection deactivated. All messages and conversations have been preserved.' });
+    // Hard delete the connection so we don't accumulate old sessions
+    await prisma.whatsAppConnection.delete({
+      where: { id: connection.id },
+    });
+
+    res.json({ message: 'Sessão removida. Todas as conversas foram preservadas e continuarão disponíveis ao reconectar.' });
   } catch (error) {
     next(error);
   }

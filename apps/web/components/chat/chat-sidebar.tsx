@@ -1243,7 +1243,7 @@ function TicketItem({ ticket, isSelected, onSelect }: TicketItemProps) {
             </span>
           )}
           <ConnectionTag
-            connectionName={ticket.connection?.name}
+            connectionName={ticket.connection?.name ?? "Sessão anterior"}
             connectionType={ticket.connection?.type}
             lastMessageAt={ticket.contact?.lastMessageAt}
           />

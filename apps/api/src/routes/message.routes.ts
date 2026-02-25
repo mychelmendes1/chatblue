@@ -10,88 +10,9 @@ import { logger } from '../config/logger.js';
 import { normalizeMediaUrl } from '../utils/media-url.util.js';
 import { translateMetaError, getErrorSuggestion } from '../utils/meta-error-translator.js';
 import { sendOutboundEvent } from '../services/outbound-webhook.service.js';
+import { getActiveConnectionForTicket } from '../utils/connection-for-ticket.js';
 
 const router = Router();
-
-/**
- * Helper function to get an active connected WhatsApp connection for a ticket
- * If the ticket's connection is not connected, finds and updates to an active one
- */
-async function getActiveConnectionForTicket(ticket: any): Promise<{ connection: any; updated: boolean }> {
-  // Get companyId from ticket (may come from ticket.companyId or ticket.company.id)
-  const companyId = ticket.companyId || ticket.company?.id;
-  
-  if (!companyId) {
-    logger.error(`Ticket ${ticket.id} has no companyId`);
-    throw new Error('Ticket não possui empresa associada.');
-  }
-
-  // Reload ticket connection to get latest status
-  const currentConnection = await prisma.whatsAppConnection.findUnique({
-    where: { id: ticket.connectionId },
-  });
-
-  if (!currentConnection) {
-    logger.error(`Ticket ${ticket.id} has invalid connectionId: ${ticket.connectionId}`);
-    throw new Error('Conexão WhatsApp não encontrada para este ticket.');
-  }
-
-  // Check if current connection is connected
-  if (currentConnection.status === 'CONNECTED' && currentConnection.isActive) {
-    return { connection: currentConnection, updated: false };
-  }
-
-  logger.warn(`Ticket ${ticket.id} connection ${currentConnection.id} (${currentConnection.name}) is not connected (status: ${currentConnection.status}, isActive: ${currentConnection.isActive}). Looking for active connection...`);
-
-  // Find an active and connected connection from the same company
-  // Prefer same type (BAILEYS or META_CLOUD)
-  let activeConnection = await prisma.whatsAppConnection.findFirst({
-    where: {
-      companyId: companyId,
-      status: 'CONNECTED',
-      isActive: true,
-      type: currentConnection.type,
-    },
-    orderBy: [
-      { isDefault: 'desc' }, // Prefer default connection
-      { lastConnected: 'desc' }, // Then most recently connected
-    ],
-  });
-
-  // If no connection of same type found, try any active connection
-  if (!activeConnection) {
-    activeConnection = await prisma.whatsAppConnection.findFirst({
-      where: {
-        companyId: companyId,
-        status: 'CONNECTED',
-        isActive: true,
-      },
-      orderBy: [
-        { isDefault: 'desc' },
-        { lastConnected: 'desc' },
-      ],
-    });
-  }
-
-  if (!activeConnection) {
-    const availableConnections = await prisma.whatsAppConnection.findMany({
-      where: { companyId: companyId },
-      select: { id: true, name: true, status: true, isActive: true, type: true },
-    });
-    logger.error(`No active connection found for company ${companyId}. Available connections:`, availableConnections);
-    throw new Error('WhatsApp não conectado. Por favor, conecte o WhatsApp primeiro escaneando o QR Code.');
-  }
-
-  logger.info(`Found active connection ${activeConnection.id} (${activeConnection.name}, type: ${activeConnection.type}) for ticket ${ticket.id}. Updating ticket to use new connection.`);
-
-  // Update ticket to use the new connection
-  await prisma.ticket.update({
-    where: { id: ticket.id },
-    data: { connectionId: activeConnection.id },
-  });
-
-  return { connection: activeConnection, updated: true };
-}
 
 // Get messages for a ticket (including history from previous tickets)
 router.get('/ticket/:ticketId', authenticate, ensureTenant, async (req, res, next) => {

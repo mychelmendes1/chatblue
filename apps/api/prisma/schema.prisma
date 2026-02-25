@@ -392,12 +392,16 @@ model Contact {
   // Última mensagem recebida (para janela de 24h da API oficial)
   lastMessageAt DateTime? @map("last_message_at")
 
+  // Telefone canônico para unificar contato (ex.: Brasil 9º dígito: 554298067510 e 5542998067510 -> mesmo canonical)
+  canonicalPhone String? @map("canonical_phone")
+
   companyId String  @map("company_id")
   company   Company @relation(fields: [companyId], references: [id])
 
   tickets Ticket[]
 
   @@unique([phone, companyId])
+  @@index([companyId, canonicalPhone])
   @@map("contacts")
 }
 
@@ -464,8 +468,8 @@ model Ticket {
   departmentId String?     @map("department_id")
   department   Department? @relation(fields: [departmentId], references: [id])
 
-  connectionId String             @map("connection_id")
-  connection   WhatsAppConnection @relation(fields: [connectionId], references: [id])
+  connectionId String?            @map("connection_id")
+  connection   WhatsAppConnection? @relation(fields: [connectionId], references: [id])
 
   companyId String  @map("company_id")
   company   Company @relation(fields: [companyId], references: [id])
@@ -571,8 +575,8 @@ model Message {
   senderId String? @map("sender_id")
   sender   User?   @relation(fields: [senderId], references: [id])
 
-  connectionId String             @map("connection_id")
-  connection   WhatsAppConnection @relation(fields: [connectionId], references: [id])
+  connectionId String?            @map("connection_id")
+  connection   WhatsAppConnection? @relation(fields: [connectionId], references: [id])
 
   // Referência a mensagem citada (reply)
   quotedId String?   @map("quoted_id")

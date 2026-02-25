@@ -5,6 +5,7 @@ import { authenticate } from '../middlewares/auth.middleware.js';
 import { ensureTenant } from '../middlewares/tenant.middleware.js';
 import { NotFoundError, ForbiddenError } from '../middlewares/error.middleware.js';
 import { generateProtocol } from '../utils/protocol.js';
+import { toCanonicalPhone } from '../utils/canonical-phone.js';
 import { logger } from '../config/logger.js';
 import { ExternalAIWebhookService } from '../services/external-ai/external-ai-webhook.service.js';
 import { MessageProcessor } from '../services/message-processor.service.js';
@@ -2128,21 +2129,25 @@ router.post('/', authenticate, ensureTenant, async (req, res, next) => {
         throw new NotFoundError('Contact not found');
       }
     } else {
-      // Try to find existing contact by phone
+      // Find by phone or canonical phone (unify with/without 9th digit)
+      const canonicalPhone = toCanonicalPhone(normalizedPhone);
       contact = await prisma.contact.findFirst({
         where: {
-          phone: normalizedPhone,
           companyId: req.user!.companyId,
+          OR: [
+            { phone: normalizedPhone },
+            ...(canonicalPhone ? [{ canonicalPhone }] : []),
+          ],
         },
       });
 
-      // Create new contact if not found
       if (!contact) {
         contact = await prisma.contact.create({
           data: {
             phone: normalizedPhone,
             name: data.contactName,
             companyId: req.user!.companyId,
+            ...(canonicalPhone ? { canonicalPhone } : {}),
           },
         });
       }
