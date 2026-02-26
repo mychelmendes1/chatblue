@@ -37,11 +37,20 @@ async function getWhatsAppVersion(): Promise<[number, number, number]> {
   }
   try {
     const baileys = await getBaileys();
-    const { version, isLatest } = await (baileys as any).fetchLatestBaileysVersion();
-    _cachedWAVersion = version;
+    const b = baileys as any;
+    const fetchVersion = b.fetchLatestWaWebVersion ?? b.fetchWAWebVersion ?? b.fetchLatestBaileysVersion;
+    if (typeof fetchVersion !== 'function') {
+      throw new Error('No version fetch function found');
+    }
+    const result = await fetchVersion();
+    const version = result?.version;
+    if (!version || !Array.isArray(version)) {
+      throw new Error('Invalid version result');
+    }
+    _cachedWAVersion = version as [number, number, number];
     _versionFetchedAt = now;
-    logger.info(`Fetched WhatsApp version: ${version.join('.')}, isLatest: ${isLatest}`);
-    return version;
+    logger.info(`Fetched WhatsApp version: ${version.join('.')}, isLatest: ${result?.isLatest ?? '?'}`);
+    return _cachedWAVersion;
   } catch (error: any) {
     logger.warn(`Failed to fetch WhatsApp version, using fallback: ${error?.message}`);
     if (_cachedWAVersion) return _cachedWAVersion;
@@ -603,113 +612,97 @@ export class BaileysService extends EventEmitter {
         }
       });
 
-      // Handle LID mapping updates (Baileys v7+)
-      // This event is emitted when WhatsApp provides a mapping between LID and phone number
-      this.socket.ev.on('lid-mapping.update' as any, async (mapping: { lid: string; phone: string }[]) => {
-        logger.info(`=== LID MAPPING UPDATE RECEIVED ===`);
-        logger.info(`Received ${mapping.length} LID mappings`);
-        
-        for (const { lid, phone } of mapping) {
+      // Handle LID mapping updates (Baileys v7: lid-mapping.update returns LID/PN mappings)
+      this.socket.ev.on('lid-mapping.update' as any, async (mapping: unknown) => {
+        const entries = Array.isArray(mapping) ? mapping : [];
+        logger.info(`LID mapping update received: ${entries.length} entries`);
+        for (const item of entries) {
+          const lid = (item as any)?.lid ?? (item as any)?.lidJid?.replace?.(/@[^@]*$/g, '')?.replace(/\D/g, '');
+          const phone = (item as any)?.phone ?? (item as any)?.pn ?? (item as any)?.phoneNumber?.replace?.(/\D/g, '');
+          if (!lid || !phone || lid === phone) continue;
           logger.info(`LID mapping: ${lid} -> ${phone}`);
-          
-          // Store in local cache
           this.lidMapping.set(lid, phone);
-          
-          // Update contacts in database that have this LID
           try {
             const connection = await prisma.whatsAppConnection.findUnique({
               where: { id: this.connectionId },
               select: { companyId: true },
             });
-            
             if (connection) {
               const updated = await prisma.contact.updateMany({
-                where: { 
+                where: {
                   companyId: connection.companyId,
-                  OR: [
-                    { lidId: lid },
-                    { phone: lid }, // Also update if phone was stored as LID
-                  ],
+                  OR: [{ lidId: lid }, { phone: lid }],
                 },
-                data: { 
-                  phone: phone,
-                  lidId: lid, // Keep the LID for reference
-                },
+                data: { phone, lidId: lid },
               });
-              
               if (updated.count > 0) {
-                logger.info(`Updated ${updated.count} contact(s) with real phone number: ${phone}`);
+                logger.info(`Updated ${updated.count} contact(s) with real phone: ${phone}`);
               }
             }
           } catch (error) {
             logger.error('Error updating contact with LID mapping:', error);
           }
         }
-        logger.info(`=== END LID MAPPING UPDATE ===`);
       });
 
-      // Handle contacts updates - may contain phone number info
+      // Handle contacts updates (Baileys v7: Contact has id + phoneNumber or id + lid; no jid/lid legacy fields)
       this.socket.ev.on('contacts.update', async (contacts) => {
         for (const contact of contacts) {
-          // Check if contact has both lid and id (phone)
-          const contactAny = contact as any;
-          if (contactAny.lid && contactAny.id) {
-            const lid = contactAny.lid.replace(/@[^@]*$/g, '').replace(/\D/g, '');
-            const phone = contactAny.id.replace(/@[^@]*$/g, '').replace(/\D/g, '');
-            
-            if (lid && phone && lid !== phone && this.isValidPhoneNumber(phone)) {
-              logger.info(`Contact update with LID mapping: ${lid} -> ${phone}`);
-              this.lidMapping.set(lid, phone);
-              
-              // Update database
-              try {
-                const connection = await prisma.whatsAppConnection.findUnique({
-                  where: { id: this.connectionId },
-                  select: { companyId: true },
+          const c = contact as { id?: string; phoneNumber?: string; lid?: string };
+          let lid = '';
+          let phone = '';
+          const rawId = c.id ?? '';
+          if (rawId.endsWith('@lid')) {
+            lid = rawId.replace(/@[^@]*$/g, '').replace(/\D/g, '');
+            phone = (c.phoneNumber ?? '').replace(/\D/g, '');
+          } else if (rawId.endsWith('@s.whatsapp.net')) {
+            phone = rawId.replace(/@[^@]*$/g, '').replace(/\D/g, '');
+            lid = (c.lid ?? '').replace(/@[^@]*$/g, '').replace(/\D/g, '');
+          }
+          if (lid && phone && lid !== phone && this.isValidPhoneNumber(phone)) {
+            logger.info(`Contact update with LID mapping: ${lid} -> ${phone}`);
+            this.lidMapping.set(lid, phone);
+            try {
+              const connection = await prisma.whatsAppConnection.findUnique({
+                where: { id: this.connectionId },
+                select: { companyId: true },
+              });
+              if (connection) {
+                await prisma.contact.updateMany({
+                  where: {
+                    companyId: connection.companyId,
+                    OR: [{ lidId: lid }, { phone: lid }],
+                  },
+                  data: { phone, lidId: lid },
                 });
-                
-                if (connection) {
-                  await prisma.contact.updateMany({
-                    where: { 
-                      companyId: connection.companyId,
-                      OR: [
-                        { lidId: lid },
-                        { phone: lid },
-                      ],
-                    },
-                    data: { 
-                      phone: phone,
-                      lidId: lid,
-                    },
-                  });
-                }
-              } catch (error) {
-                logger.error('Error updating contact from contacts.update:', error);
               }
+            } catch (error) {
+              logger.error('Error updating contact from contacts.update:', error);
             }
           }
         }
       });
 
-      // Handle contacts upsert - new contacts may have phone info
+      // Handle contacts upsert (Baileys v7: id is preferred; if id is LID then phoneNumber present, else lid present)
       this.socket.ev.on('contacts.upsert', async (contacts) => {
         for (const contact of contacts) {
-          const contactAny = contact as any;
-          
-          // Log contact structure for debugging
-          if (contactAny.id?.includes('@lid')) {
+          const c = contact as { id?: string; phoneNumber?: string; lid?: string };
+          const rawId = c.id ?? '';
+          if (rawId.includes('@lid')) {
             logger.debug(`New contact with LID: ${JSON.stringify(contact)}`);
           }
-          
-          // Check for lid and phone mapping
-          if (contactAny.lid && contactAny.id && !contactAny.id.includes('@lid')) {
-            const lid = contactAny.lid.replace(/@[^@]*$/g, '').replace(/\D/g, '');
-            const phone = contactAny.id.replace(/@[^@]*$/g, '').replace(/\D/g, '');
-            
-            if (lid && phone && lid !== phone && this.isValidPhoneNumber(phone)) {
-              logger.info(`Contact upsert with LID mapping: ${lid} -> ${phone}`);
-              this.lidMapping.set(lid, phone);
-            }
+          let lid = '';
+          let phone = '';
+          if (rawId.endsWith('@lid')) {
+            lid = rawId.replace(/@[^@]*$/g, '').replace(/\D/g, '');
+            phone = (c.phoneNumber ?? '').replace(/\D/g, '');
+          } else if (rawId.endsWith('@s.whatsapp.net')) {
+            phone = rawId.replace(/@[^@]*$/g, '').replace(/\D/g, '');
+            lid = (c.lid ?? '').replace(/@[^@]*$/g, '').replace(/\D/g, '');
+          }
+          if (lid && phone && lid !== phone && this.isValidPhoneNumber(phone)) {
+            logger.info(`Contact upsert with LID mapping: ${lid} -> ${phone}`);
+            this.lidMapping.set(lid, phone);
           }
         }
       });
@@ -1586,8 +1579,34 @@ export class BaileysService extends EventEmitter {
    */
   private async resolvePhoneFromLid(lid: string, msg: any): Promise<string | null> {
     try {
+      // Method 0 (Baileys v7): participantAlt contains PN when participant is LID (groups/broadcast)
+      const participantAlt = msg.key?.participantAlt;
+      if (participantAlt && participantAlt.includes('@s.whatsapp.net')) {
+        const pn = participantAlt.replace(/@[^@]*$/g, '').replace(/\D/g, '');
+        if (pn && this.isValidPhoneNumber(pn)) {
+          logger.debug(`Found real phone in participantAlt: ${pn}`);
+          return pn;
+        }
+      }
+
+      // Method 0b (Baileys v7): signalRepository.lidMapping.getPNForLID
+      const sock = this.socket as any;
+      if (sock?.signalRepository?.lidMapping?.getPNForLID) {
+        try {
+          const pn = await Promise.resolve(sock.signalRepository.lidMapping.getPNForLID(lid + '@lid'));
+          if (pn) {
+            const phone = String(pn).replace(/@[^@]*$/g, '').replace(/\D/g, '');
+            if (phone && this.isValidPhoneNumber(phone)) {
+              logger.debug(`Found real phone via signalRepository.lidMapping: ${phone}`);
+              return phone;
+            }
+          }
+        } catch (_) {
+          logger.debug(`getPNForLID failed for LID ${lid}`);
+        }
+      }
+
       // Method 1: Check if participant field contains the real number
-      // This sometimes contains the real JID in certain message types
       if (msg.key?.participant) {
         const participant = msg.key.participant.replace(/@[^@]*$/g, '').replace(/\D/g, '');
         if (participant && this.isValidPhoneNumber(participant)) {

@@ -1,0 +1,179 @@
+# Docker Compose para Docker Swarm
+#
+# Uso:
+#   1. Build e push das imagens (registry acessível pelos nós):
+#      docker build -t seu-registry/chatblue-api:latest -f docker/Dockerfile.api .
+#      docker build -t seu-registry/chatblue-web:latest -f docker/Dockerfile.web .
+#      docker push seu-registry/chatblue-api:latest && docker push seu-registry/chatblue-web:latest
+#
+#   2. Defina REGISTRY e IMAGE_TAG (ou use .env):
+#      REGISTRY=seu-registry/chatblue IMAGE_TAG=latest
+#
+#   3. (Opcional) Rodar migration uma vez antes do stack:
+#      docker run --rm --network chatblue_chatblue-network \
+#        -e DATABASE_URL=postgresql://... seu-registry/chatblue-api:latest \
+#        sh -c "cd apps/api && npx prisma@5.22.0 migrate deploy"
+#
+#   4. Deploy do stack (sem exposição de portas; use proxy reverso na rede overlay):
+#      docker stack deploy -c docker/docker-compose.swarm.yml chatblue
+#
+# Rede overlay: conecte o proxy ao overlay chatblue_chatblue-network para rotear tráfego.
+
+version: "3.8"
+
+services:
+  # ===================
+  # PostgreSQL
+  # ===================
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${DB_USER:-chatblue}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?Database password required}
+      POSTGRES_DB: ${DB_NAME:-chatblue}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-chatblue}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+    networks:
+      - chatblue-network
+
+  # ===================
+  # Redis
+  # ===================
+  redis:
+    image: redis:7-alpine
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:?Redis password required}
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+    networks:
+      - chatblue-network
+
+  # ===================
+  # Migrations (roda uma vez antes da API)
+  # ===================
+  migration:
+    image: ${REGISTRY:-chatblue}/api:${IMAGE_TAG:-latest}
+    environment:
+      DATABASE_URL: postgresql://${DB_USER:-chatblue}:${DB_PASSWORD}@postgres:5432/${DB_NAME:-chatblue}
+    command: ["sh", "-c", "cd apps/api && npx prisma@5.22.0 migrate deploy"]
+    deploy:
+      mode: replicated
+      replicas: 1
+      restart_policy:
+        condition: on-failure
+        max_attempts: 1
+      placement:
+        constraints:
+          - node.role == manager
+    networks:
+      - chatblue-network
+
+  # ===================
+  # API
+  # ===================
+  api:
+    image: ${REGISTRY:-chatblue}/api:${IMAGE_TAG:-latest}
+    environment:
+      NODE_ENV: production
+      API_PORT: 3001
+      DATABASE_URL: postgresql://${DB_USER:-chatblue}:${DB_PASSWORD}@postgres:5432/${DB_NAME:-chatblue}
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
+      JWT_SECRET: ${JWT_SECRET:?JWT secret required}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:?JWT refresh secret required}
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3000}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      EMAIL_FROM: ${EMAIL_FROM:-}
+      VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:-}
+      VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:-}
+      VAPID_SUBJECT: ${VAPID_SUBJECT:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      NOTION_API_KEY: ${NOTION_API_KEY:-}
+    volumes:
+      - sessions_data:/app/sessions
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    deploy:
+      mode: replicated
+      replicas: 2
+      update_config:
+        parallelism: 1
+        delay: 10s
+        order: start-first
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+    networks:
+      - chatblue-network
+
+  # ===================
+  # Web Frontend
+  # ===================
+  web:
+    image: ${REGISTRY:-chatblue}/web:${IMAGE_TAG:-latest}
+    environment:
+      NODE_ENV: production
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    deploy:
+      mode: replicated
+      replicas: 2
+      update_config:
+        parallelism: 1
+        delay: 10s
+        order: start-first
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+    networks:
+      - chatblue-network
+
+networks:
+  chatblue-network:
+    driver: overlay
+    attachable: true
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  sessions_data:
+    driver: local

@@ -36,8 +36,8 @@ importers:
         specifier: 5.22.0
         version: 5.22.0(prisma@5.22.0)
       '@whiskeysockets/baileys':
-        specifier: 6.7.20
-        version: 6.7.20(sharp@0.34.5)
+        specifier: 7.0.0-rc.9
+        version: 7.0.0-rc.9(sharp@0.34.5)
       bcrypt:
         specifier: ^5.1.1
         version: 5.1.1
@@ -4343,8 +4343,8 @@ packages:
       pretty-format: 29.7.0
     dev: true
 
-  /@whiskeysockets/baileys@6.7.20(sharp@0.34.5):
-    resolution: {integrity: sha512-KH/jaCSlZbnAnQZhSORIJ9VCuh6aLgYlLo9YZIAbGeL5ovm0S/mx2UNJiPotu+dsno9AwGLIaciGI6BU8twhdA==}
+  /@whiskeysockets/baileys@7.0.0-rc.9(sharp@0.34.5):
+    resolution: {integrity: sha512-YFm5gKXfDP9byCXCW3OPHKXLzrAKzolzgVUlRosHHgwbnf2YOO3XknkMm6J7+F0ns8OA0uuSBhgkRHTDtqkacw==}
     engines: {node: '>=20.0.0'}
     requiresBuild: true
     peerDependencies:
@@ -4363,16 +4363,16 @@ packages:
       '@cacheable/node-cache': 1.7.6
       '@hapi/boom': 9.1.4
       async-mutex: 0.5.0
-      axios: 1.13.4
       libsignal: github.com/whiskeysockets/libsignal-node/1c30d7d7e76a3b0aa120b04dc6a26f5a12dccf67
+      lru-cache: 11.2.6
       music-metadata: 11.10.3
+      p-queue: 9.1.0
       pino: 9.14.0
       protobufjs: 7.5.4
       sharp: 0.34.5
       ws: 8.18.3
     transitivePeerDependencies:
       - bufferutil
-      - debug
       - supports-color
       - utf-8-validate
     dev: false
@@ -5863,6 +5863,10 @@ packages:
     engines: {node: '>=6'}
     dev: false
 
+  /eventemitter3@5.0.4:
+    resolution: {integrity: sha512-mlsTRyGaPBjPedk6Bvw+aqbsXDtoAyAzm5MO7JgU+yVRyMQ5O8bD4Kcci7BS85f93veegeCPkL8R4GLClnjLFw==}
+    dev: false
+
   /events@3.3.0:
     resolution: {integrity: sha512-mQw+2fkQbALzQ7V0MY0IqdnXNOeTtP4r0lN9z7AAawCXgqea7bDii20AYrIBrFd/Hx0M2Ocz6S111CaFkUcb0Q==}
     engines: {node: '>=0.8.x'}
@@ -6972,6 +6976,11 @@ packages:
       get-func-name: 2.0.2
     dev: true
 
+  /lru-cache@11.2.6:
+    resolution: {integrity: sha512-ESL2CrkS/2wTPfuend7Zhkzo2u0daGJ/A2VucJOgQ/C48S/zB8MMeMHSGKYpXhIjbPxfuezITkaBH1wqv00DDQ==}
+    engines: {node: 20 || >=22}
+    dev: false
+
   /lucide-react@0.300.0(react@18.3.1):
     resolution: {integrity: sha512-rQxUUCmWAvNLoAsMZ5j04b2+OJv6UuNLYMY7VK0eVlm4aTwUEjEEHc09/DipkNIlhXUSDn2xoyIzVT0uh7dRsg==}
     peerDependencies:
@@ -7527,6 +7536,19 @@ packages:
     engines: {node: '>=10'}
     dependencies:
       p-limit: 3.1.0
+
+  /p-queue@9.1.0:
+    resolution: {integrity: sha512-O/ZPaXuQV29uSLbxWBGGZO1mCQXV2BLIwUr59JUU9SoH76mnYvtms7aafH/isNSNGwuEfP6W/4xD0/TJXxrizw==}
+    engines: {node: '>=20'}
+    dependencies:
+      eventemitter3: 5.0.4
+      p-timeout: 7.0.1
+    dev: false
+
+  /p-timeout@7.0.1:
+    resolution: {integrity: sha512-AxTM2wDGORHGEkPCt8yqxOTMgpfbEHqF51f/5fJCmwFC3C/zNcGT63SymH2ttOAaiIws2zVg4+izQCjrakcwHg==}
+    engines: {node: '>=20'}
+    dev: false
 
   /p-try@2.2.0:
     resolution: {integrity: sha512-R4nPAVTAU0B9D35/Gk3uJf/7XYbQcyohSKdvAxIRSNghFl4e71hVoGnBNQz9cWaXxO2I10KTC+3jMdvvoKw6dQ==}

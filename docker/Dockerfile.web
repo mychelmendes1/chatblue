@@ -34,6 +34,9 @@ COPY package.json pnpm-lock.yaml* pnpm-workspace.yaml ./
 COPY apps/web ./apps/web
 COPY turbo.json ./
 
+# Restore apps/web node_modules (COPY apps/web above overwrites it; pnpm needs these for next build)
+COPY --from=deps /app/apps/web/node_modules ./apps/web/node_modules
+
 # Build arguments for environment variables
 ARG NEXT_PUBLIC_API_URL
 ARG NEXT_PUBLIC_SOCKET_URL
@@ -44,6 +47,7 @@ ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
 ENV NEXT_PUBLIC_SOCKET_URL=$NEXT_PUBLIC_SOCKET_URL
 ENV NEXT_PUBLIC_VAPID_PUBLIC_KEY=$NEXT_PUBLIC_VAPID_PUBLIC_KEY
 ENV NEXT_TELEMETRY_DISABLED=1
+ENV NEXT_OUTPUT_STANDALONE=true
 
 # Build the application
 RUN pnpm --filter web build
