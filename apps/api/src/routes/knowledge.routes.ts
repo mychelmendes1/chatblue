@@ -113,7 +113,11 @@ router.get('/:id', authenticate, ensureTenant, async (req, res, next) => {
 // Create knowledge base item
 router.post('/', authenticate, requireAdmin, ensureTenant, async (req, res, next) => {
   try {
-    const data = createKnowledgeSchema.parse(req.body);
+    const parsed = createKnowledgeSchema.parse(req.body);
+    const data = {
+      ...parsed,
+      tags: Array.isArray(parsed.tags) ? parsed.tags : [],
+    };
 
     // Verify department belongs to company if provided
     if (data.departmentId) {
@@ -131,9 +135,15 @@ router.post('/', authenticate, requireAdmin, ensureTenant, async (req, res, next
 
     const item = await prisma.knowledgeBase.create({
       data: {
-        ...data,
+        title: data.title,
+        content: data.content,
+        category: data.category ?? null,
+        tags: data.tags,
+        order: data.order ?? 0,
+        isActive: data.isActive ?? true,
+        departmentId: data.departmentId ?? null,
         company: { connect: { id: req.user!.companyId } },
-      } as any,
+      },
       include: {
         department: {
           select: {
@@ -191,9 +201,14 @@ router.put('/:id', authenticate, requireAdmin, ensureTenant, async (req, res, ne
       }
     }
 
+    const updateData: Record<string, unknown> = { ...data };
+    if ('tags' in updateData && !Array.isArray(updateData.tags)) {
+      updateData.tags = [];
+    }
+
     const item = await prisma.knowledgeBase.update({
       where: { id: req.params.id },
-      data,
+      data: updateData as any,
       include: {
         department: {
           select: {
