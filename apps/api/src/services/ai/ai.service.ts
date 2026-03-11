@@ -30,8 +30,8 @@ export const AI_MODELS = {
     { id: 'gpt-3.5-turbo', name: 'GPT-3.5 Turbo', description: 'Modelo rápido e econômico' },
   ],
   anthropic: [
-    { id: 'claude-opus-4-20250514', name: 'Claude Opus 4', description: 'Modelo mais inteligente e capaz da Anthropic' },
-    { id: 'claude-sonnet-4-20250514', name: 'Claude Sonnet 4', description: 'Modelo equilibrado entre capacidade e velocidade' },
+    { id: 'claude-opus-4-6', name: 'Claude Opus 4', description: 'Modelo mais inteligente e capaz da Anthropic' },
+    { id: 'claude-sonnet-4-6', name: 'Claude Sonnet 4', description: 'Modelo equilibrado entre capacidade e velocidade' },
     { id: 'claude-3-5-sonnet-20241022', name: 'Claude 3.5 Sonnet', description: 'Excelente equilíbrio entre capacidade e velocidade' },
     { id: 'claude-3-opus-20240229', name: 'Claude 3 Opus', description: 'Modelo muito capaz (geração anterior)' },
     { id: 'claude-3-haiku-20240307', name: 'Claude 3 Haiku', description: 'Modelo mais rápido e econômico' },
@@ -61,7 +61,7 @@ export class AIService {
   ): Promise<string> {
     try {
       const { 
-        model = this.provider === 'anthropic' ? 'claude-sonnet-4-20250514' : 'gpt-4-turbo-preview', 
+        model = this.provider === 'anthropic' ? 'claude-sonnet-4-6' : 'gpt-4-turbo-preview', 
         temperature = 0.7, 
         maxTokens = 1000 
       } = options;

@@ -439,7 +439,7 @@ Responda APENAS com JSON no formato:
       if (this.provider === 'anthropic') {
         const anthropic = new Anthropic({ apiKey: this.apiKey });
         const result = await anthropic.messages.create({
-          model: agentConfig.model || 'claude-sonnet-4-20250514',
+          model: agentConfig.model || 'claude-sonnet-4-6',
           max_tokens: agentConfig.maxTokens || 1500,
           temperature: agentConfig.temperature || 0.7,
           system: systemPrompt,

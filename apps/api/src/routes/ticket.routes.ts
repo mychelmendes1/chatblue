@@ -1381,13 +1381,23 @@ router.post('/:id/transfer', authenticate, ensureTenant, async (req, res, next) 
       });
     }
 
-    // Emit socket event
+    // Emit socket event (payload completo para a sidebar atualizar filtros Meus/Bot corretamente)
     const io = req.app.get('io');
     io.to(`company:${req.user!.companyId}`).emit('ticket:transferred', {
       ticketId: ticket.id,
       fromUserId: ticket.assignedToId,
       toUserId: transferUpdateData.assignedToId || toUserId,
-      toDepartmentId,
+      toDepartmentId: effectiveToDepartmentId ?? toDepartmentId,
+      departmentId: updatedTicket.departmentId,
+      departmentName: updatedTicket.department?.name,
+      status: updatedTicket.status,
+      isAIHandled: updatedTicket.isAIHandled,
+      assignedTo: updatedTicket.assignedTo ? {
+        id: updatedTicket.assignedTo.id,
+        name: updatedTicket.assignedTo.name,
+        avatar: updatedTicket.assignedTo.avatar,
+        isAI: updatedTicket.assignedTo.isAI,
+      } : null,
     });
     io.to(`ticket:${ticket.id}`).emit('message:received', { message: systemMessage });
 
@@ -1638,13 +1648,21 @@ router.post('/:id/resolve', authenticate, ensureTenant, async (req, res, next) =
       summary = 'Atendimento resolvido.';
     }
 
-    // Update ticket
+    const resolvedAt = new Date();
+    const resolutionTimeSec =
+      ticket.firstResponse && ticket.resolutionTime == null
+        ? Math.floor((resolvedAt.getTime() - ticket.firstResponse.getTime()) / 1000)
+        : ticket.resolutionTime;
+
+    // Update ticket (FCR = primeira resolução quando nunca foi reaberto)
     const updatedTicket = await prisma.ticket.update({
       where: { id: ticket.id },
       data: {
         status: 'RESOLVED',
-        resolvedAt: new Date(),
+        resolvedAt,
         resolutionNote: resolutionNote || null,
+        isFirstContactResolution: (ticket.reopenCount ?? 0) === 0,
+        ...(resolutionTimeSec != null ? { resolutionTime: resolutionTimeSec } : {}),
       },
     });
 
@@ -1753,12 +1771,22 @@ router.post('/:id/close', authenticate, ensureTenant, async (req, res, next) => 
       summary = 'Atendimento encerrado.';
     }
 
-    // Update ticket
+    const closedAt = new Date();
+    const resolutionTimeSec =
+      ticket.firstResponse && ticket.resolutionTime == null
+        ? Math.floor((closedAt.getTime() - ticket.firstResponse.getTime()) / 1000)
+        : ticket.resolutionTime;
+    const neverAnswered = ticket.firstResponse == null;
+
+    // Update ticket (FCR para métricas de qualidade; abandono se encerrado sem resposta)
     const updatedTicket = await prisma.ticket.update({
       where: { id: ticket.id },
       data: {
         status: 'CLOSED',
-        closedAt: new Date(),
+        closedAt,
+        isFirstContactResolution: (ticket.reopenCount ?? 0) === 0,
+        ...(resolutionTimeSec != null ? { resolutionTime: resolutionTimeSec } : {}),
+        ...(neverAnswered ? { wasAbandoned: true, abandonedAt: closedAt } : {}),
       },
     });
 
@@ -1825,7 +1853,7 @@ router.post('/:id/reopen', authenticate, ensureTenant, async (req, res, next) =>
       throw new NotFoundError('Ticket not found or not closed/resolved');
     }
 
-    // Update ticket to reopen
+    // Update ticket to reopen (incrementa contador para métricas de qualidade)
     const updatedTicket = await prisma.ticket.update({
       where: { id: ticket.id },
       data: {
@@ -1833,6 +1861,8 @@ router.post('/:id/reopen', authenticate, ensureTenant, async (req, res, next) =>
         resolvedAt: null,
         closedAt: null,
         assignedToId: ticket.assignedToId || req.user!.userId,
+        reopenCount: (ticket.reopenCount ?? 0) + 1,
+        reopenedAt: new Date(),
       },
       include: {
         contact: true,

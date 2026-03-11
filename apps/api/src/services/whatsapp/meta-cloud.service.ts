@@ -13,8 +13,24 @@ export class MetaCloudService {
     this.connection = connection;
   }
 
+  /** Garante que a conexão tem accessToken e phoneNumberId; falha rápida com mensagem clara. */
+  private ensureConnectionConfig(): void {
+    if (!this.connection.accessToken?.trim()) {
+      logger.error('Meta Cloud: accessToken está vazio ou ausente.');
+      throw new Error('Token de acesso não configurado. Atualize a conexão com um token válido do Meta.');
+    }
+    if (!this.connection.phoneNumberId?.trim()) {
+      logger.error('Meta Cloud: phoneNumberId está vazio ou ausente.');
+      throw new Error('Phone Number ID não configurado. Informe o ID do número no Meta Business.');
+    }
+  }
+
   async testConnection(): Promise<boolean> {
     try {
+      if (!this.connection.phoneNumberId?.trim() || !this.connection.accessToken?.trim()) {
+        logger.warn('Meta Cloud testConnection: phoneNumberId ou accessToken ausente.');
+        return false;
+      }
       const response = await fetch(
         `${META_API_URL}/${this.connection.phoneNumberId}`,
         {
@@ -24,7 +40,12 @@ export class MetaCloudService {
         }
       );
 
-      return response.ok;
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        logger.error('Meta Cloud testConnection failed:', { status: response.status, body });
+        return false;
+      }
+      return true;
     } catch (error) {
       logger.error('Meta Cloud connection test failed:', error);
       return false;
@@ -42,6 +63,8 @@ export class MetaCloudService {
       previewUrl?: boolean;
     }
   ): Promise<{ messageId: string }> {
+    this.ensureConnectionConfig();
+
     const body: any = {
       messaging_product: 'whatsapp',
       recipient_type: 'individual',
@@ -76,7 +99,9 @@ export class MetaCloudService {
 
     if (!response.ok) {
       logger.error('Meta Cloud send message failed:', data);
-      throw new Error(data.error?.message || 'Failed to send message');
+      const msg = data.error?.message || 'Failed to send message';
+      const code = data.error?.code != null ? ` (#${data.error.code})` : '';
+      throw new Error(msg + code);
     }
 
     return { messageId: data.messages?.[0]?.id || '' };
@@ -88,6 +113,8 @@ export class MetaCloudService {
     mediaType: string,
     caption?: string
   ): Promise<{ messageId: string }> {
+    this.ensureConnectionConfig();
+
     const typeMap: Record<string, string> = {
       IMAGE: 'image',
       VIDEO: 'video',
@@ -124,7 +151,9 @@ export class MetaCloudService {
 
     if (!response.ok) {
       logger.error('Meta Cloud send media failed:', data);
-      throw new Error(data.error?.message || 'Failed to send media');
+      const msg = data.error?.message || 'Failed to send media';
+      const code = data.error?.code != null ? ` (#${data.error.code})` : '';
+      throw new Error(msg + code);
     }
 
     return { messageId: data.messages?.[0]?.id || '' };
@@ -136,6 +165,8 @@ export class MetaCloudService {
     languageCode: string,
     components?: any[]
   ): Promise<{ messageId: string }> {
+    this.ensureConnectionConfig();
+
     const response = await fetch(
       `${META_API_URL}/${this.connection.phoneNumberId}/messages`,
       {
@@ -162,7 +193,9 @@ export class MetaCloudService {
 
     if (!response.ok) {
       logger.error('Meta Cloud send template failed:', data);
-      throw new Error(data.error?.message || 'Failed to send template');
+      const msg = data.error?.message || 'Failed to send template';
+      const code = data.error?.code != null ? ` (#${data.error.code})` : '';
+      throw new Error(msg + code);
     }
 
     return { messageId: data.messages?.[0]?.id || '' };

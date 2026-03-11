@@ -34,12 +34,14 @@ RUN npm install -g pnpm@8
 
 # Copy dependencies from deps stage
 COPY --from=deps /app/node_modules ./node_modules
-COPY --from=deps /app/apps/api/node_modules ./apps/api/node_modules
 
-# Copy source code
+# Copy source code first (apps/api may contain files that would overwrite node_modules)
 COPY package.json pnpm-lock.yaml* pnpm-workspace.yaml ./
 COPY apps/api ./apps/api
 COPY turbo.json ./
+
+# Restore api node_modules from deps (COPY apps/api can overwrite or bring host symlinks)
+COPY --from=deps /app/apps/api/node_modules ./apps/api/node_modules
 
 # Generate Prisma Client (use exact version to avoid auto-installing latest)
 RUN cd apps/api && npx prisma@5.22.0 generate

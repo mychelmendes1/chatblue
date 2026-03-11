@@ -123,7 +123,7 @@ router.get('/ticket/:ticketId', authenticate, ensureTenant, async (req, res, nex
         limit,
         total,
         pages: Math.ceil(total / limit),
-        hasMore: (skip + actualTake) < total, // Has older messages if we haven't reached the end
+        hasMore: skip > 0, // Has older messages when we skipped some (newest-first pagination)
       },
     });
   } catch (error) {
@@ -354,11 +354,15 @@ router.post('/ticket/:ticketId', authenticate, ensureTenant, async (req, res, ne
           ...(shouldChangeStatus && {
             status: 'IN_PROGRESS',
           }),
-          // Set first response time if not set
-          ...(ticket.firstResponse === null && {
-            firstResponse: new Date(),
-            responseTime: Math.floor((Date.now() - ticket.createdAt.getTime()) / 1000),
-          }),
+          // Set first response time and waiting time (para métricas de qualidade)
+          ...(ticket.firstResponse === null && (() => {
+            const sec = Math.floor((Date.now() - ticket.createdAt.getTime()) / 1000);
+            return {
+              firstResponse: new Date(),
+              responseTime: sec,
+              waitingTime: sec,
+            };
+          })()),
         },
         include: {
           contact: {
@@ -904,10 +908,14 @@ router.post('/template', authenticate, ensureTenant, async (req, res, next) => {
         ...(shouldChangeStatus && {
           status: 'IN_PROGRESS',
         }),
-        ...(ticket.firstResponse === null && {
-          firstResponse: new Date(),
-          responseTime: Math.floor((Date.now() - ticket.createdAt.getTime()) / 1000),
-        }),
+        ...(ticket.firstResponse === null && (() => {
+          const sec = Math.floor((Date.now() - ticket.createdAt.getTime()) / 1000);
+          return {
+            firstResponse: new Date(),
+            responseTime: sec,
+            waitingTime: sec,
+          };
+        })()),
       },
       include: {
         contact: {

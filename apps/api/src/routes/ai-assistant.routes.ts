@@ -965,8 +965,8 @@ router.get('/models', async (req: Request, res: Response) => {
       { id: 'gpt-3.5-turbo', name: 'GPT-3.5 Turbo', description: 'Modelo rápido e econômico' },
     ],
     anthropic: [
-      { id: 'claude-opus-4-20250514', name: 'Claude Opus 4', description: 'Modelo mais inteligente da Anthropic' },
-      { id: 'claude-sonnet-4-20250514', name: 'Claude Sonnet 4', description: 'Equilibrio entre capacidade e velocidade' },
+      { id: 'claude-opus-4-6', name: 'Claude Opus 4', description: 'Modelo mais inteligente da Anthropic' },
+      { id: 'claude-sonnet-4-6', name: 'Claude Sonnet 4', description: 'Equilibrio entre capacidade e velocidade' },
       { id: 'claude-3-5-sonnet-20241022', name: 'Claude 3.5 Sonnet', description: 'Excelente equilíbrio' },
       { id: 'claude-3-haiku-20240307', name: 'Claude 3 Haiku', description: 'Modelo mais rápido e econômico' },
     ],

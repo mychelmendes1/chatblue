@@ -29,6 +29,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { useToast } from "@/components/ui/use-toast";
 
 interface ContactInfoProps {
   ticket: any;
@@ -37,6 +38,7 @@ interface ContactInfoProps {
 }
 
 export function ContactInfo({ ticket, onClose, onTicketUpdate }: ContactInfoProps) {
+  const { toast } = useToast();
   const [isEditing, setIsEditing] = useState(false);
   const [name, setName] = useState(ticket.contact?.name || "");
   const [email, setEmail] = useState(ticket.contact?.email || "");
@@ -389,9 +391,19 @@ export function ContactInfo({ ticket, onClose, onTicketUpdate }: ContactInfoProp
           <div className="border-t pt-4">
             <h5 className="font-medium mb-2">Atendimento Atual</h5>
             <div className="space-y-2 text-sm">
-              <div className="flex justify-between">
+              <div className="flex justify-between items-center">
                 <span className="text-muted-foreground">Protocolo</span>
-                <span className="font-mono">{ticket.protocol}</span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    navigator.clipboard.writeText(ticket.protocol ?? "");
+                    toast({ title: "Protocolo copiado", description: ticket.protocol });
+                  }}
+                  className="font-mono hover:underline cursor-pointer"
+                  title="Clique para copiar o protocolo"
+                >
+                  {ticket.protocol}
+                </button>
               </div>
               <div className="flex justify-between">
                 <span className="text-muted-foreground">Departamento</span>

@@ -184,6 +184,15 @@ export function ChatSidebar() {
     };
   }, [clearData]);
 
+  // Atualizar lista quando alguém @mencionar o usuário (filtro @ ativo)
+  useEffect(() => {
+    const handleRefetchTickets = () => {
+      fetchTickets();
+    };
+    window.addEventListener("chat:refetch-tickets", handleRefetchTickets);
+    return () => window.removeEventListener("chat:refetch-tickets", handleRefetchTickets);
+  }, [filters]);
+
   const TICKETS_PER_PAGE = 30;
 
   async function fetchTickets(loadMore?: boolean) {
@@ -473,7 +482,7 @@ export function ChatSidebar() {
   }
 
   return (
-    <div className="w-full md:w-80 border-r flex flex-col bg-card h-full">
+    <div className="w-full md:w-80 min-w-0 border-r flex flex-col bg-card h-full overflow-hidden">
       {/* Header */}
       <div className="p-3 md:p-4 border-b">
         {/* Search + Nova conversa */}
@@ -656,74 +665,74 @@ export function ChatSidebar() {
         )}
       </div>
 
-      {/* Ticket List or Unified Search Results */}
-      <ScrollArea className="flex-1">
-        {search.trim().length >= 2 ? (
-          isUnifiedSearchLoading ? (
+      {/* Ticket List - max-w-80 força largura da sidebar (evita conteúdo ~8kpx) */}
+      <ScrollArea className="flex-1 min-w-0 w-full max-w-full overflow-hidden">
+        <div className="w-full md:max-w-80 min-w-0 overflow-hidden box-border">
+          {search.trim().length >= 2 ? (
+            isUnifiedSearchLoading ? (
+              <div className="flex items-center justify-center py-8">
+                <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-primary" />
+              </div>
+            ) : unifiedSearchTickets.length === 0 && unifiedSearchContacts.length === 0 ? (
+              <div className="text-center text-muted-foreground py-8">
+                <p>Nenhum resultado encontrado</p>
+              </div>
+            ) : (
+              <div className="divide-y min-w-0">
+                {unifiedSearchTickets.map((ticket) => (
+                  <TicketItem
+                    key={ticket.id}
+                    ticket={ticket}
+                    isSelected={selectedTicket?.id === ticket.id}
+                    onSelect={() => {
+                      addTicket(ticket);
+                      selectTicket(ticket);
+                      setSearch("");
+                      setUnifiedSearchTickets([]);
+                      setUnifiedSearchContacts([]);
+                    }}
+                  />
+                ))}
+                {unifiedSearchContacts
+                  .filter(
+                    (item) =>
+                      !unifiedSearchTickets.some((t) => t.contact?.id === item.contact.id)
+                  )
+                  .map((item) => (
+                    <button
+                      key={item.contact.id}
+                      type="button"
+                      className="w-full min-w-0 flex items-center gap-3 p-3 text-left hover:bg-muted/50 transition-colors border-b last:border-b-0"
+                      onClick={() => handleUnifiedContactClick(item)}
+                    >
+                      <Avatar className="w-10 h-10 flex-shrink-0">
+                        <AvatarImage src={item.contact.avatar} />
+                        <AvatarFallback>
+                          {(item.contact.name || item.contact.phone).slice(0, 2).toUpperCase()}
+                        </AvatarFallback>
+                      </Avatar>
+                      <div className="flex-1 min-w-0 overflow-hidden">
+                        <p className="font-medium truncate">
+                          {item.contact.name || formatPhone(item.contact.phone)}
+                        </p>
+                        <p className="text-xs text-muted-foreground truncate">
+                          {item.openTicketId ? "Conversa aberta — clique para abrir" : "Nova conversa — clique para iniciar"}
+                        </p>
+                      </div>
+                    </button>
+                  ))}
+              </div>
+            )
+          ) : isLoadingTickets ? (
             <div className="flex items-center justify-center py-8">
               <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-primary" />
             </div>
-          ) : unifiedSearchTickets.length === 0 && unifiedSearchContacts.length === 0 ? (
+          ) : tickets.length === 0 ? (
             <div className="text-center text-muted-foreground py-8">
-              <p>Nenhum resultado encontrado</p>
+              <p>Nenhuma conversa encontrada</p>
             </div>
           ) : (
-            <div className="divide-y">
-              {unifiedSearchTickets.map((ticket) => (
-                <TicketItem
-                  key={ticket.id}
-                  ticket={ticket}
-                  isSelected={selectedTicket?.id === ticket.id}
-                  onSelect={() => {
-                    addTicket(ticket);
-                    selectTicket(ticket);
-                    setSearch("");
-                    setUnifiedSearchTickets([]);
-                    setUnifiedSearchContacts([]);
-                  }}
-                />
-              ))}
-              {unifiedSearchContacts
-                .filter(
-                  (item) =>
-                    !unifiedSearchTickets.some((t) => t.contact?.id === item.contact.id)
-                )
-                .map((item) => (
-                  <button
-                    key={item.contact.id}
-                    type="button"
-                    className="w-full flex items-center gap-3 p-3 text-left hover:bg-muted/50 transition-colors border-b last:border-b-0"
-                    onClick={() => handleUnifiedContactClick(item)}
-                  >
-                    <Avatar className="w-10 h-10 flex-shrink-0">
-                      <AvatarImage src={item.contact.avatar} />
-                      <AvatarFallback>
-                        {(item.contact.name || item.contact.phone).slice(0, 2).toUpperCase()}
-                      </AvatarFallback>
-                    </Avatar>
-                    <div className="flex-1 min-w-0">
-                      <p className="font-medium truncate">
-                        {item.contact.name || formatPhone(item.contact.phone)}
-                      </p>
-                      <p className="text-xs text-muted-foreground truncate">
-                        {item.openTicketId ? "Conversa aberta — clique para abrir" : "Nova conversa — clique para iniciar"}
-                      </p>
-                    </div>
-                  </button>
-                ))}
-            </div>
-          )
-        ) : isLoadingTickets ? (
-          <div className="flex items-center justify-center py-8">
-            <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-primary" />
-          </div>
-        ) : tickets.length === 0 ? (
-          <div className="text-center text-muted-foreground py-8">
-            <p>Nenhuma conversa encontrada</p>
-          </div>
-        ) : (
-          <>
-            <div className="divide-y">
+            <div className="divide-y min-w-0">
               {tickets.map((ticket) => (
                 <TicketItem
                   key={ticket.id}
@@ -733,29 +742,32 @@ export function ChatSidebar() {
                 />
               ))}
             </div>
-            {hasMoreTickets && (
-              <div className="flex justify-center py-3 px-2 border-t">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => fetchTickets(true)}
-                  disabled={isLoadingMoreTickets}
-                  className="w-full text-xs"
-                >
-                  {isLoadingMoreTickets ? (
-                    <>
-                      <Loader2 className="w-3.5 h-3.5 mr-2 animate-spin" />
-                      Carregando...
-                    </>
-                  ) : (
-                    "Expandir"
-                  )}
-                </Button>
-              </div>
-            )}
-          </>
-        )}
+          )}
+        </div>
       </ScrollArea>
+
+      {/* Botão fora do ScrollArea para não herdar largura do conteúdo */}
+      {search.trim().length < 2 && hasMoreTickets && (
+        <div className="flex justify-center py-3 px-2 border-t bg-card shrink-0 w-full">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => fetchTickets(true)}
+            disabled={isLoadingMoreTickets}
+            className="w-full text-xs border-border bg-background hover:bg-accent"
+            title="Carregar mais conversas"
+          >
+            {isLoadingMoreTickets ? (
+              <>
+                <Loader2 className="w-3.5 h-3.5 mr-2 animate-spin" />
+                Carregando...
+              </>
+            ) : (
+              "Carregar mais conversas"
+            )}
+          </Button>
+        </div>
+      )}
 
       {/* New Conversation Dialog */}
       <Dialog
@@ -1127,7 +1139,15 @@ function WhatsAppIcon({ className }: { className?: string }) {
 }
 
 function TicketItem({ ticket, isSelected, onSelect }: TicketItemProps) {
+  const { toast } = useToast();
   const contactName = ticket.contact?.name || formatPhone(ticket.contact?.phone);
+
+  const copyProtocol = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    navigator.clipboard.writeText(ticket.protocol ?? "");
+    toast({ title: "Protocolo copiado", description: ticket.protocol });
+  };
   const initials = contactName
     .split(" ")
     .map((n: string) => n[0])
@@ -1154,13 +1174,16 @@ function TicketItem({ ticket, isSelected, onSelect }: TicketItemProps) {
       : "bg-amber-50 dark:bg-amber-950/30 border-l-4 border-l-amber-500");
 
   return (
-    <button
+    <div
+      role="button"
+      tabIndex={0}
       className={cn(
-        "w-full p-2.5 md:p-3 flex items-start gap-2.5 md:gap-3 text-left hover:bg-muted/50 transition-colors active:bg-muted/70",
+        "w-full min-w-0 p-2.5 md:p-3 flex items-start gap-2.5 md:gap-3 text-left hover:bg-muted/50 transition-colors active:bg-muted/70 cursor-pointer",
         isSelected && "bg-muted",
         unreadHighlight
       )}
       onClick={onSelect}
+      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onSelect(); } }}
     >
       <div className="relative flex-shrink-0">
         <Avatar
@@ -1195,15 +1218,20 @@ function TicketItem({ ticket, isSelected, onSelect }: TicketItemProps) {
         </div>
       </div>
 
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center justify-between mb-0.5 md:mb-1">
-          <span className={cn("truncate text-sm md:text-base", hasUnread ? "font-bold" : "font-medium")}>
+      <div className="flex-1 min-w-0 overflow-hidden">
+        <div className="flex items-center justify-between gap-2 mb-0.5 md:mb-1 min-w-0">
+          <span className={cn("truncate text-sm md:text-base min-w-0", hasUnread ? "font-bold" : "font-medium")}>
             {contactName}
           </span>
           <div className="flex items-center gap-1.5 md:gap-2 flex-shrink-0">
-            <span className="text-[10px] md:text-xs text-muted-foreground font-mono" title="Número do ticket">
+            <button
+              type="button"
+              onClick={copyProtocol}
+              className="text-[10px] md:text-xs text-muted-foreground font-mono hover:text-foreground hover:underline cursor-pointer"
+              title="Clique para copiar o protocolo (sem #)"
+            >
               #{ticket.protocol}
-            </span>
+            </button>
             {hasUnread && (
               <span className="flex items-center justify-center min-w-4 md:min-w-5 h-4 md:h-5 px-1 md:px-1.5 text-[10px] md:text-xs font-bold text-white bg-primary rounded-full">
                 {unreadCount > 99 ? "99+" : unreadCount}
@@ -1215,7 +1243,7 @@ function TicketItem({ ticket, isSelected, onSelect }: TicketItemProps) {
           </div>
         </div>
 
-        <div className="flex items-center gap-1.5 md:gap-2 mb-0.5 md:mb-1 flex-wrap">
+        <div className="flex items-center gap-1.5 md:gap-2 mb-0.5 md:mb-1 flex-wrap min-w-0 overflow-hidden">
           <span
             className={cn(
               "w-1.5 h-1.5 md:w-2 md:h-2 rounded-full flex-shrink-0",
@@ -1251,7 +1279,7 @@ function TicketItem({ ticket, isSelected, onSelect }: TicketItemProps) {
 
         {lastMessage && (
           <p className={cn(
-            "text-xs md:text-sm truncate",
+            "text-xs md:text-sm truncate min-w-0",
             hasUnread ? "text-foreground font-medium" : "text-muted-foreground"
           )}>
             {lastMessage.isFromMe && "Você: "}
@@ -1262,18 +1290,18 @@ function TicketItem({ ticket, isSelected, onSelect }: TicketItemProps) {
         {sla && ticket.status !== "RESOLVED" && ticket.status !== "CLOSED" && (
           <div
             className={cn(
-              "flex items-center gap-1 text-xs mt-1",
+              "flex items-center gap-1 text-xs mt-1 min-w-0 overflow-hidden",
               sla.status === "ok" && "text-green-600",
               sla.status === "warning" && "text-yellow-600",
               sla.status === "critical" && "text-red-600",
               sla.status === "breached" && "text-red-600 font-bold"
             )}
           >
-            <Clock className="w-3 h-3" />
-            <span>SLA: {sla.text}</span>
+            <Clock className="w-3 h-3 flex-shrink-0" />
+            <span className="truncate min-w-0">SLA: {sla.text}</span>
           </div>
         )}
       </div>
-    </button>
+    </div>
   );
 }

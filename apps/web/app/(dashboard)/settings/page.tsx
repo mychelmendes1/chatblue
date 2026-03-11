@@ -24,6 +24,8 @@ import {
   FileText,
   Link2,
   Copy,
+  Upload,
+  FileSpreadsheet,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -65,6 +67,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useToast } from "@/components/ui/use-toast";
 import { api } from "@/lib/api";
+import { useAuthStore } from "@/stores/auth.store";
 
 interface CompanySettings {
   id: string;
@@ -172,8 +175,8 @@ const AI_MODELS = {
     { id: 'gpt-3.5-turbo', name: 'GPT-3.5 Turbo', description: 'Modelo rápido e econômico' },
   ],
   anthropic: [
-    { id: 'claude-opus-4-20250514', name: 'Claude Opus 4', description: 'Modelo mais inteligente e capaz da Anthropic' },
-    { id: 'claude-sonnet-4-20250514', name: 'Claude Sonnet 4', description: 'Modelo equilibrado entre capacidade e velocidade' },
+    { id: 'claude-opus-4-6', name: 'Claude Opus 4', description: 'Modelo mais inteligente e capaz da Anthropic' },
+    { id: 'claude-sonnet-4-6', name: 'Claude Sonnet 4', description: 'Modelo equilibrado entre capacidade e velocidade' },
     { id: 'claude-3-5-sonnet-20241022', name: 'Claude 3.5 Sonnet', description: 'Excelente equilíbrio entre capacidade e velocidade' },
     { id: 'claude-3-opus-20240229', name: 'Claude 3 Opus', description: 'Modelo muito capaz (geração anterior)' },
     { id: 'claude-3-haiku-20240307', name: 'Claude 3 Haiku', description: 'Modelo mais rápido e econômico' },
@@ -197,6 +200,44 @@ const PERSONALITY_STYLES = [
   { id: 'detailed', name: 'Detalhado', description: 'Respostas completas e explicativas' },
   { id: 'conversational', name: 'Conversacional', description: 'Respostas naturais como conversa' },
 ];
+
+// ——— Parser de CSV para importação de disparo ———
+function normalizePhoneFromCsv(raw: string): string {
+  const digits = (raw || '').replace(/\D/g, '');
+  if (digits.length < 10) return '';
+  if (digits.length === 10 && /^[1-9]\d{1}[2-9]\d{7}$/.test(digits)) return '55' + digits;
+  return digits;
+}
+
+function parseCsvFileContent(text: string): { headers: string[]; rows: string[][]; separator: string } {
+  const normalized = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  const lines = normalized.trim().split('\n').filter((l) => l.trim());
+  if (lines.length === 0) return { headers: [], rows: [], separator: ',' };
+  const first = lines[0];
+  const separator = first.includes(';') ? ';' : ',';
+  const headers = first.split(separator).map((p) => p.trim());
+  const rows = lines.slice(1, 501).map((line) => line.split(separator).map((p) => p.trim()));
+  return { headers, rows, separator };
+}
+
+function detectDispatchColumns(headers: string[], rows: string[][]): { phoneColumn: number; nameColumn: number | null; messageColumn: number | null } {
+  const lower = headers.map((h) => h.toLowerCase());
+  const phoneKeywords = ['telefone', 'phone', 'cel', 'celular', 'whatsapp', 'fone', 'número', 'numero', 'tel'];
+  const nameKeywords = ['nome', 'name', 'cliente', 'contato', 'contato_nome'];
+  const msgKeywords = ['mensagem', 'message', 'msg', 'texto'];
+  let phoneCol = 0;
+  let nameCol: number | null = null;
+  let msgCol: number | null = null;
+  for (let i = 0; i < lower.length; i++) {
+    const h = lower[i];
+    if (phoneKeywords.some((k) => h.includes(k))) phoneCol = i;
+    if (nameKeywords.some((k) => h.includes(k))) nameCol = i;
+    if (msgKeywords.some((k) => h.includes(k))) msgCol = i;
+  }
+  if (nameCol === null && lower.length > 1) nameCol = 1;
+  if (msgCol === null && lower.length > 2) msgCol = 2;
+  return { phoneColumn: phoneCol, nameColumn: nameCol, messageColumn: msgCol };
+}
 
 export default function SettingsPage() {
   const { toast } = useToast();
@@ -283,6 +324,27 @@ export default function SettingsPage() {
   const [generatedApiKey, setGeneratedApiKey] = useState<string | null>(null);
   const [isSavingExternal, setIsSavingExternal] = useState(false);
   const [isGeneratingKey, setIsGeneratingKey] = useState(false);
+
+  // Importar planilha de disparo (aba Geral)
+  const [showImportDispatchDialog, setShowImportDispatchDialog] = useState(false);
+  const [importDispatchLoading, setImportDispatchLoading] = useState(false);
+  const [importDispatchForm, setImportDispatchForm] = useState({
+    message: "",
+    campaignId: "",
+    campaignName: "",
+    dispatchedAt: "",
+  });
+  const [importDispatchFile, setImportDispatchFile] = useState<File | null>(null);
+  const [importDispatchPreview, setImportDispatchPreview] = useState<{
+    headers: string[];
+    rows: string[][];
+    separator: string;
+  } | null>(null);
+  const [importDispatchMapping, setImportDispatchMapping] = useState<{
+    phoneColumn: number;
+    nameColumn: number | null;
+    messageColumn: number | null;
+  }>({ phoneColumn: 0, nameColumn: null, messageColumn: null });
 
   useEffect(() => {
     fetchSettings();
@@ -1065,6 +1127,24 @@ export default function SettingsPage() {
                 <Save className="w-4 h-4 mr-2" />
                 Salvar
               </Button>
+
+              {/* Importar planilha de disparo */}
+              <div className="border-t pt-6 space-y-2">
+                <h3 className="text-sm font-medium flex items-center gap-2">
+                  <FileSpreadsheet className="w-4 h-4" />
+                  Importar planilha de disparo
+                </h3>
+                <p className="text-sm text-muted-foreground">
+                  Envie um CSV para registrar conversas de disparo em massa. Elas aparecerão no Chat no filtro &quot;Disparo em massa&quot;.
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  É necessário ter uma conexão WhatsApp ativa e um departamento com &quot;comercial&quot; no nome.
+                </p>
+                <Button variant="outline" onClick={() => setShowImportDispatchDialog(true)}>
+                  <Upload className="w-4 h-4 mr-2" />
+                  Importar planilha
+                </Button>
+              </div>
             </CardContent>
           </Card>
         </TabsContent>
@@ -2371,6 +2451,275 @@ export default function SettingsPage() {
             <Button onClick={saveUser} disabled={isSaving}>
               {isSaving && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
               {editingUser ? "Salvar" : "Criar"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Importar planilha de disparo */}
+      <Dialog
+        open={showImportDispatchDialog}
+        onOpenChange={(open) => {
+          setShowImportDispatchDialog(open);
+          if (!open) {
+            setImportDispatchFile(null);
+            setImportDispatchPreview(null);
+            setImportDispatchMapping({ phoneColumn: 0, nameColumn: null, messageColumn: null });
+          }
+        }}
+      >
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Upload className="w-5 h-5" />
+              Importar planilha de disparo
+            </DialogTitle>
+            <DialogDescription>
+              Escolha o CSV. As colunas de telefone e nome são detectadas automaticamente; você pode alterar o mapeamento. Contatos já cadastrados são vinculados (merge).
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div>
+              <Label>Arquivo CSV</Label>
+              <Input
+                type="file"
+                accept=".csv,.txt"
+                className="mt-1"
+                onChange={async (e) => {
+                  const file = e.target.files?.[0] ?? null;
+                  setImportDispatchFile(file);
+                  if (!file) {
+                    setImportDispatchPreview(null);
+                    setImportDispatchMapping({ phoneColumn: 0, nameColumn: null, messageColumn: null });
+                    return;
+                  }
+                  try {
+                    const text = await file.text();
+                    const { headers, rows, separator } = parseCsvFileContent(text);
+                    if (headers.length === 0) {
+                      setImportDispatchPreview(null);
+                      return;
+                    }
+                    setImportDispatchPreview({ headers, rows, separator });
+                    const detected = detectDispatchColumns(headers, rows);
+                    setImportDispatchMapping(detected);
+                  } catch (err) {
+                    console.error(err);
+                    setImportDispatchPreview(null);
+                  }
+                }}
+              />
+            </div>
+
+            {importDispatchPreview && importDispatchPreview.headers.length > 0 && (
+              <>
+                <div className="grid grid-cols-3 gap-3">
+                  <div>
+                    <Label>Coluna do telefone</Label>
+                    <Select
+                      value={String(importDispatchMapping.phoneColumn)}
+                      onValueChange={(v) => setImportDispatchMapping((m) => ({ ...m, phoneColumn: Number(v) }))}
+                    >
+                      <SelectTrigger className="mt-1">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {importDispatchPreview.headers.map((h, i) => (
+                          <SelectItem key={i} value={String(i)}>
+                            {h || `Coluna ${i}`}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div>
+                    <Label>Coluna do nome (opcional)</Label>
+                    <Select
+                      value={importDispatchMapping.nameColumn === null ? "__none__" : String(importDispatchMapping.nameColumn)}
+                      onValueChange={(v) =>
+                        setImportDispatchMapping((m) => ({ ...m, nameColumn: v === "__none__" ? null : Number(v) }))
+                      }
+                    >
+                      <SelectTrigger className="mt-1">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="__none__">Nenhuma</SelectItem>
+                        {importDispatchPreview.headers.map((h, i) => (
+                          <SelectItem key={i} value={String(i)}>
+                            {h || `Coluna ${i}`}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div>
+                    <Label>Coluna da mensagem (opcional)</Label>
+                    <Select
+                      value={importDispatchMapping.messageColumn === null ? "__none__" : String(importDispatchMapping.messageColumn)}
+                      onValueChange={(v) =>
+                        setImportDispatchMapping((m) => ({ ...m, messageColumn: v === "__none__" ? null : Number(v) }))
+                      }
+                    >
+                      <SelectTrigger className="mt-1">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="__none__">Nenhuma</SelectItem>
+                        {importDispatchPreview.headers.map((h, i) => (
+                          <SelectItem key={i} value={String(i)}>
+                            {h || `Coluna ${i}`}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+                <div>
+                  <Label>Prévia (telefones normalizados) — primeiras linhas</Label>
+                  <div className="mt-1 border rounded-md overflow-auto max-h-32 text-xs">
+                    <table className="w-full border-collapse">
+                      <thead>
+                        <tr className="bg-muted">
+                          <th className="border-b p-1.5 text-left">Telefone</th>
+                          <th className="border-b p-1.5 text-left">Nome</th>
+                          <th className="border-b p-1.5 text-left">Mensagem</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {importDispatchPreview.rows.slice(0, 5).map((row, ri) => {
+                          const ph = normalizePhoneFromCsv(row[importDispatchMapping.phoneColumn] ?? "");
+                          const nome =
+                            importDispatchMapping.nameColumn != null ? row[importDispatchMapping.nameColumn] ?? "" : "";
+                          const msg =
+                            importDispatchMapping.messageColumn != null ? row[importDispatchMapping.messageColumn] ?? "" : "";
+                          return (
+                            <tr key={ri} className="border-b">
+                              <td className="p-1.5 font-mono">{ph || "—"}</td>
+                              <td className="p-1.5 truncate max-w-[120px]">{nome || "—"}</td>
+                              <td className="p-1.5 truncate max-w-[150px]">{msg ? `${msg.slice(0, 30)}${msg.length > 30 ? "…" : ""}` : "—"}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    {importDispatchPreview.rows.length} linha(s) no total. Telefones com menos de 10 dígitos são ignorados.
+                  </p>
+                </div>
+              </>
+            )}
+
+            <div>
+              <Label>Mensagem padrão (se a coluna mensagem estiver vazia)</Label>
+              <textarea
+                className="mt-1 w-full min-h-[80px] rounded-md border border-input bg-background px-3 py-2 text-sm"
+                placeholder="Texto enviado no disparo..."
+                value={importDispatchForm.message}
+                onChange={(e) => setImportDispatchForm((f) => ({ ...f, message: e.target.value }))}
+              />
+            </div>
+            <div>
+              <Label>Nome da campanha (opcional)</Label>
+              <Input
+                placeholder="Ex: Campanha Março"
+                value={importDispatchForm.campaignName}
+                onChange={(e) => setImportDispatchForm((f) => ({ ...f, campaignName: e.target.value }))}
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <Label>ID da campanha (opcional)</Label>
+                <Input
+                  type="number"
+                  min={1}
+                  placeholder="Auto"
+                  value={importDispatchForm.campaignId}
+                  onChange={(e) => setImportDispatchForm((f) => ({ ...f, campaignId: e.target.value }))}
+                />
+              </div>
+              <div>
+                <Label>Data do disparo (opcional)</Label>
+                <Input
+                  type="datetime-local"
+                  value={importDispatchForm.dispatchedAt}
+                  onChange={(e) => setImportDispatchForm((f) => ({ ...f, dispatchedAt: e.target.value }))}
+                />
+              </div>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowImportDispatchDialog(false)}>
+              Cancelar
+            </Button>
+            <Button
+              disabled={!importDispatchPreview?.rows?.length || importDispatchLoading}
+              onClick={async () => {
+                if (!importDispatchPreview?.rows?.length) return;
+                setImportDispatchLoading(true);
+                try {
+                  const { phoneColumn, nameColumn, messageColumn } = importDispatchMapping;
+                  const contacts = importDispatchPreview.rows
+                    .map((row) => {
+                      const phone = normalizePhoneFromCsv(row[phoneColumn] ?? "");
+                      if (phone.length < 10) return null;
+                      return {
+                        phone,
+                        name: nameColumn != null ? (row[nameColumn] ?? "").trim() || undefined : undefined,
+                        message: messageColumn != null ? (row[messageColumn] ?? "").trim() || undefined : undefined,
+                      };
+                    })
+                    .filter((c): c is { phone: string; name?: string; message?: string } => c != null);
+                  if (contacts.length === 0) {
+                    toast({ title: "Erro na importação", description: "Nenhum telefone válido (10+ dígitos) na planilha.", variant: "destructive" });
+                    setImportDispatchLoading(false);
+                    return;
+                  }
+                  const token = useAuthStore.getState().accessToken;
+                  const apiBase = (process.env.NEXT_PUBLIC_API_URL ?? (typeof window !== "undefined" ? "http://localhost:3001" : "")).replace(/\/$/, "");
+                  const importUrl = apiBase ? `${apiBase}/api/webhooks/import` : "/api/webhooks/import";
+                  const body = {
+                    contacts,
+                    message: importDispatchForm.message.trim() || undefined,
+                    campaignId: importDispatchForm.campaignId.trim() ? Number(importDispatchForm.campaignId) : undefined,
+                    campaignName: importDispatchForm.campaignName.trim() || undefined,
+                    dispatchedAt: importDispatchForm.dispatchedAt ? new Date(importDispatchForm.dispatchedAt).toISOString() : undefined,
+                  };
+                  const response = await fetch(importUrl, {
+                    method: "POST",
+                    headers: {
+                      "Content-Type": "application/json",
+                      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+                    },
+                    body: JSON.stringify(body),
+                  });
+                  const contentType = response.headers.get("content-type");
+                  const isJson = contentType?.includes("application/json");
+                  if (!response.ok) {
+                    const err = isJson ? await response.json().catch(() => ({})) : {};
+                    const msg = err?.message || err?.error || (response.status === 401 ? "Faça login novamente." : response.statusText || "Falha ao importar");
+                    throw new Error(msg);
+                  }
+                  const data = isJson ? await response.json() : {};
+                  toast({
+                    title: "Importação concluída",
+                    description: `${data.ticketsCreated ?? 0} conversas criadas, ${data.ticketsUpdated ?? 0} atualizadas.`,
+                  });
+                  setShowImportDispatchDialog(false);
+                  setImportDispatchFile(null);
+                  setImportDispatchPreview(null);
+                  setImportDispatchMapping({ phoneColumn: 0, nameColumn: null, messageColumn: null });
+                  setImportDispatchForm({ message: "", campaignId: "", campaignName: "", dispatchedAt: "" });
+                } catch (e: any) {
+                  const err = e?.message || "Falha ao importar planilha";
+                  toast({ title: "Erro na importação", description: err, variant: "destructive" });
+                } finally {
+                  setImportDispatchLoading(false);
+                }
+              }}
+            >
+              {importDispatchLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : "Importar"}
             </Button>
           </DialogFooter>
         </DialogContent>

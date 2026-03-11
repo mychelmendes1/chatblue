@@ -115,8 +115,8 @@ const AI_MODELS: Record<string, AIModel[]> = {
     { id: "gpt-3.5-turbo", name: "GPT-3.5 Turbo", provider: "openai", description: "Custo-beneficio" },
   ],
   anthropic: [
-    { id: "claude-opus-4-20250514", name: "Claude Opus 4", provider: "anthropic", description: "Mais inteligente" },
-    { id: "claude-sonnet-4-20250514", name: "Claude Sonnet 4", provider: "anthropic", description: "Equilibrado" },
+    { id: "claude-opus-4-6", name: "Claude Opus 4", provider: "anthropic", description: "Mais inteligente" },
+    { id: "claude-sonnet-4-6", name: "Claude Sonnet 4", provider: "anthropic", description: "Equilibrado" },
     { id: "claude-3-5-sonnet-20241022", name: "Claude 3.5 Sonnet", provider: "anthropic", description: "Versatil" },
     { id: "claude-3-5-haiku-20241022", name: "Claude 3.5 Haiku", provider: "anthropic", description: "Rapido" },
   ],

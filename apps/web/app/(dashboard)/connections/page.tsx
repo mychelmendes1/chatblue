@@ -19,6 +19,8 @@ import {
   Bot,
   User,
   Settings2,
+  Eye,
+  EyeOff,
 } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { Button } from "@/components/ui/button";
@@ -121,6 +123,10 @@ export default function ConnectionsPage() {
   const [availableUsers, setAvailableUsers] = useState<CompanyUser[]>([]);
   const [isLoadingAISettings, setIsLoadingAISettings] = useState(false);
   const refreshedInstagramIds = useRef<Set<string>>(new Set());
+
+  // Edit Instagram connection dialog
+  const [showEditInstagramDialog, setShowEditInstagramDialog] = useState(false);
+  const [connectionToEdit, setConnectionToEdit] = useState<Connection | null>(null);
 
   useEffect(() => {
     fetchConnections();
@@ -478,6 +484,31 @@ export default function ConnectionsPage() {
             />
           </DialogContent>
         </Dialog>
+
+        {/* Edit Instagram connection */}
+        <Dialog open={showEditInstagramDialog} onOpenChange={(open) => {
+          if (!open) {
+            setShowEditInstagramDialog(false);
+            setConnectionToEdit(null);
+          }
+        }}>
+          <DialogContent>
+            {connectionToEdit && (
+              <EditInstagramConnectionDialog
+                connection={connectionToEdit}
+                onSuccess={() => {
+                  setShowEditInstagramDialog(false);
+                  setConnectionToEdit(null);
+                  fetchConnections();
+                }}
+                onCancel={() => {
+                  setShowEditInstagramDialog(false);
+                  setConnectionToEdit(null);
+                }}
+              />
+            )}
+          </DialogContent>
+        </Dialog>
       </div>
 
       {isLoading ? (
@@ -539,6 +570,15 @@ export default function ConnectionsPage() {
                       <Settings2 className="w-4 h-4 mr-2" />
                       Configurar IA
                     </DropdownMenuItem>
+                    {connection.type === "INSTAGRAM" && (
+                      <DropdownMenuItem onClick={() => {
+                        setConnectionToEdit(connection);
+                        setShowEditInstagramDialog(true);
+                      }}>
+                        <Edit className="w-4 h-4 mr-2" />
+                        Editar configuração
+                      </DropdownMenuItem>
+                    )}
                     {user?.role === "SUPER_ADMIN" && (
                       <DropdownMenuItem onClick={() => handleChangeCompany(connection)}>
                         <Edit className="w-4 h-4 mr-2" />
@@ -1379,5 +1419,187 @@ function NewConnectionDialog({ onSuccess }: { onSuccess: () => void }) {
         </Button>
       </DialogFooter>
     </form>
+  );
+}
+
+function EditInstagramConnectionDialog({
+  connection,
+  onSuccess,
+  onCancel,
+}: {
+  connection: Connection;
+  onSuccess: () => void;
+  onCancel: () => void;
+}) {
+  const { toast } = useToast();
+  const [name, setName] = useState(connection.name);
+  const [instagramAccountId, setInstagramAccountId] = useState(connection.instagramAccountId ?? "");
+  const [instagramAccessToken, setInstagramAccessToken] = useState("");
+  const [instagramWebhookToken, setInstagramWebhookToken] = useState("");
+  const [credentialsLoading, setCredentialsLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(false);
+  const [showAccessToken, setShowAccessToken] = useState(false);
+  const [showWebhookToken, setShowWebhookToken] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .get<{
+        name: string;
+        instagramAccountId?: string;
+        accessToken?: string;
+        webhookToken?: string;
+      }>(`/connections/${connection.id}`)
+      .then((res) => {
+        if (!cancelled && res.data) {
+          const d = res.data;
+          setName(d.name ?? connection.name);
+          setInstagramAccountId(d.instagramAccountId ?? connection.instagramAccountId ?? "");
+          setInstagramAccessToken(d.accessToken ?? "");
+          setInstagramWebhookToken(d.webhookToken ?? "");
+        }
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          toast({
+            title: "Erro ao carregar configuração",
+            description: err?.message || "Não foi possível carregar os tokens.",
+            variant: "destructive",
+          });
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setCredentialsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [connection.id, connection.name, connection.instagramAccountId]);
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!name.trim()) {
+      toast({ title: "Erro", description: "O nome da conexão é obrigatório", variant: "destructive" });
+      return;
+    }
+    const payload: { name?: string; instagramAccountId?: string; webhookToken?: string; accessToken?: string } = {
+      name: name.trim(),
+      instagramAccountId: instagramAccountId.trim() || undefined,
+      webhookToken: instagramWebhookToken.trim() || undefined,
+    };
+    if (instagramAccessToken.trim()) payload.accessToken = instagramAccessToken.trim();
+
+    setIsLoading(true);
+    try {
+      await api.put(`/connections/${connection.id}`, payload);
+      toast({ title: "Configuração atualizada", description: `A conexão "${name.trim()}" foi atualizada.` });
+      onSuccess();
+    } catch (error: any) {
+      const msg = error.response?.data?.message || error.response?.data?.error || error.message || "Falha ao atualizar";
+      toast({ title: "Erro ao atualizar", description: msg, variant: "destructive" });
+    } finally {
+      setIsLoading(false);
+    }
+  }
+
+  if (credentialsLoading) {
+    return (
+      <>
+        <DialogHeader>
+          <DialogTitle>Editar conexão Instagram</DialogTitle>
+          <DialogDescription>Carregando configuração...</DialogDescription>
+        </DialogHeader>
+        <div className="flex items-center justify-center py-12">
+          <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
+        </div>
+      </>
+    );
+  }
+
+  return (
+    <>
+      <DialogHeader>
+        <DialogTitle>Editar conexão Instagram</DialogTitle>
+        <DialogDescription>
+          Altere o nome, Account ID ou os tokens. Use o ícone do olho para mostrar ou ocultar os tokens.
+        </DialogDescription>
+      </DialogHeader>
+      <form onSubmit={handleSubmit} className="space-y-4 py-4">
+        <div className="space-y-2">
+          <Label htmlFor="edit-name-instagram">Nome da conexão</Label>
+          <Input
+            id="edit-name-instagram"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="Ex: Instagram Loja"
+          />
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="edit-instagramAccountId">Instagram Account ID</Label>
+          <Input
+            id="edit-instagramAccountId"
+            value={instagramAccountId}
+            onChange={(e) => setInstagramAccountId(e.target.value)}
+            placeholder="ID da conta do Instagram"
+          />
+          <p className="text-xs text-muted-foreground">O ID da conta profissional do Instagram (IGSID)</p>
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="edit-instagramAccessToken">Access Token</Label>
+          <div className="relative">
+            <Input
+              id="edit-instagramAccessToken"
+              type={showAccessToken ? "text" : "password"}
+              value={instagramAccessToken}
+              onChange={(e) => setInstagramAccessToken(e.target.value)}
+              placeholder="Token de acesso da Meta"
+              className="pr-10"
+            />
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="absolute right-0 top-0 h-full px-3"
+              onClick={() => setShowAccessToken((v) => !v)}
+              aria-label={showAccessToken ? "Ocultar token" : "Mostrar token"}
+            >
+              {showAccessToken ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+            </Button>
+          </div>
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="edit-instagramWebhookToken">Webhook Verify Token</Label>
+          <div className="relative">
+            <Input
+              id="edit-instagramWebhookToken"
+              type={showWebhookToken ? "text" : "password"}
+              value={instagramWebhookToken}
+              onChange={(e) => setInstagramWebhookToken(e.target.value)}
+              placeholder="Token de verificação do webhook"
+              className="pr-10"
+            />
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="absolute right-0 top-0 h-full px-3"
+              onClick={() => setShowWebhookToken((v) => !v)}
+              aria-label={showWebhookToken ? "Ocultar token" : "Mostrar token"}
+            >
+              {showWebhookToken ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+            </Button>
+          </div>
+        </div>
+        <DialogFooter>
+          <Button type="button" variant="outline" onClick={onCancel}>
+            Cancelar
+          </Button>
+          <Button type="submit" disabled={isLoading}>
+            {isLoading && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+            Salvar
+          </Button>
+        </DialogFooter>
+      </form>
+    </>
   );
 }

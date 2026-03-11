@@ -36,6 +36,13 @@ const createInstagramSchema = z.object({
   companyId: z.string().cuid().optional(), // Allow admin to specify company
 });
 
+const updateInstagramSchema = z.object({
+  name: z.string().min(2).optional(),
+  accessToken: z.string().optional(),
+  instagramAccountId: z.string().optional(),
+  webhookToken: z.string().optional(),
+}).refine((data) => Object.keys(data).length > 0, { message: 'At least one field is required' });
+
 // Schema for updating AI settings per connection
 const updateAISettingsSchema = z.object({
   aiEnabled: z.boolean(),
@@ -116,18 +123,14 @@ router.get('/', authenticate, ensureTenant, async (req, res, next) => {
   }
 });
 
-// Get connection
+// Get connection (for Instagram + admin, includes accessToken and webhookToken for editing)
 router.get('/:id', authenticate, ensureTenant, async (req, res, next) => {
   try {
-    // Build where clause - super admin can see any connection
-    const whereClause: any = {
-      id: req.params.id,
-    };
-    
+    const whereClause: any = { id: req.params.id };
     if (req.user!.role !== 'SUPER_ADMIN') {
       whereClause.companyId = req.user!.companyId;
     }
-    
+
     const connection = await prisma.whatsAppConnection.findFirst({
       where: whereClause,
       include: {
@@ -145,10 +148,90 @@ router.get('/:id', authenticate, ensureTenant, async (req, res, next) => {
       throw new NotFoundError('Connection not found');
     }
 
-    // Don't expose sensitive data
-    const { accessToken, sessionData, ...safeConnection } = connection;
+    const isAdmin = req.user!.role === 'ADMIN' || req.user!.role === 'SUPER_ADMIN';
+    const includeInstagramCredentials = connection.type === 'INSTAGRAM' && isAdmin;
 
-    res.json(safeConnection);
+    const { accessToken, sessionData, ...safeConnection } = connection;
+    const payload = { ...safeConnection } as typeof safeConnection & { accessToken?: string; webhookToken?: string };
+
+    if (includeInstagramCredentials) {
+      payload.accessToken = connection.accessToken ?? undefined;
+      payload.webhookToken = connection.webhookToken ?? undefined;
+    }
+
+    res.json(payload);
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Update Instagram connection (PUT same path as GET to avoid 404 with proxy/rewrite)
+router.put('/:id', authenticate, requireAdmin, ensureTenant, async (req, res, next) => {
+  try {
+    const whereClause: any = { id: req.params.id };
+    if (req.user!.role !== 'SUPER_ADMIN') {
+      whereClause.companyId = req.user!.companyId;
+    }
+    const connection = await prisma.whatsAppConnection.findFirst({
+      where: whereClause,
+      include: {
+        defaultUser: { select: { id: true, name: true, avatar: true } },
+      },
+    });
+    if (!connection) {
+      throw new NotFoundError('Connection not found');
+    }
+    if (connection.type !== 'INSTAGRAM') {
+      return res.status(400).json({
+        message: 'Only Instagram connections can be updated with this endpoint',
+      });
+    }
+    const data = updateInstagramSchema.parse(req.body);
+    const updateData: Record<string, unknown> = {};
+    if (data.name !== undefined) updateData.name = data.name;
+    if (data.instagramAccountId !== undefined) updateData.instagramAccountId = data.instagramAccountId;
+    if (data.webhookToken !== undefined) updateData.webhookToken = data.webhookToken;
+    if (data.accessToken !== undefined && data.accessToken.trim() !== '') {
+      updateData.accessToken = data.accessToken.trim();
+    }
+    const updated = await prisma.whatsAppConnection.update({
+      where: { id: connection.id },
+      data: updateData,
+    });
+    if (updateData.accessToken !== undefined || data.instagramAccountId !== undefined) {
+      const instagramService = new InstagramService(updated);
+      const result = await instagramService.testConnection();
+      let instagramUsername: string | undefined;
+      if (result) {
+        try {
+          const accountInfo = await instagramService.getAccountInfo();
+          instagramUsername = accountInfo?.username;
+        } catch {
+          // ignore
+        }
+        await prisma.whatsAppConnection.update({
+          where: { id: updated.id },
+          data: {
+            status: 'CONNECTED',
+            lastConnected: new Date(),
+            ...(instagramUsername && { instagramUsername }),
+          },
+        });
+      } else {
+        await prisma.whatsAppConnection.update({
+          where: { id: updated.id },
+          data: { status: 'DISCONNECTED' },
+        });
+      }
+    }
+    const fresh = await prisma.whatsAppConnection.findUnique({
+      where: { id: connection.id },
+      include: {
+        defaultUser: { select: { id: true, name: true, avatar: true } },
+      },
+    });
+    const { accessToken: _at, sessionData: _sd, ...safe } = fresh!;
+    res.json(safe);
   } catch (error) {
     next(error);
   }

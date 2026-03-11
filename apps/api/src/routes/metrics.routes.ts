@@ -932,6 +932,7 @@ router.get('/quality', authenticate, ensureTenant, async (req, res, next) => {
       where: { companyId, createdAt: { gte: startDate } },
       select: {
         id: true,
+        createdAt: true,
         status: true,
         isFirstContactResolution: true,
         reopenCount: true,
@@ -987,7 +988,7 @@ router.get('/quality', authenticate, ensureTenant, async (req, res, next) => {
       const dayEnd = endOfDay(date);
 
       const dayTickets = tickets.filter(t => {
-        const ticketDate = new Date((t as any).createdAt || date);
+        const ticketDate = t.createdAt;
         return ticketDate >= dayStart && ticketDate <= dayEnd;
       });
 

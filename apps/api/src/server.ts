@@ -1,4 +1,4 @@
-import 'dotenv/config';
+import './env-loader.js';
 
 // Em desenvolvimento, impedir uso acidental do banco de produção
 if (process.env.NODE_ENV !== 'production') {
@@ -107,7 +107,7 @@ const httpServer = createServer(app);
 // Socket.io setup
 const allowedOrigins = process.env.FRONTEND_URL 
   ? process.env.FRONTEND_URL.split(',').map(url => url.trim())
-  : ['http://localhost:3000', 'http://84.247.191.105:3000', 'https://chat.grupoblue.com.br'];
+  : ['http://localhost:3000', 'http://localhost:3004', 'http://84.247.191.105:3000', 'https://chat.grupoblue.com.br'];
 
 const io = new SocketServer(httpServer, {
   cors: {

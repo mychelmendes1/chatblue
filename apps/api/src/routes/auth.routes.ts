@@ -27,35 +27,55 @@ const registerSchema = z.object({
 // Login
 router.post('/login', async (req, res, next) => {
   try {
-    const { email, password, companyId: requestedCompanyId } = z.object({
+    if (!process.env.JWT_SECRET || !process.env.JWT_REFRESH_SECRET) {
+      logger.error('Login failed: JWT_SECRET or JWT_REFRESH_SECRET not set in .env');
+      return res.status(500).json({
+        error: 'Server misconfiguration',
+        message: 'JWT secrets not configured. Add JWT_SECRET and JWT_REFRESH_SECRET to .env',
+      });
+    }
+
+    const raw = req.body || {};
+    const body = z.object({
       email: z.string().email(),
       password: z.string().min(6),
-      companyId: z.string().cuid().optional(), // Optional: login directly to specific company
-    }).parse(req.body);
+      companyId: z
+        .string()
+        .optional()
+        .transform((v) => (v && String(v).trim() ? String(v).trim() : undefined)),
+    }).parse(raw);
+    const { email, password } = body;
+    const requestedCompanyId = body.companyId && body.companyId.length > 0 ? body.companyId : undefined;
 
-    const user = await prisma.user.findUnique({
-      where: { email },
-      select: {
-        id: true,
-        email: true,
-        password: true,
-        name: true,
-        avatar: true,
-        role: true,
-        isAI: true,
-        companyId: true,
-        isActive: true,
-        company: {
-          select: {
-            id: true,
-            name: true,
-            slug: true,
-            logo: true,
-            isActive: true,
+    let user: Awaited<ReturnType<typeof prisma.user.findUnique>>;
+    try {
+      user = await prisma.user.findUnique({
+        where: { email },
+        select: {
+          id: true,
+          email: true,
+          password: true,
+          name: true,
+          avatar: true,
+          role: true,
+          isAI: true,
+          companyId: true,
+          isActive: true,
+          company: {
+            select: {
+              id: true,
+              name: true,
+              slug: true,
+              logo: true,
+              isActive: true,
+            },
           },
         },
-      },
-    });
+      });
+    } catch (prismaErr: any) {
+      logger.error('Login findUnique failed', { err: prismaErr?.message || prismaErr, code: prismaErr?.code });
+      throw prismaErr;
+    }
 
     if (!user) {
       throw new UnauthorizedError('Invalid credentials');
@@ -69,7 +89,18 @@ router.post('/login', async (req, res, next) => {
       throw new UnauthorizedError('User company not found');
     }
 
-    const validPassword = await bcrypt.compare(password, user.password);
+    if (!user.password || typeof user.password !== 'string') {
+      logger.error('Login: user has invalid password field', { userId: user.id, email: user.email });
+      throw new UnauthorizedError('Invalid credentials');
+    }
+
+    let validPassword = false;
+    try {
+      validPassword = await bcrypt.compare(password, user.password);
+    } catch (bcryptErr) {
+      logger.error('Login: bcrypt.compare failed (invalid hash in DB?)', { email: user.email, err: bcryptErr });
+      throw new UnauthorizedError('Invalid credentials');
+    }
     if (!validPassword) {
       throw new UnauthorizedError('Invalid credentials');
     }
@@ -164,11 +195,16 @@ router.post('/login', async (req, res, next) => {
     );
 
     // Store refresh token in Redis (keyed by user + company for multi-company support)
-    await redis.setex(
-      `refresh:${user.id}:${activeCompanyId}`,
-      7 * 24 * 60 * 60, // 7 days
-      refreshToken
-    );
+    try {
+      await redis.setex(
+        `refresh:${user.id}:${activeCompanyId}`,
+        7 * 24 * 60 * 60, // 7 days
+        refreshToken
+      );
+    } catch (redisErr) {
+      logger.error('Redis failed during login (refresh token not stored):', redisErr);
+      // Continue: login succeeds but refresh may fail until Redis is available
+    }
 
     res.json({
       user: {
@@ -185,6 +221,14 @@ router.post('/login', async (req, res, next) => {
       refreshToken,
     });
   } catch (error) {
+    // Log detalhado em dev para diagnosticar 500
+    if (process.env.NODE_ENV !== 'production') {
+      logger.error('Login error (full)', {
+        message: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+        name: error instanceof Error ? error.name : undefined,
+      });
+    }
     next(error);
   }
 });

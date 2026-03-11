@@ -300,7 +300,9 @@ export function ChatWindow({ ticket, onShowContactInfo, onMobileBack }: ChatWind
   }, []);
 
   useEffect(() => {
-    setHistoryTicketIds([]);
+    // Clear messages so we don't show the previous ticket's conversation; historyTicketIds
+    // will be set when fetchMessages completes (avoids filtering with [] and losing history).
+    setMessages([]);
     fetchMessages();
 
     // Join ticket room for real-time updates
@@ -403,7 +405,7 @@ export function ChatWindow({ ticket, onShowContactInfo, onMobileBack }: ChatWind
     try {
       const [response] = await Promise.all([
         api.get<{ messages: any[]; pagination: any; ticketIds?: string[] }>(
-          `/messages/ticket/${ticket.id}?page=${pageToFetch}&limit=100&includeHistory=contact`
+          `/messages/ticket/${ticket.id}?page=${pageToFetch}&limit=200&includeHistory=contact`
         ),
         resetPage ? api.post(`/messages/ticket/${ticket.id}/read`) : Promise.resolve(),
       ]);
@@ -419,10 +421,12 @@ export function ChatWindow({ ticket, onShowContactInfo, onMobileBack }: ChatWind
       if (resetPage) {
         setMessages(messagesWithTicketId);
         setMessagePage(1);
-        setHasMoreMessages(response.data.pagination?.hasMore || false);
-        if (Array.isArray(response.data.ticketIds) && response.data.ticketIds.length > 0) {
-          setHistoryTicketIds(response.data.ticketIds);
-        }
+        setHasMoreMessages(response.data.pagination?.hasMore ?? false);
+        setHistoryTicketIds(
+          Array.isArray(response.data.ticketIds) && response.data.ticketIds.length > 0
+            ? response.data.ticketIds
+            : [ticket.id]
+        );
       } else {
         const currentMessages = store.messages;
         setMessages([...messagesWithTicketId, ...currentMessages]);
@@ -712,31 +716,26 @@ export function ChatWindow({ ticket, onShowContactInfo, onMobileBack }: ChatWind
     }
   }
 
-  // Handle paste - detect clipboard images
+  // Handle paste - detect clipboard images e coloca no preview (usuário envia com o botão)
   function handlePaste(e: React.ClipboardEvent) {
     const items = e.clipboardData?.items;
     if (!items) return;
 
     for (let i = 0; i < items.length; i++) {
       const item = items[i];
-      // Check if the pasted item is an image
       if (item.type.startsWith("image/")) {
-        e.preventDefault(); // Prevent pasting as text
+        e.preventDefault();
         const file = item.getAsFile();
         if (file) {
-          // Create a named file since clipboard images come as "image.png"
           const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-          const extension = item.type.split("/")[1] || "png";
-          const namedFile = new File([file], `imagem-colada-${timestamp}.${extension}`, {
-            type: item.type,
-          });
+          const ext = item.type === "image/jpeg" ? "jpg" : (item.type.split("/")[1] || "png");
+          const namedFile = new File([file], `imagem-colada-${timestamp}.${ext}`, { type: item.type });
           processFile(namedFile);
           inputRef.current?.focus();
         }
-        return; // Only process the first image
+        return;
       }
     }
-    // If no image found, let the default paste behavior handle text
   }
 
   // Cancel file selection
@@ -1112,7 +1111,18 @@ export function ChatWindow({ ticket, onShowContactInfo, onMobileBack }: ChatWind
               )}
             </div>
             <p className="text-xs md:text-sm text-muted-foreground truncate">
-              <span className="font-mono text-primary" title="Número do ticket para busca">#{ticket.protocol}</span>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.preventDefault();
+                  navigator.clipboard.writeText(ticket.protocol ?? "");
+                  toast({ title: "Protocolo copiado", description: ticket.protocol });
+                }}
+                className="font-mono text-primary hover:underline cursor-pointer"
+                title="Clique para copiar o protocolo (sem #)"
+              >
+                #{ticket.protocol}
+              </button>
               <span className="mx-1">•</span>
               {ticket.contact?.phone} • {getStatusLabel(ticket.status)}
             </p>
@@ -1439,6 +1449,7 @@ export function ChatWindow({ ticket, onShowContactInfo, onMobileBack }: ChatWind
 
         <form
           onSubmit={handleSendMessage}
+          onPasteCapture={handlePaste}
           className="flex items-center gap-1.5 md:gap-2 p-2 md:p-3 bg-card relative"
         >
           {/* Emoji Picker */}
@@ -1550,7 +1561,6 @@ export function ChatWindow({ ticket, onShowContactInfo, onMobileBack }: ChatWind
               value={newMessage}
               onChange={handleMessageChange}
               onKeyDown={handleKeyDown}
-              onPaste={handlePaste}
               rows={1}
               className={cn("flex-1 min-w-0 min-h-[32px] md:min-h-[40px] max-h-32 md:max-h-40 text-sm md:text-base resize-none", isInternalMode && "border-amber-400 focus-visible:ring-amber-400")}
             />

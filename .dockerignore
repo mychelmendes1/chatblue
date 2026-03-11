@@ -1,0 +1,31 @@
+# Dependencies - use the ones installed inside the image
+node_modules
+**/node_modules
+
+# Git and env
+.git
+.gitignore
+.env
+.env.*
+
+# Build outputs and cache
+dist
+.next
+.turbo
+*.tsbuildinfo
+
+# Logs and temp
+*.log
+.tmp
+tmp
+temp
+
+# IDE and OS
+.idea
+.vscode
+.DS_Store
+
+# Docs and tests (optional - remove if you need them in the image)
+docs
+*.md
+!apps/api/README.md

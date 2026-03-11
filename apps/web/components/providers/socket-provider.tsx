@@ -28,7 +28,8 @@ function ticketMatchesConversationFilters(
   const hasMentionsFilter = filters.mentionedUserId != null && filters.mentionedUserId !== "";
   const isQueueFilter = filters.status === "PENDING" && !hasAssignedFilter && !hasMentionsFilter;
 
-  if (hasMentionsFilter) return false;
+  // No filtro @ não dá para saber pelo ticket se ainda tem menção (está nas mensagens); não removemos.
+  if (hasMentionsFilter) return true;
   if (hasAssignedFilter && ticket.assignedToId !== filters.assignedToId) return false;
   if (hasAIFilter && ticket.isAIHandled !== true) return false;
   if (isQueueFilter) {
@@ -173,6 +174,13 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
         } as Message,
         updatedAt: new Date().toISOString(),
       });
+
+      // Se alguém @mencionou o usuário atual e o filtro @ está ativo, atualizar lista para o ticket aparecer
+      const mentionedUserIds = (message as any).mentionedUserIds as string[] | undefined;
+      const { user } = useAuthStore.getState();
+      if (mentionedUserIds?.length && user?.id && store.filters.mentionedUserId === user.id && mentionedUserIds.includes(user.id)) {
+        window.dispatchEvent(new CustomEvent("chat:refetch-tickets"));
+      }
     } catch (error) {
       console.error("[Socket] message:sent - Error processing message:", error);
     }
@@ -299,18 +307,17 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
   const handleTicketTransferred = useCallback((data: any) => {
     console.log("[Socket] ticket:transferred", data);
     const store = useChatStore.getState();
-    
+
     store.updateTicket(data.ticketId, {
-      departmentId: data.departmentId,
-      department: data.departmentName ? { 
-        id: data.departmentId, 
-        name: data.departmentName,
-        color: null 
-      } : undefined,
-      status: "PENDING",
-      assignedToId: null,
-      isAIHandled: false,
-      humanTakeoverAt: new Date().toISOString(),
+      departmentId: data.departmentId ?? data.toDepartmentId,
+      department: data.departmentName
+        ? { id: data.departmentId ?? data.toDepartmentId, name: data.departmentName, color: undefined }
+        : undefined,
+      status: data.status ?? "PENDING",
+      assignedToId: data.toUserId ?? null,
+      assignedTo: data.assignedTo ?? undefined,
+      isAIHandled: data.isAIHandled ?? false,
+      humanTakeoverAt: data.isAIHandled ? undefined : new Date().toISOString(),
     } as any);
     removeTicketIfNoLongerMatches(data.ticketId);
   }, []);

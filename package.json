@@ -7,6 +7,9 @@
     "packages/*"
   ],
   "scripts": {
+    "local:setup": "bash deploy/local-setup.sh",
+    "local:db:data": "bash deploy/local-db-with-data.sh",
+    "local:db:reset": "pnpm --filter api exec prisma db push --accept-data-loss && pnpm --filter api db:seed",
     "dev": "turbo run dev",
     "build": "turbo run build",
     "start": "turbo run start",

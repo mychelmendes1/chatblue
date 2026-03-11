@@ -135,6 +135,13 @@ export class MessageProcessor {
     return null;
   }
 
+  /** Check if a string looks like an email (e.g. pushName can be the contact email). */
+  private static looksLikeEmail(str: string | undefined): boolean {
+    if (!str || typeof str !== 'string') return false;
+    const trimmed = str.trim();
+    return trimmed.length >= 5 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/i.test(trimmed);
+  }
+
   /**
    * Check if a phone number appears to be a LID (Linked ID)
    * LIDs are used by WhatsApp when users have phone number privacy enabled
@@ -208,9 +215,47 @@ export class MessageProcessor {
       if (isInstagram) {
         contactWhere.OR.push({ instagramId: normalizedPhone }, { instagramId: from });
       }
+      // Same person may use LID and real phone; unify by email when pushName is email
+      const pushNameEmail = this.looksLikeEmail(pushName) ? pushName!.trim().toLowerCase() : null;
+      if (pushNameEmail) {
+        contactWhere.OR.push(
+          { email: pushNameEmail },
+          { name: pushNameEmail },
+          { name: pushName } // legacy: name stored as email string
+        );
+      }
       let contact = await prisma.contact.findFirst({
         where: contactWhere,
       });
+
+      // Before creating a new contact, try to find by email/name (avoids duplicate when same person uses LID vs phone)
+      if (!contact && pushNameEmail) {
+        contact = await prisma.contact.findFirst({
+          where: {
+            companyId,
+            OR: [{ email: pushNameEmail }, { name: pushNameEmail }, { name: pushName?.trim() }],
+          },
+        });
+        if (contact) {
+          logger.info(`Found existing contact by email/name ${pushNameEmail} (${contact.phone}); associating sender ${normalizedPhone}${isLid ? ' [LID]' : ''}`);
+        }
+      }
+
+      // Fallback: same person may appear with different phone/LID and pushName not set as email
+      // Try to find by exact normalized name (avoids duplicates like "Henry Meistet" + 55... vs "Henry Meistet" + LID)
+      const pushNameTrim = pushName?.trim();
+      if (!contact && pushNameTrim && pushNameTrim.length >= 2) {
+        const byName = await prisma.contact.findMany({
+          where: {
+            companyId,
+            name: { equals: pushNameTrim, mode: 'insensitive' },
+          },
+        });
+        if (byName.length === 1) {
+          contact = byName[0];
+          logger.info(`Found existing contact by name "${pushNameTrim}" (${contact.phone}); associating sender ${normalizedPhone}${isLid ? ' [LID]' : ''}`);
+        }
+      }
 
       if (!contact) {
         // Create new contact with pushName as name and profile picture
@@ -219,6 +264,9 @@ export class MessageProcessor {
           avatar: profilePicUrl || undefined,
           companyId,
         };
+        if (pushNameEmail) {
+          contactData.email = pushNameEmail;
+        }
 
         if (isLid) {
           contactData.phone = normalizedPhone;
@@ -265,6 +313,11 @@ export class MessageProcessor {
         if (isInstagram && !contact.instagramId) {
           updates.instagramId = normalizedPhone;
           logger.info(`Associating Instagram ID ${normalizedPhone} with contact ${contact.phone}`);
+        }
+
+        // Backfill email when we matched by name (legacy) so future messages unify by email
+        if (pushNameEmail && !contact.email) {
+          updates.email = pushNameEmail;
         }
 
         if (Object.keys(updates).length > 0) {
@@ -738,7 +791,18 @@ export class MessageProcessor {
       } else if (type === 'AUDIO') {
         messageContent = content || '[Mensagem de áudio]';
       }
-      
+
+      // Skip duplicate message (same wamid already saved for this ticket - e.g. WhatsApp retry)
+      if (wamid) {
+        const existingByWamid = await prisma.message.findFirst({
+          where: { ticketId: ticket.id, wamid },
+        });
+        if (existingByWamid) {
+          logger.info(`Skipping duplicate message by wamid for ticket ${ticket.id} (wamid: ${wamid})`);
+          return;
+        }
+      }
+
       // Save message
       const message = await prisma.message.create({
         data: {
@@ -1055,10 +1119,34 @@ export class MessageProcessor {
             const contentForAI = type === 'AUDIO' && transcription 
               ? transcription 
               : content;
-            
-            if (contentForAI) {
+
+            // Avoid duplicate AI reply: if the same content from the contact was already received in the last 90s, skip (e.g. duplicate delivery or user sent twice)
+            const normalizeForDedup = (t: string) => (t || '').trim().replace(/\s+/g, ' ');
+            const contentNormalized = normalizeForDedup(contentForAI || '');
+            let skipAIForDuplicateContent = false;
+            if (contentNormalized && message.id) {
+              const since = new Date(Date.now() - 90 * 1000);
+              const recentFromContact = await prisma.message.findMany({
+                where: {
+                  ticketId: ticket.id,
+                  isFromMe: false,
+                  id: { not: message.id },
+                  createdAt: { gte: since },
+                  content: { not: null },
+                },
+                select: { content: true },
+                take: 20,
+              });
+              skipAIForDuplicateContent = recentFromContact.some(
+                (m) => m.content && normalizeForDedup(m.content) === contentNormalized
+              );
+              if (skipAIForDuplicateContent) {
+                logger.info(`Skipping AI reply for duplicate content in ticket ${ticket.id} (last 90s)`);
+              }
+            }
+            if (!skipAIForDuplicateContent && contentForAI) {
               await this.processWithAI(ticket.id, companyId, contentForAI, contact);
-            } else {
+            } else if (!contentForAI) {
               logger.warn(`No content to process for AI: type=${type}, hasTranscription=${!!transcription}`);
             }
           } else {
@@ -1523,6 +1611,7 @@ export class MessageProcessor {
             resolvedAt: new Date(),
             isAIHandled: false,
             resolutionNote: resolutionReason,
+            isFirstContactResolution: ((ticket as any).reopenCount ?? 0) === 0,
           },
           include: {
             contact: { select: { id: true, name: true, phone: true, avatar: true } },
@@ -1707,7 +1796,7 @@ export class MessageProcessor {
       
       if (provider === 'anthropic' && isOpenAIModel) {
         // Agent has OpenAI model but company uses Anthropic - use company default
-        modelToUse = settings.aiDefaultModel || 'claude-sonnet-4-20250514';
+        modelToUse = settings.aiDefaultModel || 'claude-sonnet-4-6';
         logger.info(`Agent model ${aiConfig.model} incompatible with Anthropic, using ${modelToUse}`);
       } else if (provider === 'openai' && isAnthropicModel) {
         // Agent has Anthropic model but company uses OpenAI - use company default
@@ -2112,7 +2201,7 @@ export class MessageProcessor {
       const isOpenAIModel = modelToUse?.startsWith('gpt-') || modelToUse?.includes('gpt');
       const isAnthropicModel = modelToUse?.startsWith('claude-');
       if (provider === 'anthropic' && isOpenAIModel) {
-        modelToUse = settings.aiDefaultModel || 'claude-sonnet-4-20250514';
+        modelToUse = settings.aiDefaultModel || 'claude-sonnet-4-6';
       } else if (provider === 'openai' && isAnthropicModel) {
         modelToUse = settings.aiDefaultModel || 'gpt-4-turbo-preview';
       }

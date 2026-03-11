@@ -1,0 +1,21 @@
+<svg viewBox="0 0 45 32.9399" fill="none" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" x="0" y="0"><defs><mask id="path-59-inside-2_151_923" fill="white">
+<rect width="3.71154" height="9.27884" rx="0.927884" transform="matrix(0.866025 -0.5 0.866025 0.5 112.804 48.6599)"/>
+</mask></defs><g id="sÃ­mbolo">
+<g id="pg" opacity="0.5">
+<g id="Rectangle 39466">
+<mask id="path-59-inside-2_151_923" fill="white">
+<rect width="3.71154" height="9.27884" rx="0.927884" transform="matrix(0.866025 -0.5 0.866025 0.5 112.804 48.6599)"/>
+</mask>
+<rect width="3.71154" height="9.27884" rx="0.927884" transform="matrix(0.866025, -0.5, 0.866025, 0.5, 0.804000000000002, 17.6298)" stroke="#C77DFF" stroke-width="2" mask="url(#path-59-inside-2_151_923)"/>
+</g>
+<rect id="Rectangle 39465" x="0.866025" width="13.8461" height="8.27884" rx="0.891827" transform="matrix(0.866025, -0.5, 0.866025, 0.5, 5.741, 15.279099999999996)" stroke="#63318F"/>
+<rect id="Rectangle 39467" x="0.866025" width="8.27884" height="17.5577" rx="0.891827" transform="matrix(0.866025, -0.5, 0.866025, 0.5, 10.563000000000002, 23.630100000000002)" stroke="#C77DFF"/>
+<rect id="Rectangle 39468" x="0.866025" width="8.27884" height="17.5577" rx="0.891827" transform="matrix(0.866025, -0.5, 0.866025, 0.5, 20.20599999999999, 18.0628)" stroke="#63318F"/>
+</g>
+<g id="pg_2">
+<rect id="Rectangle 39466_2" width="3.71154" height="9.27884" rx="0.927884" transform="matrix(0.866025, -0.5, 0.866025, 0.5, 0.804000000000002, 10.670599999999997)" fill="#C77DFF"/>
+<rect id="Rectangle 39465_2" width="14.8461" height="9.27884" rx="1.39183" transform="matrix(0.866025, -0.5, 0.866025, 0.5, 5.625, 7.886999999999997)" fill="#63318F"/>
+<rect id="Rectangle 39467_2" width="9.27884" height="18.5577" rx="1.39183" transform="matrix(0.866025, -0.5, 0.866025, 0.5, 10.447000000000003, 16.2379)" fill="#C77DFF"/>
+<rect id="Rectangle 39468_2" width="9.27884" height="18.5577" rx="1.39183" transform="matrix(0.866025, -0.5, 0.866025, 0.5, 20.089, 10.670599999999997)" fill="#63318F"/>
+</g>
+</g></svg>

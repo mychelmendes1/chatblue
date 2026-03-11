@@ -1,0 +1,28 @@
+<svg viewBox="0 0 41 197" fill="none" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" id="3515bd4d" x="0" y="0"><g id="Desktop" data-node-id="151:923" clip-path="url(#clip0_151_923)"><g id="paraQuemÃ" data-node-id="151:1064"><g id="row_4" data-node-id="151:1070"><g id="Group 482180" data-node-id="151:1087"><g id="Mask group_4" data-node-id="151:1096">
+<mask id="mask4_151_923" style="mask-type:alpha" maskUnits="userSpaceOnUse" x="0" y="0" width="41" height="197">
+<g id="Group 482178" data-node-id="151:1097">
+<circle id="Ellipse 1245" data-node-id="151:1098" cx="20.789999999999964" cy="176.51999999999998" r="20.0949" fill="url(#paint55_linear_151_923)"/>
+<circle id="Ellipse 1246" data-node-id="151:1099" cx="20.789999999999964" cy="124.69000000000005" r="20.0949" fill="#7DC95E"/>
+<circle id="Ellipse 1247" data-node-id="151:1100" cx="20.789999999999964" cy="72.86999999999989" r="20.0949" fill="#7DC95E"/>
+<circle id="Ellipse 1248" data-node-id="151:1101" cx="20.789999999999964" cy="21.039999999999964" r="20.0949" fill="#7DC95E"/>
+</g>
+</mask>
+<g mask="url(#mask4_151_923)">
+<rect id="Rectangle 39449" data-node-id="151:1102" x="0.7000000000000455" y="0.9499999999998181" width="40.1898" height="195.661" fill="url(#paint56_linear_151_923)"/>
+</g>
+</g><path id="Union" data-node-id="151:1112" fill-rule="evenodd" clip-rule="evenodd" d="M20.79,9.67l0.08,0.01c0.02,0 0.04,0 0.06,0.01c0.01,0 0.01,0 0.02,0c0.06,0.01 0.11,0.03 0.16,0.05c0.09,0.04 0.17,0.1 0.24,0.17l4.23,4.23c0.31,0.31 0.31,0.81 0,1.12c-0.3,0.31 -0.81,0.31 -1.12,0l-2.87,-2.88v19.24c0,0.44 -0.36,0.79 -0.8,0.79c-0.43,0 -0.79,-0.35 -0.79,-0.79v-19.24l-2.88,2.88c-0.31,0.31 -0.81,0.31 -1.12,0c-0.31,-0.31 -0.31,-0.81 0,-1.12l4.23,-4.23c0.08,-0.08 0.16,-0.13 0.25,-0.17c0,0 0.01,0 0.01,-0.01h0.01c0.04,-0.02 0.09,-0.03 0.14,-0.04h0.01c0.05,-0.01 0.1,-0.02 0.14,-0.02z" fill="white"/></g></g></g></g><defs><mask id="mask4_151_923" style="mask-type:alpha" maskUnits="userSpaceOnUse" x="1230" y="2374" width="41" height="197">
+<g id="Group 482178" data-node-id="151:1097">
+<circle id="Ellipse 1245" data-node-id="151:1098" cx="1250.79" cy="2550.52" r="20.0949" fill="url(#paint55_linear_151_923)"/>
+<circle id="Ellipse 1246" data-node-id="151:1099" cx="1250.79" cy="2498.69" r="20.0949" fill="#7DC95E"/>
+<circle id="Ellipse 1247" data-node-id="151:1100" cx="1250.79" cy="2446.87" r="20.0949" fill="#7DC95E"/>
+<circle id="Ellipse 1248" data-node-id="151:1101" cx="1250.79" cy="2395.04" r="20.0949" fill="#7DC95E"/>
+</g>
+</mask><linearGradient id="paint55_linear_151_923" x1="20.789999999999964" y1="2.0100000000002183" x2="20.789999999999964" y2="196.61000000000013" gradientUnits="userSpaceOnUse">
+<stop stop-color="#3E632E"/>
+<stop offset="1" stop-color="#7DC95E"/>
+</linearGradient><linearGradient id="paint56_linear_151_923" x1="20.789999999999964" y1="0.9499999999998181" x2="20.789999999999964" y2="196.61000000000013" gradientUnits="userSpaceOnUse">
+<stop stop-color="white" stop-opacity="0"/>
+<stop offset="1" stop-color="#7DC95E"/>
+</linearGradient><clipPath id="clip0_151_923">
+<rect width="1440" height="6807.89" fill="white" x="-1230" y="-2374"/>
+</clipPath></defs></svg>
