@@ -47,7 +47,25 @@ router.post('/login', async (req, res, next) => {
     const { email, password } = body;
     const requestedCompanyId = body.companyId && body.companyId.length > 0 ? body.companyId : undefined;
 
-    let user: Awaited<ReturnType<typeof prisma.user.findUnique>>;
+    let user: Awaited<
+      ReturnType<
+        typeof prisma.user.findUnique<{
+          where: { email: string };
+          select: {
+            id: true;
+            email: true;
+            password: true;
+            name: true;
+            avatar: true;
+            role: true;
+            isAI: true;
+            companyId: true;
+            isActive: true;
+            company: { select: { id: true; name: true; slug: true; logo: true; isActive: true } };
+          };
+        }>
+      >
+    >;
     try {
       user = await prisma.user.findUnique({
         where: { email },
