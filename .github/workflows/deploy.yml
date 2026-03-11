@@ -126,6 +126,13 @@ jobs:
             -e "ssh -i ~/.ssh/deploy_key -p ${{ secrets.SERVER_SSH_PORT || 22 }}" \
             ./ ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:${{ env.APP_DIR }}/
 
+      - name: Verificar arquivos críticos no servidor
+        run: |
+          ssh -i ~/.ssh/deploy_key \
+            -p ${{ secrets.SERVER_SSH_PORT || 22 }} \
+            ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} \
+            "test -f ${{ env.APP_DIR }}/apps/web/components/ui/label.tsx && test -f ${{ env.APP_DIR }}/apps/web/lib/api.ts && echo '✅ label.tsx e api.ts presentes' || (echo '❌ Faltam label.tsx ou api.ts no servidor'; exit 1)"
+
       - name: Instalar dependências e fazer build
         run: |
           ssh -i ~/.ssh/deploy_key \
