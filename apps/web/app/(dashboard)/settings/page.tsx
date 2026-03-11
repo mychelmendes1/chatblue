@@ -2670,7 +2670,7 @@ export default function SettingsPage() {
                         message: messageColumn != null ? (row[messageColumn] ?? "").trim() || undefined : undefined,
                       };
                     })
-                    .filter((c): c is { phone: string; name?: string; message?: string } => c != null);
+                    .filter((c): c is { phone: string; name: string | undefined; message: string | undefined } => c != null);
                   if (contacts.length === 0) {
                     toast({ title: "Erro na importação", description: "Nenhum telefone válido (10+ dígitos) na planilha.", variant: "destructive" });
                     setImportDispatchLoading(false);
