@@ -164,15 +164,15 @@ jobs:
           npx prisma@5.22.0 migrate deploy 2>&1 || echo "⚠️ Nenhuma migration pendente"
           echo "✅ Migrations OK"
 
-          # Build API
+          # Build API (a partir da raiz para usar tsc do node_modules do workspace)
           echo "🔨 Compilando API..."
-          cd /opt/chatblue/app/apps/api
-          pnpm build 2>&1 | tail -5
+          cd /opt/chatblue/app
+          pnpm --filter api build 2>&1 | tail -10
 
           # Verificar se o build gerou server.js ou server.cjs
-          if [ -f dist/server.js ]; then
+          if [ -f apps/api/dist/server.js ]; then
             echo "✅ Build API OK (server.js)"
-          elif [ -f dist/server.cjs ]; then
+          elif [ -f apps/api/dist/server.cjs ]; then
             echo "✅ Build API OK (server.cjs)"
           else
             echo "❌ ERRO: Build API não gerou server.js"
@@ -181,9 +181,8 @@ jobs:
 
           # Build Web
           echo "🔨 Compilando Web..."
-          cd /opt/chatblue/app/apps/web
-          pnpm build 2>&1 | tail -10
-          if [ -f .next/BUILD_ID ]; then
+          pnpm --filter web build 2>&1 | tail -15
+          if [ -f apps/web/.next/BUILD_ID ]; then
             echo "✅ Build Web OK"
           else
             echo "❌ ERRO: Build Web não gerou .next/BUILD_ID"

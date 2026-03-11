@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "tsx watch src/server.ts",
-    "build": "tsc --skipLibCheck",
+    "build": "pnpm exec tsc --skipLibCheck",
     "build:force": "tsc --skipLibCheck || true",
     "start": "node dist/server.js",
     "lint": "eslint src --ext .ts",

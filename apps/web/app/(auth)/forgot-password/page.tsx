@@ -9,7 +9,6 @@ import { MessageSquare, Loader2, ArrowLeft, Mail } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { useToast } from "@/components/ui/use-toast";
 import { api } from "@/lib/api";
 
 const forgotSchema = z.object({
@@ -19,9 +18,9 @@ const forgotSchema = z.object({
 type ForgotForm = z.infer<typeof forgotSchema>;
 
 export default function ForgotPasswordPage() {
-  const { toast } = useToast();
   const [isLoading, setIsLoading] = useState(false);
   const [emailSent, setEmailSent] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   const {
     register,
@@ -33,15 +32,12 @@ export default function ForgotPasswordPage() {
 
   const onSubmit = async (data: ForgotForm) => {
     setIsLoading(true);
+    setErrorMessage(null);
     try {
       await api.post("/auth/forgot-password", { email: data.email });
       setEmailSent(true);
     } catch (error: any) {
-      toast({
-        title: "Erro",
-        description: error.message || "Tente novamente mais tarde.",
-        variant: "destructive",
-      });
+      setErrorMessage(error?.response?.data?.message ?? error?.message ?? "Tente novamente mais tarde.");
     } finally {
       setIsLoading(false);
     }
@@ -80,6 +76,9 @@ export default function ForgotPasswordPage() {
           </div>
         ) : (
           <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
+            {errorMessage && (
+              <p className="text-sm text-destructive bg-destructive/10 p-3 rounded-md">{errorMessage}</p>
+            )}
             <div className="space-y-2">
               <Label htmlFor="email">Email</Label>
               <Input id="email" type="email" placeholder="seu@email.com" {...register("email")} />
