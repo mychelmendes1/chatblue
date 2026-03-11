@@ -142,7 +142,7 @@ router.post('/', authenticate, requireAdmin, ensureTenant, async (req, res, next
         order: data.order ?? 0,
         isActive: data.isActive ?? true,
         departmentId: data.departmentId ?? null,
-        company: { connect: { id: req.user!.companyId } },
+        companyId: req.user!.companyId,
       },
       include: {
         department: {
