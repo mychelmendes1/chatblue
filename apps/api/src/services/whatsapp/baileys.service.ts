@@ -1327,12 +1327,16 @@ export class BaileysService extends EventEmitter {
       
       // Baileys v7+ provides the real phone number in remoteJidAlt when available
       const remoteJidAlt = msg.key.remoteJidAlt;
+
+      // senderPn contains the real phone number when the sender uses phone privacy (LID)
+      const senderPn = msg.key.senderPn;
       
       // Log full message structure for debugging LID issues
       if (isLid) {
         logger.info(`=== LID MESSAGE DEBUG ===`);
         logger.info(`remoteJid: ${remoteJid}`);
         logger.info(`remoteJidAlt: ${remoteJidAlt}`);
+        logger.info(`senderPn: ${senderPn}`);
         logger.info(`msg.key: ${JSON.stringify(msg.key)}`);
         logger.info(`msg.pushName: ${msg.pushName}`);
         
@@ -1358,7 +1362,7 @@ export class BaileysService extends EventEmitter {
       if (isLid) {
         logger.info(`Received message from LID: ${from} - attempting to resolve real phone number`);
         
-        // Method 1 (BEST): Use remoteJidAlt from Baileys v7+ which contains the real number
+        // Method 1a (BEST): Use remoteJidAlt from Baileys v7+ which contains the real number
         if (remoteJidAlt && remoteJidAlt.includes('@s.whatsapp.net')) {
           const altPhone = remoteJidAlt.replace(/@[^@]*$/g, '').replace(/\D/g, '');
           if (altPhone && this.isValidPhoneNumber(altPhone)) {
@@ -1366,6 +1370,15 @@ export class BaileysService extends EventEmitter {
             // Save mapping for future use
             this.lidMapping.set(from, altPhone);
             from = altPhone;
+          }
+        }
+        // Method 1b: Use senderPn from msg.key which contains the real phone number
+        else if (senderPn) {
+          const pnPhone = senderPn.replace(/@[^@]*$/g, '').replace(/\D/g, '');
+          if (pnPhone && this.isValidPhoneNumber(pnPhone)) {
+            logger.info(`✅ Resolved LID ${from} using senderPn: ${pnPhone}`);
+            this.lidMapping.set(from, pnPhone);
+            from = pnPhone;
           }
         }
         // Method 2: Check local LID mapping cache
