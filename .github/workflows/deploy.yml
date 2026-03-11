@@ -160,9 +160,9 @@ jobs:
             export $(grep -v '^#' /opt/chatblue/.env | xargs)
           fi
 
-          # Instalar dependências (sem --frozen-lockfile para evitar erro com pnpm diferente no servidor)
+          # Instalar dependências (NODE_ENV=development para incluir devDependencies ex.: TypeScript)
           echo "📦 Instalando dependências..."
-          pnpm install 2>&1 | tail -5
+          NODE_ENV=development pnpm install 2>&1 | tail -10
           echo "✅ Dependências instaladas"
 
           # Gerar Prisma Client
