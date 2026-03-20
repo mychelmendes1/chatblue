@@ -2,7 +2,10 @@ import { OAuth2Client } from 'google-auth-library';
 import { prisma } from '../../config/database.js';
 import { logger } from '../../config/logger.js';
 
-const GOOGLE_SCOPES = ['https://mail.google.com/'];
+const GOOGLE_SCOPES = [
+  'https://mail.google.com/',
+  'https://www.googleapis.com/auth/userinfo.email',
+];
 
 const GMAIL_IMAP = { host: 'imap.gmail.com', port: 993, tls: true };
 const GMAIL_SMTP = { host: 'smtp.gmail.com', port: 465, tls: true };
