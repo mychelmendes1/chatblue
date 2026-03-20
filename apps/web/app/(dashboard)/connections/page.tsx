@@ -61,6 +61,7 @@ import { useToast } from "@/components/ui/use-toast";
 import { api } from "@/lib/api";
 import { cn, formatPhone } from "@/lib/utils";
 import { useAuthStore } from "@/stores/auth.store";
+import { EmailConnections } from "@/components/connections/email-connections";
 
 interface Connection {
   id: string;
@@ -461,7 +462,7 @@ export default function ConnectionsPage() {
         <div>
           <h1 className="text-2xl font-bold">Conexões</h1>
           <p className="text-muted-foreground">
-            Gerencie suas conexões com WhatsApp e Instagram
+            Gerencie suas conexões com WhatsApp, Instagram e Email
           </p>
         </div>
         <Dialog open={showNewDialog} onOpenChange={setShowNewDialog}>
@@ -764,6 +765,11 @@ export default function ConnectionsPage() {
           ))}
         </div>
       )}
+
+      {/* Email Connections Section */}
+      <div className="mt-8 border-t pt-8">
+        <EmailConnections />
+      </div>
 
       {/* QR Code Dialog */}
       <Dialog open={showQRDialog} onOpenChange={setShowQRDialog}>

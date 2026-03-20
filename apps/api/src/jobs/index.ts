@@ -12,6 +12,7 @@ import { mlQualityScorerProcessor } from "./processors/ml-quality-scorer.process
 import { mlPatternDetectorProcessor } from "./processors/ml-pattern-detector.processor";
 import { mlMetricsProcessor } from "./processors/ml-metrics.processor";
 import { dailyReportProcessor } from "./processors/daily-report.processor";
+import { emailPollProcessor } from "./processors/email-poll.processor";
 
 // Queue definitions
 export const slaCheckQueue = new Queue("sla-check", {
@@ -137,6 +138,15 @@ export const dailyReportQueue = new Queue("daily-report", {
   },
 });
 
+export const emailPollQueue = new Queue("email-poll", {
+  connection: redis,
+  defaultJobOptions: {
+    removeOnComplete: 50,
+    removeOnFail: 100,
+    attempts: 1,
+  },
+});
+
 // Workers
 let slaWorker: Worker | null = null;
 let notificationWorker: Worker | null = null;
@@ -153,6 +163,9 @@ let mlMetricsWorker: Worker | null = null;
 
 // Daily Report Worker
 let dailyReportWorker: Worker | null = null;
+
+// Email Poll Worker
+let emailPollWorker: Worker | null = null;
 
 export async function startWorkers() {
   logger.info("Starting background job workers...");
@@ -434,6 +447,25 @@ async function scheduleRecurringJobs() {
     }
   );
 
+  // Email Poll - check IMAP connections every 30 seconds
+  emailPollWorker = new Worker("email-poll", emailPollProcessor, {
+    connection: redis,
+    concurrency: 1,
+  });
+  emailPollWorker.on("failed", (job: Job | undefined, error: Error) => {
+    logger.error(`Email poll job ${job?.id} failed:`, error);
+  });
+
+  await emailPollQueue.add(
+    "poll-email-connections",
+    {},
+    {
+      repeat: {
+        every: 30000, // Every 30 seconds
+      },
+    }
+  );
+
   logger.info("Recurring jobs scheduled");
 }
 
@@ -452,6 +484,7 @@ export async function stopWorkers() {
     mlPatternDetectorWorker,
     mlMetricsWorker,
     dailyReportWorker,
+    emailPollWorker,
   ];
 
   await Promise.all(

@@ -1140,7 +1140,7 @@ function WhatsAppIcon({ className }: { className?: string }) {
 
 function TicketItem({ ticket, isSelected, onSelect }: TicketItemProps) {
   const { toast } = useToast();
-  const contactName = ticket.contact?.name || formatPhone(ticket.contact?.phone);
+  const contactName = ticket.contact?.name || formatPhone(ticket.contact?.phone) || ticket.contact?.email || "Sem nome";
 
   const copyProtocol = (e: React.MouseEvent) => {
     e.preventDefault();
@@ -1164,6 +1164,7 @@ function TicketItem({ ticket, isSelected, onSelect }: TicketItemProps) {
   // Determine channel type
   const connectionType = ticket.connection?.type;
   const isInstagram = connectionType === 'INSTAGRAM';
+  const isEmail = ticket.channel === 'EMAIL';
 
   // Highlight: red = unread + SLA breached, yellow = unread only
   const unreadHighlight =
@@ -1200,15 +1201,19 @@ function TicketItem({ ticket, isSelected, onSelect }: TicketItemProps) {
         <div
           className={cn(
             "absolute -bottom-1 -right-1 w-4 h-4 md:w-5 md:h-5 rounded-full flex items-center justify-center",
-            isInstagram
-              ? "bg-gradient-to-br from-purple-500 via-pink-500 to-orange-500"
-              : ticket.isAIHandled
-                ? "bg-purple-500"
-                : "bg-green-500"
+            isEmail
+              ? "bg-blue-600"
+              : isInstagram
+                ? "bg-gradient-to-br from-purple-500 via-pink-500 to-orange-500"
+                : ticket.isAIHandled
+                  ? "bg-purple-500"
+                  : "bg-green-500"
           )}
-          title={isInstagram ? "Instagram" : "WhatsApp"}
+          title={isEmail ? "Email" : isInstagram ? "Instagram" : "WhatsApp"}
         >
-          {ticket.isAIHandled && !isInstagram ? (
+          {isEmail ? (
+            <Mail className="w-2.5 h-2.5 md:w-3 md:h-3 text-white" />
+          ) : ticket.isAIHandled && !isInstagram ? (
             <Bot className="w-2.5 h-2.5 md:w-3 md:h-3 text-white" />
           ) : isInstagram ? (
             <InstagramIcon className="w-2.5 h-2.5 md:w-3 md:h-3 text-white" />
