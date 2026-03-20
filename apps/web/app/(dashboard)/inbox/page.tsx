@@ -126,7 +126,7 @@ export default function InboxPage() {
         ids.forEach((id) => next.delete(id));
         return next;
       }
-      return new Set([...prev, ...ids]);
+      return new Set([...Array.from(prev), ...ids]);
     });
   };
 
