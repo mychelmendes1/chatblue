@@ -4,6 +4,7 @@ import { Bot, Phone, Clock, MessageSquare, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
 import { cn, formatPhone } from "@/lib/utils";
 import { formatDistanceToNow } from "date-fns";
 import { ptBR } from "date-fns/locale";
@@ -49,9 +50,12 @@ interface InboxCardProps {
   ticket: InboxTicket;
   onAtender: (ticketId: string) => Promise<void>;
   isAtendendo?: boolean;
+  selectable?: boolean;
+  selected?: boolean;
+  onSelect?: (ticketId: string) => void;
 }
 
-export function InboxCard({ ticket, onAtender, isAtendendo }: InboxCardProps) {
+export function InboxCard({ ticket, onAtender, isAtendendo, selectable, selected, onSelect }: InboxCardProps) {
   const contactName = ticket.contact?.name || formatPhone(ticket.contact?.phone);
   const initials = contactName
     .split(" ")
@@ -69,7 +73,29 @@ export function InboxCard({ ticket, onAtender, isAtendendo }: InboxCardProps) {
   const isWithAI = ticket.isAIHandled && ticket.assignedTo?.isAI;
 
   return (
-    <div className="flex items-center gap-4 p-4 bg-card border rounded-lg hover:shadow-md transition-shadow">
+    <div
+      className={cn(
+        "flex items-center gap-4 p-4 bg-card border rounded-lg hover:shadow-md transition-shadow",
+        selectable && selected && "ring-2 ring-primary border-primary"
+      )}
+    >
+      {/* Checkbox (quando selectable) */}
+      {selectable && (
+        <div
+          className="flex-shrink-0"
+          onClick={(e) => {
+            e.stopPropagation();
+            onSelect?.(ticket.id);
+          }}
+        >
+          <Checkbox
+            checked={selected}
+            onCheckedChange={() => onSelect?.(ticket.id)}
+            aria-label={`Selecionar conversa ${ticket.contact?.name || ticket.protocol}`}
+          />
+        </div>
+      )}
+
       {/* Avatar */}
       <Avatar className="h-12 w-12 flex-shrink-0">
         <AvatarImage src={ticket.contact?.avatar} />

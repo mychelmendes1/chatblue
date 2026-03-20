@@ -36,6 +36,7 @@ import {
   CalendarClock,
   Calendar,
   Plus,
+  Mail as MailIcon,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -1124,17 +1125,23 @@ export function ChatWindow({ ticket, onShowContactInfo, onMobileBack }: ChatWind
                 #{ticket.protocol}
               </button>
               <span className="mx-1">•</span>
-              {ticket.contact?.phone} • {getStatusLabel(ticket.status)}
+              {ticket.contact?.phone || ticket.contact?.email} • {getStatusLabel(ticket.status)}
             </p>
           </div>
         </div>
 
         <div className="flex items-center gap-1 md:gap-2">
+          {ticket.channel === "EMAIL" && (
+            <span className="text-[10px] md:text-xs text-blue-600 bg-blue-50 dark:bg-blue-950 dark:text-blue-400 px-1.5 md:px-2 py-0.5 rounded font-medium flex items-center gap-1">
+              <MailIcon className="w-3 h-3" />
+              Email
+            </span>
+          )}
           <span
             className="text-[10px] md:text-xs text-muted-foreground bg-muted/80 dark:bg-muted/50 px-1.5 md:px-2 py-0.5 rounded truncate max-w-[80px] md:max-w-[140px]"
-            title={ticket.connection?.name ?? "Sessão anterior"}
+            title={ticket.emailConnection?.name || ticket.connection?.name || "Sessão anterior"}
           >
-            {ticket.connection?.name ?? "Sessão anterior"}
+            {ticket.emailConnection?.name || ticket.connection?.name || "Sessão anterior"}
           </span>
           {ticket.isAIHandled && (
             <Button onClick={handleTakeover} variant="default" size="sm" className="h-7 md:h-8 px-2 md:px-3 text-xs md:text-sm">
@@ -1557,7 +1564,7 @@ export function ChatWindow({ ticket, onShowContactInfo, onMobileBack }: ChatWind
           <div className="flex-1 min-w-0 relative">
             <Textarea
               ref={inputRef}
-              placeholder={isInternalMode ? "Interna... @mencione" : "Mensagem... (digite / para atalhos)"}
+              placeholder={isInternalMode ? "Interna... @mencione" : ticket?.channel === "EMAIL" ? "Responder por email..." : "Mensagem... (digite / para atalhos)"}
               value={newMessage}
               onChange={handleMessageChange}
               onKeyDown={handleKeyDown}
@@ -1965,9 +1972,28 @@ function MessageBubble({ message, onReply }: { message: any; onReply: () => void
 
         {messageType === "TEXT" && (
           <div>
+            {message.emailConnectionId && !isFromMe && (
+              <div className="flex items-center gap-1 text-xs text-blue-600 dark:text-blue-400 mb-1">
+                <MailIcon className="w-3 h-3" />
+                <span>Email</span>
+              </div>
+            )}
             <p className={cn("whitespace-pre-wrap", isDeleted && "line-through text-muted-foreground")}>
               {isDeleted ? "Esta mensagem foi apagada" : (message.content || "")}
             </p>
+            {message.htmlContent && !isDeleted && (
+              <button
+                type="button"
+                onClick={() => {
+                  const event = new CustomEvent("open-email-viewer", { detail: { html: message.htmlContent } });
+                  window.dispatchEvent(event);
+                }}
+                className="flex items-center gap-1 text-xs text-blue-600 dark:text-blue-400 mt-2 hover:underline"
+              >
+                <MailIcon className="w-3 h-3" />
+                Ver email completo
+              </button>
+            )}
             {message.status === "FAILED" && message.failedReason && (
               <div className="flex items-center gap-2 text-xs text-destructive mt-2 p-2 bg-destructive/10 rounded">
                 <AlertCircle className="w-3 h-3 flex-shrink-0" />

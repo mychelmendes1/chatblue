@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Wifi, Clock, AlertTriangle } from "lucide-react";
+import { Wifi, Clock, AlertTriangle, Mail } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 
@@ -48,6 +48,7 @@ export function ConnectionTag({
   compact = false,
 }: ConnectionTagProps) {
   const isMetaCloud = connectionType === "META_CLOUD";
+  const isEmail = connectionType === "EMAIL";
 
   const [windowInfo, setWindowInfo] = useState<{
     isOpen: boolean;
@@ -83,7 +84,11 @@ export function ConnectionTag({
           compact ? "text-[10px] px-1 py-0" : "text-[10px] md:text-xs px-1 md:px-1.5 py-0.5"
         )}
       >
-        <Wifi className={cn(compact ? "w-2.5 h-2.5" : "w-2.5 h-2.5 md:w-3 md:h-3")} />
+        {isEmail ? (
+          <Mail className={cn(compact ? "w-2.5 h-2.5" : "w-2.5 h-2.5 md:w-3 md:h-3", "text-blue-600")} />
+        ) : (
+          <Wifi className={cn(compact ? "w-2.5 h-2.5" : "w-2.5 h-2.5 md:w-3 md:h-3")} />
+        )}
         <span className="truncate max-w-[80px]">{connectionName}</span>
       </Badge>
 

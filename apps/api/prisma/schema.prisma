@@ -33,6 +33,24 @@ enum ConnectionType {
   INSTAGRAM
 }
 
+enum TicketChannel {
+  WHATSAPP
+  INSTAGRAM
+  EMAIL
+}
+
+enum EmailConnectionStatus {
+  DISCONNECTED
+  CONNECTING
+  CONNECTED
+  ERROR
+}
+
+enum EmailAuthType {
+  PLAIN
+  OAUTH2
+}
+
 enum ConnectionStatus {
   DISCONNECTED
   CONNECTING
@@ -175,6 +193,7 @@ model Company {
   userAccess     UserCompany[]
   departments    Department[]
   connections    WhatsAppConnection[]
+  emailConnections EmailConnection[]
   contacts       Contact[]
   tickets        Ticket[]
   settings       CompanySettings?
@@ -360,10 +379,58 @@ model WhatsAppConnection {
   @@map("whatsapp_connections")
 }
 
+/// Conexão de Email (IMAP + SMTP)
+model EmailConnection {
+  id       String                @id @default(cuid())
+  name     String
+  status   EmailConnectionStatus @default(DISCONNECTED)
+  email    String
+  authType EmailAuthType         @default(PLAIN) @map("auth_type")
+
+  // IMAP (receber) - usado em PLAIN; para OAUTH2, host/port são preenchidos automaticamente
+  imapHost     String  @default("") @map("imap_host")
+  imapPort     Int     @default(993) @map("imap_port")
+  imapUser     String  @default("") @map("imap_user")
+  imapPassword String  @default("") @map("imap_password")
+  imapTls      Boolean @default(true) @map("imap_tls")
+
+  // SMTP (enviar) - usado em PLAIN; para OAUTH2, host/port são preenchidos automaticamente
+  smtpHost     String  @default("") @map("smtp_host")
+  smtpPort     Int     @default(587) @map("smtp_port")
+  smtpUser     String  @default("") @map("smtp_user")
+  smtpPassword String  @default("") @map("smtp_password")
+  smtpTls      Boolean @default(true) @map("smtp_tls")
+
+  // OAuth2 (Google Workspace / Gmail)
+  oauthRefreshToken String?   @map("oauth_refresh_token")
+  oauthAccessToken  String?   @map("oauth_access_token")
+  oauthTokenExpiry  DateTime? @map("oauth_token_expiry")
+  oauthProvider     String?   @map("oauth_provider") // "google"
+
+  // Configurações
+  fromName        String?   @map("from_name")
+  pollIntervalSec Int       @default(60) @map("poll_interval_sec")
+  lastPollAt      DateTime? @map("last_poll_at")
+  lastError       String?   @map("last_error")
+
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  companyId String  @map("company_id")
+  company   Company @relation(fields: [companyId], references: [id])
+
+  messages Message[]
+  tickets  Ticket[]
+
+  @@unique([email, companyId])
+  @@map("email_connections")
+}
+
 /// Contato
 model Contact {
   id    String  @id @default(cuid())
-  phone String
+  phone String?
   name  String?
   email String?
   avatar String?
@@ -468,8 +535,14 @@ model Ticket {
   departmentId String?     @map("department_id")
   department   Department? @relation(fields: [departmentId], references: [id])
 
+  // Canal de origem
+  channel TicketChannel @default(WHATSAPP)
+
   connectionId String?            @map("connection_id")
   connection   WhatsAppConnection? @relation(fields: [connectionId], references: [id])
+
+  emailConnectionId String?          @map("email_connection_id")
+  emailConnection   EmailConnection? @relation(fields: [emailConnectionId], references: [id])
 
   companyId String  @map("company_id")
   company   Company @relation(fields: [companyId], references: [id])
@@ -577,6 +650,12 @@ model Message {
 
   connectionId String?            @map("connection_id")
   connection   WhatsAppConnection? @relation(fields: [connectionId], references: [id])
+
+  emailConnectionId String?          @map("email_connection_id")
+  emailConnection   EmailConnection? @relation(fields: [emailConnectionId], references: [id])
+
+  // Corpo HTML original do email (quando canal é EMAIL)
+  htmlContent String? @db.Text @map("html_content")
 
   // Referência a mensagem citada (reply)
   quotedId String?   @map("quoted_id")

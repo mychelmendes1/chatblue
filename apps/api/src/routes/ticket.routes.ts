@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { prisma } from '../config/database.js';
-import { authenticate } from '../middlewares/auth.middleware.js';
+import { authenticate, requireAdmin } from '../middlewares/auth.middleware.js';
 import { ensureTenant } from '../middlewares/tenant.middleware.js';
 import { NotFoundError, ForbiddenError } from '../middlewares/error.middleware.js';
 import { generateProtocol } from '../utils/protocol.js';
@@ -228,6 +228,7 @@ router.get('/', authenticate, ensureTenant, async (req, res, next) => {
             id: true,
             name: true,
             phone: true,
+            email: true,
             avatar: true,
             isClient: true,
             lastMessageAt: true,
@@ -253,6 +254,13 @@ router.get('/', authenticate, ensureTenant, async (req, res, next) => {
             id: true,
             name: true,
             type: true,
+          },
+        },
+        emailConnection: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
           },
         },
         messages: {
@@ -745,6 +753,104 @@ router.post('/start-conversation', authenticate, ensureTenant, async (req, res, 
   }
 });
 
+// Batch close tickets (ADM only) - finalização em lote sem resumo de IA/NPS
+const BATCH_CLOSE_MAX = 100;
+router.post('/batch-close', authenticate, ensureTenant, requireAdmin, async (req, res, next) => {
+  try {
+    const { ticketIds } = z.object({
+      ticketIds: z.array(z.string().cuid()).max(BATCH_CLOSE_MAX),
+    }).parse(req.body);
+
+    const companyId = req.user!.companyId;
+    const userName = req.user!.name;
+    const userId = req.user!.userId;
+    const io = req.app.get('io');
+    const closed: string[] = [];
+    const errors: { ticketId: string; error: string }[] = [];
+
+    for (const ticketId of ticketIds) {
+      try {
+        const ticket = await prisma.ticket.findFirst({
+          where: {
+            id: ticketId,
+            companyId,
+            status: { notIn: ['RESOLVED', 'CLOSED'] },
+          },
+        });
+
+        if (!ticket) {
+          errors.push({ ticketId, error: 'Ticket não encontrado ou já finalizado' });
+          continue;
+        }
+
+        const closedAt = new Date();
+        const neverAnswered = ticket.firstResponse == null;
+
+        const updatedTicket = await prisma.ticket.update({
+          where: { id: ticket.id },
+          data: {
+            status: 'CLOSED',
+            closedAt,
+            ...(neverAnswered ? { wasAbandoned: true, abandonedAt: closedAt } : {}),
+          },
+        });
+
+        await prisma.activity.create({
+          data: {
+            type: 'TICKET_CLOSED',
+            description: `Ticket finalizado em lote por ${userName}`,
+            ticketId: ticket.id,
+            userId,
+          },
+        });
+
+        const systemMessage = await prisma.message.create({
+          data: {
+            type: 'SYSTEM',
+            content: `Atendimento finalizado em lote por ${userName}`,
+            isFromMe: true,
+            status: 'DELIVERED',
+            ticketId: ticket.id,
+            connectionId: ticket.connectionId,
+          },
+        });
+
+        io.to(`company:${companyId}`).emit('ticket:updated', updatedTicket);
+        io.to(`ticket:${ticket.id}`).emit('message:received', { message: systemMessage });
+
+        sendOutboundEvent(companyId, 'conversation_updated', {
+          ticketId: ticket.id,
+          companyId: ticket.companyId,
+          status: updatedTicket.status,
+          departmentId: ticket.departmentId ?? undefined,
+          assignedToId: ticket.assignedToId ?? undefined,
+          updatedAt: updatedTicket.updatedAt.toISOString(),
+        });
+        const resolutionTime = updatedTicket.closedAt && ticket.createdAt
+          ? Math.round((updatedTicket.closedAt.getTime() - ticket.createdAt.getTime()) / 1000)
+          : undefined;
+        sendOutboundEvent(companyId, 'conversation_resolved', {
+          ticketId: ticket.id,
+          companyId: ticket.companyId,
+          status: updatedTicket.status,
+          resolvedAt: undefined,
+          closedAt: updatedTicket.closedAt?.toISOString(),
+          resolutionTime,
+        });
+
+        closed.push(ticket.id);
+      } catch (err: any) {
+        logger.warn(`batch-close: failed for ticket ${ticketId}`, { error: err?.message });
+        errors.push({ ticketId, error: err?.message || 'Erro ao finalizar' });
+      }
+    }
+
+    res.json({ closed: closed.length, failed: errors.length, errors: errors.length ? errors : undefined });
+  } catch (error) {
+    next(error);
+  }
+});
+
 // Get ticket
 router.get('/:id', authenticate, ensureTenant, async (req, res, next) => {
   try {
@@ -771,6 +877,13 @@ router.get('/:id', authenticate, ensureTenant, async (req, res, next) => {
             name: true,
             type: true,
             phone: true,
+          },
+        },
+        emailConnection: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
           },
         },
         transfers: {

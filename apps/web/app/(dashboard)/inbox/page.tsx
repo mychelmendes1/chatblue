@@ -1,11 +1,19 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import { Inbox, RefreshCw, Search, Loader2, Bot } from "lucide-react";
+import { Inbox, RefreshCw, Search, Loader2, Bot, CheckSquare, Square, CheckCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useToast } from "@/components/ui/use-toast";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { api } from "@/lib/api";
 import { useAuthStore } from "@/stores/auth.store";
 import { InboxCard, type InboxTicket } from "@/components/inbox/inbox-card";
@@ -13,11 +21,15 @@ import { InboxCard, type InboxTicket } from "@/components/inbox/inbox-card";
 export default function InboxPage() {
   const { toast } = useToast();
   const { user } = useAuthStore();
+  const isAdmin = user?.role === "ADMIN" || user?.role === "SUPER_ADMIN";
   const [tickets, setTickets] = useState<InboxTicket[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [search, setSearch] = useState("");
   const [atendendoId, setAtendendoId] = useState<string | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [showBatchCloseConfirm, setShowBatchCloseConfirm] = useState(false);
+  const [isBatchClosing, setIsBatchClosing] = useState(false);
 
   const fetchTickets = useCallback(async (showRefreshing = false) => {
     if (showRefreshing) setIsRefreshing(true);
@@ -96,6 +108,64 @@ export default function InboxPage() {
     }
   };
 
+  const toggleSelection = (ticketId: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(ticketId)) next.delete(ticketId);
+      else next.add(ticketId);
+      return next;
+    });
+  };
+
+  const selectAllOnPage = () => {
+    const ids = filteredTickets.map((t) => t.id);
+    setSelectedIds((prev) => {
+      const allSelected = ids.every((id) => prev.has(id));
+      if (allSelected) {
+        const next = new Set(prev);
+        ids.forEach((id) => next.delete(id));
+        return next;
+      }
+      return new Set([...prev, ...ids]);
+    });
+  };
+
+  const handleBatchClose = async () => {
+    if (selectedIds.size === 0) return;
+    setIsBatchClosing(true);
+    try {
+      const res = await api.post<{ closed: number; failed: number; errors?: { ticketId: string; error: string }[] }>(
+        "/tickets/batch-close",
+        { ticketIds: Array.from(selectedIds) }
+      );
+      const { closed, failed } = res.data;
+      const closedSet = new Set(selectedIds);
+      setTickets((prev) => prev.filter((t) => !closedSet.has(t.id)));
+      setSelectedIds(new Set());
+      setShowBatchCloseConfirm(false);
+      if (failed > 0) {
+        toast({
+          title: "Finalização em lote",
+          description: `${closed} conversa(s) finalizada(s). ${failed} não puderam ser finalizadas.`,
+          variant: "default",
+        });
+      } else {
+        toast({
+          title: "Sucesso",
+          description: `${closed} conversa(s) finalizada(s).`,
+        });
+      }
+    } catch (error: any) {
+      toast({
+        title: "Erro",
+        description: error.response?.data?.error || "Falha ao finalizar conversas em lote",
+        variant: "destructive",
+      });
+    } finally {
+      setIsBatchClosing(false);
+    }
+  };
+
   return (
     <div className="h-full flex flex-col">
       {/* Header */}
@@ -135,6 +205,35 @@ export default function InboxPage() {
         </div>
       </div>
 
+      {/* Barra de seleção em lote (somente ADM) */}
+      {isAdmin && filteredTickets.length > 0 && (
+        <div className="px-4 md:px-6 py-2 border-b bg-muted/40 flex flex-wrap items-center gap-3">
+          <button
+            type="button"
+            onClick={selectAllOnPage}
+            className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground"
+          >
+            {filteredTickets.every((t) => selectedIds.has(t.id)) ? (
+              <CheckSquare className="h-4 w-4 text-primary" />
+            ) : (
+              <Square className="h-4 w-4" />
+            )}
+            <span>Selecionar todos</span>
+          </button>
+          {selectedIds.size > 0 && (
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => setShowBatchCloseConfirm(true)}
+              disabled={isBatchClosing}
+            >
+              <CheckCheck className="h-4 w-4 mr-2" />
+              Finalizar em lote ({selectedIds.size})
+            </Button>
+          )}
+        </div>
+      )}
+
       {/* Content */}
       <ScrollArea className="flex-1">
         <div className="p-4 md:p-6">
@@ -162,6 +261,9 @@ export default function InboxPage() {
                   ticket={ticket}
                   onAtender={handleAtender}
                   isAtendendo={atendendoId === ticket.id}
+                  selectable={isAdmin}
+                  selected={selectedIds.has(ticket.id)}
+                  onSelect={toggleSelection}
                 />
               ))}
             </div>
@@ -180,6 +282,37 @@ export default function InboxPage() {
           </div>
         </div>
       )}
+
+      {/* Dialog de confirmação: finalizar em lote */}
+      <Dialog open={showBatchCloseConfirm} onOpenChange={setShowBatchCloseConfirm}>
+        <DialogContent className="sm:max-w-[425px]">
+          <DialogHeader>
+            <DialogTitle>Finalizar conversas em lote</DialogTitle>
+            <DialogDescription>
+              Deseja finalizar {selectedIds.size} conversa(s)? Elas serão encerradas e sairão da fila de atendimento.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setShowBatchCloseConfirm(false)}
+              disabled={isBatchClosing}
+            >
+              Cancelar
+            </Button>
+            <Button onClick={handleBatchClose} disabled={isBatchClosing}>
+              {isBatchClosing ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Finalizando...
+                </>
+              ) : (
+                "Finalizar"
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

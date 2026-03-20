@@ -11,6 +11,7 @@ import { normalizeMediaUrl } from '../utils/media-url.util.js';
 import { translateMetaError, getErrorSuggestion } from '../utils/meta-error-translator.js';
 import { sendOutboundEvent } from '../services/outbound-webhook.service.js';
 import { getActiveConnectionForTicket } from '../utils/connection-for-ticket.js';
+import { SmtpService } from '../services/email-channel/smtp.service.js';
 
 const router = Router();
 
@@ -150,6 +151,7 @@ router.post('/ticket/:ticketId', authenticate, ensureTenant, async (req, res, ne
       include: {
         contact: true,
         connection: true,
+        emailConnection: true,
       },
     });
 
@@ -209,6 +211,75 @@ router.post('/ticket/:ticketId', authenticate, ensureTenant, async (req, res, ne
     });
 
     let updatedMessage = message;
+
+    // Send via Email channel
+    if (!isInternal && ticket.channel === 'EMAIL' && ticket.emailConnectionId) {
+      try {
+        const emailMsg = await SmtpService.sendReply({
+          emailConnectionId: ticket.emailConnectionId,
+          ticketId: ticket.id,
+          content,
+          senderId: req.user!.userId,
+          senderName: sender?.name || 'Atendente',
+        });
+
+        // Delete the initial PENDING message and use the one from SmtpService
+        await prisma.message.delete({ where: { id: message.id } });
+        updatedMessage = await prisma.message.findUniqueOrThrow({
+          where: { id: emailMsg.id },
+          include: {
+            sender: { select: { id: true, name: true, avatar: true, isAI: true } },
+            quoted: { select: { id: true, content: true, type: true, isFromMe: true } },
+          },
+        });
+      } catch (sendError: any) {
+        logger.error('Email send failed:', { ticketId: ticket.id, error: sendError.message });
+        updatedMessage = await prisma.message.update({
+          where: { id: message.id },
+          data: { status: 'FAILED', failedReason: sendError.message },
+          include: {
+            sender: { select: { id: true, name: true, avatar: true, isAI: true } },
+            quoted: { select: { id: true, content: true, type: true, isFromMe: true } },
+          },
+        });
+
+        const io = req.app.get('io');
+        io.to(`ticket:${ticket.id}`).emit('message:error', {
+          messageId: message.id,
+          error: `Falha ao enviar email: ${sendError.message}`,
+        });
+        io.to(`ticket:${ticket.id}`).emit('message:sent', updatedMessage);
+        return res.status(200).json(updatedMessage);
+      }
+
+      // Update ticket status/assignment (same logic as WhatsApp)
+      const shouldAssign = !ticket.assignedToId;
+      const shouldChangeStatus = ticket.status === 'PENDING';
+      const updatedTicket = await prisma.ticket.update({
+        where: { id: ticket.id },
+        data: {
+          updatedAt: new Date(),
+          ...(shouldAssign && { assignedToId: req.user!.userId }),
+          ...(shouldChangeStatus && { status: 'IN_PROGRESS' }),
+          ...(ticket.firstResponse === null && (() => {
+            const sec = Math.floor((Date.now() - ticket.createdAt.getTime()) / 1000);
+            return { firstResponse: new Date(), responseTime: sec, waitingTime: sec };
+          })()),
+        },
+        include: {
+          contact: { select: { id: true, name: true, phone: true, avatar: true, isClient: true } },
+          assignedTo: { select: { id: true, name: true, avatar: true, isAI: true } },
+          department: { select: { id: true, name: true, color: true } },
+          emailConnection: { select: { id: true, name: true, email: true } },
+        },
+      });
+
+      const io = req.app.get('io');
+      io.to(`ticket:${ticket.id}`).emit('message:sent', updatedMessage);
+      io.to(`company:${req.user!.companyId}`).emit('ticket:updated', updatedTicket);
+
+      return res.json(updatedMessage);
+    }
 
     // Only send to WhatsApp if not internal
     if (!isInternal) {

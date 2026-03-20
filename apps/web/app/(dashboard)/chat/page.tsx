@@ -5,6 +5,7 @@ import { useSearchParams, useRouter } from "next/navigation";
 import { ChatSidebar } from "@/components/chat/chat-sidebar";
 import { ChatWindow } from "@/components/chat/chat-window";
 import { ContactInfo } from "@/components/chat/contact-info";
+import { EmailViewer } from "@/components/chat/email-viewer";
 import { useChatStore, type Ticket } from "@/stores/chat.store";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
@@ -133,6 +134,7 @@ function ChatPageContent() {
           }}
         />
       )}
+      <EmailViewer />
     </div>
   );
 }
