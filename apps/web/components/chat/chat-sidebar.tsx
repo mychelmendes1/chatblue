@@ -102,6 +102,7 @@ export function ChatSidebar() {
   const [attendants, setAttendants] = useState<{ id: string; name: string }[]>([]);
   const [departments, setDepartments] = useState<{ id: string; name: string }[]>([]);
   const [filtersExpanded, setFiltersExpanded] = useState(true);
+  const [tabCounts, setTabCounts] = useState({ all: 0, queue: 0, mine: 0 });
 
   // Check if selected connection is Meta Cloud or Instagram
   const selectedConnection = connections.find(c => c.id === selectedConnectionId);
@@ -111,8 +112,9 @@ export function ChatSidebar() {
   useEffect(() => {
     if (search.trim().length < 2) {
       fetchTickets();
+      fetchTabCounts();
     }
-  }, [filters, showResolved]);
+  }, [filters, showResolved, user?.id]);
 
   useEffect(() => {
     const term = search.trim();
@@ -121,6 +123,7 @@ export function ChatSidebar() {
       setUnifiedSearchContacts([]);
       if (term.length === 0) {
         fetchTickets();
+        fetchTabCounts();
       }
       return;
     }
@@ -175,6 +178,7 @@ export function ChatSidebar() {
       setTimeout(() => {
         console.log("Fetching tickets for new company...");
         fetchTickets();
+        fetchTabCounts();
       }, 300);
     };
 
@@ -188,10 +192,11 @@ export function ChatSidebar() {
   useEffect(() => {
     const handleRefetchTickets = () => {
       fetchTickets();
+      fetchTabCounts();
     };
     window.addEventListener("chat:refetch-tickets", handleRefetchTickets);
     return () => window.removeEventListener("chat:refetch-tickets", handleRefetchTickets);
-  }, [filters]);
+  }, [filters, showResolved, user?.id]);
 
   const TICKETS_PER_PAGE = 30;
 
@@ -243,6 +248,31 @@ export function ChatSidebar() {
     }
   }
 
+  async function fetchTabCounts() {
+    try {
+      const params = new URLSearchParams();
+      if (filters.departmentId) params.set("departmentId", filters.departmentId);
+      if (filters.assignedToId) params.set("assignedToId", filters.assignedToId);
+      if (filters.isAIHandled !== undefined) params.set("isAIHandled", String(filters.isAIHandled));
+      if (filters.mentionedUserId) params.set("hasMentions", "true");
+      if (filters.unreadOnly) params.set("unreadOnly", "true");
+      if (filters.waitingReply) params.set("waitingReply", "true");
+      if (filters.massDispatchOnly) params.set("massDispatchOnly", "true");
+      if (!showResolved) params.set("hideResolved", "true");
+
+      const res = await api.get<{ all: number; queue: number; mine: number }>(
+        `/tickets/tab-counts?${params}`
+      );
+      setTabCounts({
+        all: res.data.all ?? 0,
+        queue: res.data.queue ?? 0,
+        mine: res.data.mine ?? 0,
+      });
+    } catch (e) {
+      console.error("Failed to fetch tab counts:", e);
+    }
+  }
+
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
     if (search.trim().length >= 2) {
@@ -254,6 +284,7 @@ export function ChatSidebar() {
         .catch(() => {});
     } else {
       fetchTickets();
+      fetchTabCounts();
     }
   };
 
@@ -408,6 +439,7 @@ export function ChatSidebar() {
 
       resetNewConversationDialog();
       fetchTickets();
+      fetchTabCounts();
       selectTicket(ticket);
     } catch (error: any) {
       toast({
@@ -469,6 +501,7 @@ export function ChatSidebar() {
 
       resetNewConversationDialog();
       fetchTickets();
+      fetchTabCounts();
       selectTicket(response.data.ticket);
     } catch (error: any) {
       toast({
@@ -525,26 +558,29 @@ export function ChatSidebar() {
           <Button
             variant={!filters.status && !filters.assignedToId && filters.isAIHandled === undefined && !filters.mentionedUserId ? "default" : "outline"}
             size="sm"
-            className="text-xs md:text-sm px-2 md:px-2.5 h-7 md:h-8 flex-1 min-w-0"
+            className="text-[10px] md:text-xs px-1.5 md:px-2.5 h-7 md:h-8 flex-1 min-w-0 leading-tight"
             onClick={() => setFilters({ status: undefined, assignedToId: undefined, isAIHandled: undefined, mentionedUserId: undefined })}
+            title={`Todos (${tabCounts.all})`}
           >
-            Todos
+            Todos ({tabCounts.all})
           </Button>
           <Button
             variant={filters.status === "PENDING" && !filters.assignedToId && filters.isAIHandled === undefined && !filters.mentionedUserId ? "default" : "outline"}
             size="sm"
-            className="text-xs md:text-sm px-2 md:px-2.5 h-7 md:h-8 flex-1 min-w-0"
+            className="text-[10px] md:text-xs px-1.5 md:px-2.5 h-7 md:h-8 flex-1 min-w-0 leading-tight"
             onClick={() => setFilters({ status: "PENDING", assignedToId: undefined, isAIHandled: undefined, mentionedUserId: undefined })}
+            title={`Fila (${tabCounts.queue})`}
           >
-            Fila
+            Fila ({tabCounts.queue})
           </Button>
           <Button
             variant={filters.assignedToId === user?.id && filters.isAIHandled === undefined && !filters.mentionedUserId ? "default" : "outline"}
             size="sm"
-            className="text-xs md:text-sm px-2 md:px-2.5 h-7 md:h-8 flex-1 min-w-0"
+            className="text-[10px] md:text-xs px-1.5 md:px-2.5 h-7 md:h-8 flex-1 min-w-0 leading-tight"
             onClick={() => setFilters({ status: undefined, assignedToId: user?.id, isAIHandled: undefined, mentionedUserId: undefined })}
+            title={`Meus (${tabCounts.mine})`}
           >
-            Meus
+            Meus ({tabCounts.mine})
           </Button>
           <div className="relative flex-shrink-0">
             <Button

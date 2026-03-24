@@ -15,12 +15,31 @@ type ConversationFilters = {
   search?: string;
   isAIHandled?: boolean;
   mentionedUserId?: string;
+  unreadOnly?: boolean;
+  waitingReply?: boolean;
+  massDispatchOnly?: boolean;
 };
+
+let chatRefetchDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+
+/** Lista + contagens das abas (debounce para colapsar ticket:transferred + ticket:updated). */
+function scheduleChatListRefetch() {
+  if (chatRefetchDebounceTimer != null) {
+    clearTimeout(chatRefetchDebounceTimer);
+  }
+  chatRefetchDebounceTimer = setTimeout(() => {
+    chatRefetchDebounceTimer = null;
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent("chat:refetch-tickets"));
+    }
+  }, 320);
+}
 
 function ticketMatchesConversationFilters(
   ticket: Record<string, any>,
   filters: ConversationFilters,
-  _currentUserId: string | undefined
+  _currentUserId: string | undefined,
+  showResolved: boolean
 ): boolean {
   if (!ticket || typeof ticket !== "object") return false;
   const hasAssignedFilter = filters.assignedToId != null && filters.assignedToId !== "";
@@ -28,8 +47,23 @@ function ticketMatchesConversationFilters(
   const hasMentionsFilter = filters.mentionedUserId != null && filters.mentionedUserId !== "";
   const isQueueFilter = filters.status === "PENDING" && !hasAssignedFilter && !hasMentionsFilter;
 
+  if (!showResolved && (ticket.status === "RESOLVED" || ticket.status === "CLOSED")) {
+    return false;
+  }
+
+  if (filters.departmentId && filters.departmentId !== "") {
+    const deptId = ticket.departmentId ?? ticket.department?.id;
+    if (deptId !== filters.departmentId) return false;
+  }
+
+  if (filters.massDispatchOnly) {
+    if (ticket.campaignId == null || ticket.campaignId === "") return false;
+  }
+
   // No filtro @ não dá para saber pelo ticket se ainda tem menção (está nas mensagens); não removemos.
   if (hasMentionsFilter) return true;
+  if (filters.unreadOnly || filters.waitingReply) return true;
+
   if (hasAssignedFilter && ticket.assignedToId !== filters.assignedToId) return false;
   if (hasAIFilter && ticket.isAIHandled !== true) return false;
   if (isQueueFilter) {
@@ -43,7 +77,10 @@ function removeTicketIfNoLongerMatches(ticketId: string) {
   const store = useChatStore.getState();
   const { user } = useAuthStore.getState();
   const ticket = store.tickets.find((t) => t.id === ticketId);
-  if (ticket && !ticketMatchesConversationFilters(ticket, store.filters, user?.id)) {
+  if (
+    ticket &&
+    !ticketMatchesConversationFilters(ticket, store.filters, user?.id, store.showResolved)
+  ) {
     store.removeTicket(ticketId);
   }
 }
@@ -262,10 +299,19 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
         lastMessage: ticket.lastMessage || null,
         _count: ticket._count || { messages: 0 },
       };
-      if (!ticketMatchesConversationFilters(fullTicket, store.filters, user?.id)) {
+      if (
+        !ticketMatchesConversationFilters(
+          fullTicket,
+          store.filters,
+          user?.id,
+          store.showResolved
+        )
+      ) {
+        scheduleChatListRefetch();
         return;
       }
       store.addTicket(fullTicket);
+      scheduleChatListRefetch();
     } catch (error) {
       console.error("[Socket] ticket:created - Error processing ticket:", error);
     }
@@ -292,6 +338,7 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
         console.log("[Socket] Updated selected ticket (preserving messages):", data.id);
       }
       removeTicketIfNoLongerMatches(data.id);
+      scheduleChatListRefetch();
     } catch (error) {
       console.error("[Socket] ticket:updated - Error processing update:", error);
     }
@@ -302,6 +349,7 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
     const store = useChatStore.getState();
     store.updateTicket(ticketId, { assignedToId } as any);
     removeTicketIfNoLongerMatches(ticketId);
+    scheduleChatListRefetch();
   }, []);
 
   const handleTicketTransferred = useCallback((data: any) => {
@@ -318,8 +366,10 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
       assignedTo: data.assignedTo ?? undefined,
       isAIHandled: data.isAIHandled ?? false,
       humanTakeoverAt: data.isAIHandled ? undefined : new Date().toISOString(),
+      ...(data.campaignId !== undefined && { campaignId: data.campaignId }),
     } as any);
     removeTicketIfNoLongerMatches(data.ticketId);
+    scheduleChatListRefetch();
   }, []);
 
   const handleTicketStatusChanged = useCallback((data: any) => {
@@ -336,8 +386,10 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
       } : undefined,
       assignedToId: data.assignedToId,
       isAIHandled: data.isAIHandled,
+      ...(data.campaignId !== undefined && { campaignId: data.campaignId }),
     } as any);
     removeTicketIfNoLongerMatches(data.ticketId);
+    scheduleChatListRefetch();
   }, []);
 
   const handleMessageStatus = useCallback(({ messageId, status }: { messageId: string; status: string }) => {
@@ -406,6 +458,9 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
         duration: 10000, // 10 seconds
       });
     }
+
+    removeTicketIfNoLongerMatches(data.ticket.id);
+    scheduleChatListRefetch();
   }, [toast]);
 
   useEffect(() => {

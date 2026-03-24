@@ -51,6 +51,7 @@ export interface Message {
 export interface Ticket {
   id: string;
   protocol: string;
+  campaignId?: string | null;
   status: string;
   priority: string;
   isAIHandled: boolean;

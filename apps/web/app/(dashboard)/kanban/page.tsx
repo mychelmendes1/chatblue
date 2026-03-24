@@ -32,6 +32,8 @@ export default function KanbanPage() {
   const { toast } = useToast();
   const { user: currentUser } = useAuthStore();
   const [tickets, setTickets] = useState<KanbanTicket[]>([]);
+  /** Total de tickets que entram na query do Kanban (API), independente do limit de carregamento */
+  const [kanbanTotalCount, setKanbanTotalCount] = useState(0);
   const [users, setUsers] = useState<User[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -47,9 +49,14 @@ export default function KanbanPage() {
       const response = await api.get("/tickets?hideResolved=false&limit=500");
 
       // A API retorna { tickets, pagination }
-      const data = response.data as { tickets: KanbanTicket[]; pagination: any };
+      const data = response.data as {
+        tickets: KanbanTicket[];
+        pagination?: { total?: number; page?: number; limit?: number; pages?: number };
+      };
       const allTickets = data?.tickets || [];
       setTickets(allTickets);
+      const total = data?.pagination?.total;
+      setKanbanTotalCount(typeof total === "number" ? total : allTickets.length);
     } catch (error: any) {
       console.error("Error fetching kanban tickets:", error);
       toast({
@@ -222,7 +229,21 @@ export default function KanbanPage() {
             <div>
               <h1 className="text-xl md:text-2xl font-bold">Kanban</h1>
               <p className="text-sm text-muted-foreground">
-                {filteredTickets.length} ticket{filteredTickets.length !== 1 ? "s" : ""} no quadro
+                {activeFiltersCount > 0 ? (
+                  <>
+                    {filteredTickets.length} ticket{filteredTickets.length !== 1 ? "s" : ""} com o filtro
+                    atual (entre os {tickets.length} carregados)
+                  </>
+                ) : (
+                  <>
+                    {kanbanTotalCount} ticket{kanbanTotalCount !== 1 ? "s" : ""} no quadro
+                    {tickets.length < kanbanTotalCount && (
+                      <span className="block text-xs mt-0.5">
+                        Cartões visíveis: primeiros {tickets.length} de {kanbanTotalCount}.
+                      </span>
+                    )}
+                  </>
+                )}
               </p>
             </div>
           </div>

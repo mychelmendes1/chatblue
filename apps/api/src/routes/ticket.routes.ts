@@ -10,8 +10,48 @@ import { logger } from '../config/logger.js';
 import { ExternalAIWebhookService } from '../services/external-ai/external-ai-webhook.service.js';
 import { MessageProcessor } from '../services/message-processor.service.js';
 import { sendOutboundEvent } from '../services/outbound-webhook.service.js';
+import {
+  buildTicketListWhere,
+  getVisibleDepartmentIdsForUser,
+} from '../utils/ticket-list-where.js';
 
 const router = Router();
+
+async function countTicketsWithSidebarFilters(
+  where: Record<string, unknown>,
+  unreadOnly: boolean,
+  waitingReply: boolean
+): Promise<number> {
+  const rows = await prisma.ticket.findMany({
+    where: where as any,
+    select: {
+      id: true,
+      messages: {
+        take: 1,
+        orderBy: { createdAt: 'desc' },
+        select: { isFromMe: true },
+      },
+      _count: {
+        select: {
+          messages: {
+            where: {
+              isFromMe: false,
+              readAt: null,
+            },
+          },
+        },
+      },
+    },
+  });
+  let filtered = rows;
+  if (unreadOnly) {
+    filtered = filtered.filter((t) => (t._count?.messages ?? 0) > 0);
+  }
+  if (waitingReply) {
+    filtered = filtered.filter((t) => t.messages[0]?.isFromMe === false);
+  }
+  return filtered.length;
+}
 
 // List tickets
 router.get('/', authenticate, ensureTenant, async (req, res, next) => {
@@ -41,183 +81,30 @@ router.get('/', authenticate, ensureTenant, async (req, res, next) => {
       limit = '100',
     } = req.query;
 
-    // Get user's departments for visibility
-    const userDepartments = await prisma.userDepartment.findMany({
-      where: { userId: req.user!.userId },
-      select: { departmentId: true },
-    });
+    const visibleDeptIds = await getVisibleDepartmentIdsForUser(req.user!.userId);
 
-    const deptIds = userDepartments.map((d) => d.departmentId);
+    const isAIHandledParsed: boolean | undefined =
+      isAIHandled === undefined || isAIHandled === ''
+        ? undefined
+        : isAIHandled === 'true';
 
-    // Get parent departments (higher in hierarchy)
-    const visibleDeptIds = new Set(deptIds);
-    for (const deptId of deptIds) {
-      const dept = await prisma.department.findUnique({
-        where: { id: deptId },
-        select: { parentId: true },
-      });
-      if (dept?.parentId) {
-        visibleDeptIds.add(dept.parentId);
-      }
-    }
-
-    const baseWhere: any = {
+    const where = buildTicketListWhere({
       companyId: req.user!.companyId,
-      ...(status && { status: status as string }),
-      ...(departmentId && { departmentId: departmentId as string }),
-      ...(assignedToId && { assignedToId: assignedToId as string }),
-      ...(priority && { priority: priority as string }),
-      ...(isAIHandled !== undefined && { isAIHandled: isAIHandled === 'true' }),
-      // Hide resolved/closed tickets by default (unless specific status is requested)
-      // Note: SNOOZED tickets are shown but at the bottom of the list
-      ...(hideResolved === 'true' && !status && {
-        status: { notIn: ['RESOLVED', 'CLOSED'] },
-      }),
-      ...(massDispatchOnly === 'true' && { campaignId: { not: null } }),
-    };
-
-    // Filter by mentions - tickets where user was mentioned
-    if (hasMentions === 'true') {
-      baseWhere.messages = {
-        some: {
-          mentionedUserIds: {
-            has: req.user!.userId,
-          },
-        },
-      };
-    }
-
-    // Filter for inbox: tickets without human assignee (null or AI)
-    if (noHumanAssigned === 'true') {
-      baseWhere.OR = [
-        { assignedToId: null },
-        { assignedTo: { isAI: true } },
-      ];
-    }
-
-    // Build search filter (case-insensitive for name/email)
-    const searchConditions: any[] = [];
-    if (search) {
-      searchConditions.push(
-        { protocol: { contains: search as string, mode: 'insensitive' } },
-        { contact: { name: { contains: search as string, mode: 'insensitive' } } },
-        { contact: { email: { contains: search as string, mode: 'insensitive' } } },
-        { contact: { phone: { contains: search as string } } }
-      );
-    }
-
-    // Build visibility filter based on user role and filters
-    const where: any = { ...baseWhere };
-    const isAdmin = ['SUPER_ADMIN', 'ADMIN'].includes(req.user!.role);
-    
-    // Determine filter mode based on query parameters
-    const isMentionsFilter = hasMentions === 'true';
-    const isMyTicketsFilter = assignedToId === req.user!.userId;
-    const isQueueFilter = status === 'PENDING' && !assignedToId && !isMentionsFilter;
-    const isAllFilter = !status && !assignedToId && !isMentionsFilter;
-
-    if (isAdmin) {
-      // Admin and Super Admin can see everything - no visibility restrictions
-      if (searchConditions.length > 0) {
-        where.AND = [
-          baseWhere,
-          {
-            OR: searchConditions,
-          },
-        ];
-      }
-    } else {
-      // Non-admins have visibility restrictions based on filter mode
-      
-      if (isMentionsFilter) {
-        // @Menções: Tickets where user was mentioned (already filtered in baseWhere)
-        // No additional visibility restrictions needed - mentions filter is already applied
-        if (searchConditions.length > 0) {
-          where.AND = [
-            baseWhere,
-            {
-              OR: searchConditions,
-            },
-          ];
-        }
-      } else if (isMyTicketsFilter) {
-        // MEUS: Tickets assigned to the user
-        // No additional restrictions - already filtered by assignedToId
-        if (searchConditions.length > 0) {
-          where.AND = [
-            baseWhere,
-            {
-              OR: searchConditions,
-            },
-          ];
-        }
-      } else if (isQueueFilter) {
-        // FILA: Tickets from user's departments that are not assigned (PENDING and unassigned)
-        // Build queue filter: status PENDING AND department in user's departments AND not assigned
-        const queueFilter: any = {
-          ...baseWhere, // Includes status: 'PENDING' and companyId
-          assignedToId: null, // Not assigned
-        };
-        
-        if (visibleDeptIds.size > 0) {
-          // User has departments - show unassigned tickets from their departments
-          queueFilter.departmentId = { in: Array.from(visibleDeptIds) };
-        }
-        // If user has no departments, show all unassigned PENDING tickets from company
-
-        if (searchConditions.length > 0) {
-          where.AND = [
-            queueFilter,
-            {
-              OR: searchConditions,
-            },
-          ];
-        } else {
-          Object.assign(where, queueFilter);
-        }
-      } else if (isAllFilter) {
-        // TODOS: Show all tickets from all departments (no visibility restrictions)
-        // Just apply company filter and search if present
-        if (searchConditions.length > 0) {
-          where.AND = [
-            baseWhere,
-            {
-              OR: searchConditions,
-            },
-          ];
-        }
-      } else {
-        // Other filters (status, departmentId, etc.) - apply department visibility
-        const visibilityConditions: any[] = [
-          { assignedToId: req.user!.userId },
-        ];
-
-        if (visibleDeptIds.size > 0) {
-          visibilityConditions.push({ departmentId: { in: Array.from(visibleDeptIds) } });
-        } else {
-          visibilityConditions.push({ assignedToId: null });
-        }
-
-        if (searchConditions.length > 0) {
-          where.AND = [
-            baseWhere,
-            {
-              OR: visibilityConditions,
-            },
-            {
-              OR: searchConditions,
-            },
-          ];
-        } else {
-          where.AND = [
-            baseWhere,
-            {
-              OR: visibilityConditions,
-            },
-          ];
-        }
-      }
-    }
+      userId: req.user!.userId,
+      role: req.user!.role,
+      visibleDeptIds,
+      mode: 'custom',
+      status: status as string | undefined,
+      assignedToId: assignedToId as string | undefined,
+      departmentId: departmentId as string | undefined,
+      priority: priority as string | undefined,
+      isAIHandled: isAIHandledParsed,
+      hideResolved: hideResolved === 'true',
+      hasMentions: hasMentions === 'true',
+      noHumanAssigned: noHumanAssigned === 'true',
+      massDispatchOnly: massDispatchOnly === 'true',
+      search: search as string | undefined,
+    });
 
     // Fetch tickets without pagination first for proper sorting
     const allTickets = await prisma.ticket.findMany({
@@ -410,6 +297,75 @@ router.get('/', authenticate, ensureTenant, async (req, res, next) => {
       },
       aiStuckCount,
     });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Tab badges: Todos / Fila / Meus — same rules as GET / (secondary filters only; no search)
+router.get('/tab-counts', authenticate, ensureTenant, async (req, res, next) => {
+  try {
+    const {
+      departmentId,
+      assignedToId,
+      hideResolved,
+      isAIHandled,
+      hasMentions,
+      unreadOnly,
+      waitingReply,
+      massDispatchOnly,
+    } = req.query;
+
+    const visibleDeptIds = await getVisibleDepartmentIdsForUser(req.user!.userId);
+
+    const isAIHandledParsed: boolean | undefined =
+      isAIHandled === undefined || isAIHandled === ''
+        ? undefined
+        : isAIHandled === 'true';
+
+    const secondary = {
+      departmentId: departmentId as string | undefined,
+      isAIHandled: isAIHandledParsed,
+      hideResolved: hideResolved === 'true',
+      hasMentions: hasMentions === 'true',
+      noHumanAssigned: false,
+      massDispatchOnly: massDispatchOnly === 'true',
+    };
+
+    const unread = unreadOnly === 'true';
+    const waiting = waitingReply === 'true';
+
+    const baseInput = {
+      companyId: req.user!.companyId,
+      userId: req.user!.userId,
+      role: req.user!.role,
+      visibleDeptIds,
+    };
+
+    const whereAll = buildTicketListWhere({
+      ...baseInput,
+      mode: 'all',
+      scopeAssignedToIdForAll: assignedToId as string | undefined,
+      ...secondary,
+    });
+    const whereQueue = buildTicketListWhere({
+      ...baseInput,
+      mode: 'queue',
+      ...secondary,
+    });
+    const whereMine = buildTicketListWhere({
+      ...baseInput,
+      mode: 'mine',
+      ...secondary,
+    });
+
+    const [all, queue, mine] = await Promise.all([
+      countTicketsWithSidebarFilters(whereAll, unread, waiting),
+      countTicketsWithSidebarFilters(whereQueue, unread, waiting),
+      countTicketsWithSidebarFilters(whereMine, unread, waiting),
+    ]);
+
+    res.json({ all, queue, mine });
   } catch (error) {
     next(error);
   }
