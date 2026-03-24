@@ -1,12 +1,13 @@
 "use client";
 
 import { useEffect, useState, useRef } from "react";
-import { Search, Filter, Bot, User, Clock, Plus, Loader2, Phone, Users, CheckSquare, FileText, AlertCircle, MessageCircle, Mail, ArrowDownUp, MessageSquareReply, UserCircle, Building2 } from "lucide-react";
+import { Search, Filter, Bot, User, Clock, Plus, Loader2, Phone, Users, CheckSquare, FileText, AlertCircle, MessageCircle, Mail, ArrowDownUp, MessageSquareReply, UserCircle, Building2, X } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Switch } from "@/components/ui/switch";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
@@ -101,7 +102,6 @@ export function ChatSidebar() {
   const [showTemplateSelector, setShowTemplateSelector] = useState(false);
   const [attendants, setAttendants] = useState<{ id: string; name: string }[]>([]);
   const [departments, setDepartments] = useState<{ id: string; name: string }[]>([]);
-  const [filtersExpanded, setFiltersExpanded] = useState(true);
   const [tabCounts, setTabCounts] = useState({ all: 0, queue: 0, mine: 0 });
 
   // Check if selected connection is Meta Cloud or Instagram
@@ -517,8 +517,8 @@ export function ChatSidebar() {
   return (
     <div className="w-full md:w-80 min-w-0 border-r flex flex-col bg-card h-full overflow-hidden">
       {/* Header */}
-      <div className="p-3 md:p-4 border-b">
-        {/* Search + Nova conversa */}
+      <div className="p-3 md:p-4 border-b space-y-2">
+        {/* Row 1: Search + Nova conversa + Filtro popover */}
         <form onSubmit={handleSearch} className="flex gap-2 items-center">
           <Button
             type="button"
@@ -539,166 +539,232 @@ export function ChatSidebar() {
               className="pl-9"
             />
           </div>
-          <Button
-            type="button"
-            variant={filtersExpanded ? "default" : "outline"}
-            size="icon"
-            className="shrink-0"
-            onClick={() => setFiltersExpanded((prev) => !prev)}
-            title={filtersExpanded ? "Recolher filtros" : "Expandir filtros"}
-          >
-            <Filter className="w-4 h-4" />
-          </Button>
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button type="button" variant="outline" size="icon" className="shrink-0 relative" title="Filtros">
+                <Filter className="w-4 h-4" />
+                {(() => {
+                  let c = 0;
+                  if (filters.isAIHandled === true) c++;
+                  if (filters.mentionedUserId) c++;
+                  if (filters.massDispatchOnly) c++;
+                  if (filters.unreadOnly) c++;
+                  if (filters.waitingReply) c++;
+                  if (filters.sortOrder === "asc") c++;
+                  if (filters.departmentId) c++;
+                  if (showResolved) c++;
+                  const isTabMeus = filters.assignedToId === user?.id && !filters.status && !filters.isAIHandled && !filters.mentionedUserId;
+                  if (filters.assignedToId && !isTabMeus) c++;
+                  return c > 0 ? (
+                    <span className="absolute -top-1 -right-1 min-w-[16px] h-[16px] px-0.5 flex items-center justify-center rounded-full bg-primary text-[9px] font-bold text-primary-foreground ring-2 ring-background">
+                      {c}
+                    </span>
+                  ) : null;
+                })()}
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent className="w-64 p-0" align="end" sideOffset={8}>
+              <div className="p-3 space-y-3 text-sm">
+                {/* Visualizacao */}
+                <div>
+                  <p className="text-xs font-medium text-muted-foreground mb-1.5">Visualização</p>
+                  <div className="flex gap-1.5">
+                    <div className="relative">
+                      <Button
+                        variant={filters.isAIHandled === true ? "default" : "outline"}
+                        size="sm"
+                        className="text-xs h-8 w-9"
+                        onClick={() => setFilters({ status: undefined, assignedToId: undefined, isAIHandled: true, mentionedUserId: undefined })}
+                      >
+                        🤖
+                      </Button>
+                      {aiStuckCount > 0 && (
+                        <span
+                          className="absolute -top-1 -right-1 min-w-[16px] h-[16px] px-0.5 flex items-center justify-center rounded-full bg-green-500 text-[9px] font-bold text-white ring-2 ring-background"
+                          title="Lead(s) travados na IA"
+                        >
+                          {aiStuckCount > 99 ? "99+" : aiStuckCount}
+                        </span>
+                      )}
+                    </div>
+                    <Button
+                      variant={filters.mentionedUserId === user?.id ? "default" : "outline"}
+                      size="sm"
+                      className="text-xs h-8 w-9"
+                      onClick={() => setFilters({ status: undefined, assignedToId: undefined, isAIHandled: undefined, mentionedUserId: user?.id })}
+                    >
+                      @
+                    </Button>
+                    <Button
+                      variant={filters.massDispatchOnly ? "default" : "outline"}
+                      size="sm"
+                      className="text-xs h-8 gap-1"
+                      onClick={() => setFilters({ massDispatchOnly: filters.massDispatchOnly ? undefined : true })}
+                      title="Disparo em massa"
+                    >
+                      <WhatsAppIcon className="w-3.5 h-3.5" />
+                      <span>Disparo</span>
+                    </Button>
+                  </div>
+                </div>
+
+                <div className="border-t" />
+
+                {/* Refinamentos */}
+                <div className="space-y-2">
+                  <p className="text-xs font-medium text-muted-foreground">Refinamentos</p>
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <Checkbox
+                      checked={!!filters.unreadOnly}
+                      onCheckedChange={(v) => setFilters({ unreadOnly: v ? true : undefined })}
+                    />
+                    <Mail className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                    <span className="text-xs">Não lidas</span>
+                  </label>
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <Checkbox
+                      checked={!!filters.waitingReply}
+                      onCheckedChange={(v) => setFilters({ waitingReply: v ? true : undefined })}
+                    />
+                    <MessageSquareReply className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                    <span className="text-xs">Aguardando retorno</span>
+                  </label>
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <Checkbox
+                      checked={showResolved}
+                      onCheckedChange={(v) => setShowResolved(v === true)}
+                    />
+                    <CheckSquare className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                    <span className="text-xs">Mostrar resolvidas</span>
+                  </label>
+                </div>
+
+                <div className="border-t" />
+
+                {/* Ordenacao */}
+                <div>
+                  <p className="text-xs font-medium text-muted-foreground mb-1.5">Ordenação</p>
+                  <Select
+                    value={filters.sortOrder === "asc" ? "asc" : "desc"}
+                    onValueChange={(v) => setFilters({ sortOrder: v === "asc" ? "asc" : undefined })}
+                  >
+                    <SelectTrigger className="w-full h-8 text-xs">
+                      <ArrowDownUp className="w-3.5 h-3.5 mr-1 shrink-0" />
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="desc">Mais recentes</SelectItem>
+                      <SelectItem value="asc">Mais antigas</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="border-t" />
+
+                {/* Atendente */}
+                <div>
+                  <p className="text-xs font-medium text-muted-foreground mb-1.5">Atendente</p>
+                  <Select
+                    value={filters.assignedToId ?? "__any__"}
+                    onValueChange={(value) => setFilters({ assignedToId: value === "__any__" ? undefined : value })}
+                  >
+                    <SelectTrigger className="w-full h-8 text-xs">
+                      <UserCircle className="w-3.5 h-3.5 mr-1 shrink-0" />
+                      <SelectValue placeholder="Atendente" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__any__">Qualquer atendente</SelectItem>
+                      {attendants.map((a) => (
+                        <SelectItem key={a.id} value={a.id}>
+                          {a.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                {/* Departamento */}
+                <div>
+                  <p className="text-xs font-medium text-muted-foreground mb-1.5">Departamento</p>
+                  <Select
+                    value={filters.departmentId ?? "__any__"}
+                    onValueChange={(value) => setFilters({ departmentId: value === "__any__" ? undefined : value })}
+                  >
+                    <SelectTrigger className="w-full h-8 text-xs">
+                      <Building2 className="w-3.5 h-3.5 mr-1 shrink-0" />
+                      <SelectValue placeholder="Departamento" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__any__">Qualquer departamento</SelectItem>
+                      {departments.map((d) => (
+                        <SelectItem key={d.id} value={d.id}>
+                          {d.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                {/* Limpar filtros */}
+                {(filters.isAIHandled !== undefined || filters.mentionedUserId || filters.massDispatchOnly || filters.unreadOnly || filters.waitingReply || filters.sortOrder === "asc" || filters.assignedToId || filters.departmentId || showResolved) && (
+                  <>
+                    <div className="border-t" />
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="w-full text-xs h-7 gap-1 text-muted-foreground"
+                      onClick={() => {
+                        setFilters({
+                          status: undefined,
+                          assignedToId: undefined,
+                          isAIHandled: undefined,
+                          mentionedUserId: undefined,
+                          unreadOnly: undefined,
+                          waitingReply: undefined,
+                          massDispatchOnly: undefined,
+                          sortOrder: undefined,
+                          departmentId: undefined,
+                        });
+                        setShowResolved(false);
+                      }}
+                    >
+                      <X className="w-3 h-3" />
+                      Limpar todos os filtros
+                    </Button>
+                  </>
+                )}
+              </div>
+            </PopoverContent>
+          </Popover>
         </form>
 
-        {/* Quick Filters + Second row (expand/collapse) */}
-        {filtersExpanded && (
-        <>
-        <div className="flex gap-1 md:gap-1.5 mt-2 md:mt-3">
+        {/* Row 2: Tab buttons — always visible */}
+        <div className="flex gap-1.5">
           <Button
             variant={!filters.status && !filters.assignedToId && filters.isAIHandled === undefined && !filters.mentionedUserId ? "default" : "outline"}
             size="sm"
-            className="text-[10px] md:text-xs px-1.5 md:px-2.5 h-7 md:h-8 flex-1 min-w-0 leading-tight"
+            className="text-xs px-2.5 h-8 flex-1"
             onClick={() => setFilters({ status: undefined, assignedToId: undefined, isAIHandled: undefined, mentionedUserId: undefined })}
-            title={`Todos (${tabCounts.all})`}
           >
             Todos ({tabCounts.all})
           </Button>
           <Button
             variant={filters.status === "PENDING" && !filters.assignedToId && filters.isAIHandled === undefined && !filters.mentionedUserId ? "default" : "outline"}
             size="sm"
-            className="text-[10px] md:text-xs px-1.5 md:px-2.5 h-7 md:h-8 flex-1 min-w-0 leading-tight"
+            className="text-xs px-2.5 h-8 flex-1"
             onClick={() => setFilters({ status: "PENDING", assignedToId: undefined, isAIHandled: undefined, mentionedUserId: undefined })}
-            title={`Fila (${tabCounts.queue})`}
           >
             Fila ({tabCounts.queue})
           </Button>
           <Button
             variant={filters.assignedToId === user?.id && filters.isAIHandled === undefined && !filters.mentionedUserId ? "default" : "outline"}
             size="sm"
-            className="text-[10px] md:text-xs px-1.5 md:px-2.5 h-7 md:h-8 flex-1 min-w-0 leading-tight"
+            className="text-xs px-2.5 h-8 flex-1"
             onClick={() => setFilters({ status: undefined, assignedToId: user?.id, isAIHandled: undefined, mentionedUserId: undefined })}
-            title={`Meus (${tabCounts.mine})`}
           >
             Meus ({tabCounts.mine})
           </Button>
-          <div className="relative flex-shrink-0">
-            <Button
-              variant={filters.isAIHandled === true ? "default" : "outline"}
-              size="sm"
-              className="text-xs md:text-sm px-2 md:px-2.5 h-7 md:h-8 w-8 md:w-9"
-              onClick={() => setFilters({ status: undefined, assignedToId: undefined, isAIHandled: true, mentionedUserId: undefined })}
-            >
-              🤖
-            </Button>
-            {aiStuckCount > 0 && (
-              <span
-                className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 flex items-center justify-center rounded-full bg-green-500 text-[10px] font-bold text-white ring-2 ring-background"
-                title="Lead(s) com retorno travado na IA há mais de 15 min - requer intervenção"
-              >
-                {aiStuckCount > 99 ? "99+" : aiStuckCount}
-              </span>
-            )}
-          </div>
-          <Button
-            variant={filters.mentionedUserId === user?.id ? "default" : "outline"}
-            size="sm"
-            className="text-xs md:text-sm px-2 md:px-2.5 h-7 md:h-8 flex-shrink-0 w-8 md:w-9"
-            onClick={() => setFilters({ status: undefined, assignedToId: undefined, isAIHandled: undefined, mentionedUserId: user?.id })}
-          >
-            @
-          </Button>
-          <Button
-            variant={filters.massDispatchOnly ? "default" : "outline"}
-            size="sm"
-            className="text-xs md:text-sm px-2 md:px-2.5 h-7 md:h-8 flex-shrink-0 w-8 md:w-9"
-            onClick={() => setFilters({ massDispatchOnly: filters.massDispatchOnly ? undefined : true })}
-            title="Disparo em massa"
-          >
-            <WhatsAppIcon className="w-4 h-4" />
-          </Button>
         </div>
-
-        {/* Second row: extra filters (combinable with above) */}
-        <div className="flex flex-wrap gap-1.5 mt-2 items-center">
-          <Button
-            variant={filters.unreadOnly ? "default" : "outline"}
-            size="sm"
-            className="text-xs h-7 px-2 gap-1"
-            onClick={() => setFilters({ unreadOnly: filters.unreadOnly ? undefined : true })}
-          >
-            <Mail className="w-3.5 h-3.5" />
-            Não lidas
-          </Button>
-          <Button
-            variant={filters.sortOrder === "asc" ? "default" : "outline"}
-            size="sm"
-            className="text-xs h-7 px-2 gap-1"
-            onClick={() => setFilters({ sortOrder: filters.sortOrder === "asc" ? undefined : "asc" })}
-          >
-            <ArrowDownUp className="w-3.5 h-3.5" />
-            {filters.sortOrder === "asc" ? "Mais antigas" : "Mais recentes"}
-          </Button>
-          <Button
-            variant={filters.waitingReply ? "default" : "outline"}
-            size="sm"
-            className="text-xs h-7 px-2 gap-1"
-            onClick={() => setFilters({ waitingReply: filters.waitingReply ? undefined : true })}
-          >
-            <MessageSquareReply className="w-3.5 h-3.5" />
-            Aguardando retorno
-          </Button>
-          <Select
-            value={filters.assignedToId ?? "__any__"}
-            onValueChange={(value) => setFilters({ assignedToId: value === "__any__" ? undefined : value })}
-          >
-            <SelectTrigger className="w-[140px] h-7 text-xs border-muted">
-              <UserCircle className="w-3.5 h-3.5 mr-1 shrink-0" />
-              <SelectValue placeholder="Atendente" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="__any__">Qualquer atendente</SelectItem>
-              {attendants.map((a) => (
-                <SelectItem key={a.id} value={a.id}>
-                  {a.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <Select
-            value={filters.departmentId ?? "__any__"}
-            onValueChange={(value) => setFilters({ departmentId: value === "__any__" ? undefined : value })}
-          >
-            <SelectTrigger className="w-[140px] h-7 text-xs border-muted">
-              <Building2 className="w-3.5 h-3.5 mr-1 shrink-0" />
-              <SelectValue placeholder="Departamento" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="__any__">Qualquer departamento</SelectItem>
-              {departments.map((d) => (
-                <SelectItem key={d.id} value={d.id}>
-                  {d.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <div className="flex items-center gap-1.5 ml-auto shrink-0">
-            <label
-              htmlFor="showResolved"
-              className="text-xs text-muted-foreground cursor-pointer select-none flex items-center gap-1.5"
-            >
-              <CheckSquare className="w-3.5 h-3.5 shrink-0" />
-              Mostrar resolvidas
-            </label>
-            <Switch
-              id="showResolved"
-              checked={showResolved}
-              onCheckedChange={setShowResolved}
-            />
-          </div>
-        </div>
-        </>
-        )}
       </div>
 
       {/* Ticket List - max-w-80 força largura da sidebar (evita conteúdo ~8kpx) */}
