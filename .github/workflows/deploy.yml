@@ -1,14 +1,23 @@
 # =============================================================================
 # ChatBlue - Deploy Automatizado para Contabo
 # =============================================================================
-# Este workflow faz deploy automático quando há push na branch main.
-# Também pode ser disparado manualmente via GitHub UI.
+# Este workflow faz deploy automatico quando ha push na branch main.
+# Tambem pode ser disparado manualmente via GitHub UI.
 #
-# Secrets necessários no GitHub:
-#   - SERVER_HOST: IP do servidor (84.247.191.105)
-#   - SERVER_USER: Usuário SSH (root)
-#   - SERVER_SSH_KEY: Chave SSH privada (gerada pelo setup-server.sh)
-#   - SERVER_SSH_PORT: Porta SSH (padrão: 22)
+# Secrets necessarios no GitHub:
+# - SERVER_HOST: IP do servidor (84.247.191.105)
+# - SERVER_USER: Usuario SSH (root)
+# - SERVER_SSH_KEY: Chave SSH privada (gerada pelo setup-server.sh)
+# - SERVER_SSH_PORT: Porta SSH (padrao: 22)
+#
+# Correcoes aplicadas:
+# - Removido StrictHostKeyChecking=no (vulneravel a MITM)
+# - Adicionado set -eo pipefail no script de deploy
+# - Lint agora falha o build (removido || true)
+# - Backup falho agora bloqueia o deploy (com opcao de skip manual)
+# - Atualizado pnpm/action-setup de v2 para v4
+# - Adicionado concurrency para evitar deploys simultaneos
+# - Health check com retry em vez de sleep fixo
 # =============================================================================
 
 name: Deploy ChatBlue
@@ -27,7 +36,7 @@ on:
           - 'false'
           - 'true'
       force_rebuild:
-        description: 'Forçar rebuild completo (web + api)?'
+        description: 'Forcar rebuild completo (web + api)?'
         required: false
         default: 'false'
         type: choice
@@ -35,23 +44,28 @@ on:
           - 'false'
           - 'true'
 
+# Impede deploys simultaneos - apenas um deploy por vez
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
 env:
   APP_DIR: /opt/chatblue/app
   BACKUP_DIR: /opt/chatblue/backups
 
 jobs:
   # =========================================================================
-  # Job 1: Lint e verificação básica
+  # Job 1: Lint e verificacao basica
   # =========================================================================
   check:
-    name: Verificação de Código
+    name: Verificacao de Codigo
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v2
+        uses: pnpm/action-setup@v4
         with:
           version: 8
 
@@ -61,23 +75,24 @@ jobs:
           node-version: 20
           cache: pnpm
 
-      - name: Instalar dependências
+      - name: Instalar dependencias
         run: pnpm install --frozen-lockfile
 
       - name: Gerar Prisma Client
         run: pnpm --filter api db:generate
 
+      # CORRECAO: Lint agora falha o build (removido || true)
       - name: Lint API
-        run: pnpm --filter api lint || true
+        run: pnpm --filter api lint
 
-      - name: Build API (verificação)
+      - name: Build API (verificacao)
         run: pnpm --filter api build
 
   # =========================================================================
   # Job 2: Deploy para o servidor Contabo
   # =========================================================================
   deploy:
-    name: Deploy para Produção
+    name: Deploy para Producao
     runs-on: ubuntu-latest
     needs: check
     environment: production
@@ -95,93 +110,94 @@ jobs:
           chmod 600 ~/.ssh/deploy_key
           ssh-keyscan -p ${{ secrets.SERVER_SSH_PORT || 22 }} -H ${{ secrets.SERVER_HOST }} >> ~/.ssh/known_hosts 2>/dev/null
 
-      - name: Verificar conexão com servidor
+      # CORRECAO: Removido StrictHostKeyChecking=no - agora usa known_hosts do step anterior
+      - name: Verificar conexao com servidor
         run: |
           ssh -i ~/.ssh/deploy_key \
-            -p ${{ secrets.SERVER_SSH_PORT || 22 }} \
-            -o ConnectTimeout=10 \
-            -o StrictHostKeyChecking=no \
-            ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} \
-            "echo '✅ Conexão SSH OK' && uptime"
+          -p ${{ secrets.SERVER_SSH_PORT || 22 }} \
+          -o ConnectTimeout=10 \
+          ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} \
+          "echo 'Conexao SSH OK' && uptime"
 
+      # CORRECAO: Backup falho agora bloqueia o deploy (a menos que skip_backup=true)
       - name: Backup antes do deploy
         if: ${{ github.event.inputs.skip_backup != 'true' }}
         run: |
           ssh -i ~/.ssh/deploy_key \
-            -p ${{ secrets.SERVER_SSH_PORT || 22 }} \
-            ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} \
-            "bash /opt/chatblue/scripts/backup.sh --quiet || echo '⚠️ Backup falhou, mas continuando deploy...'"
+          -p ${{ secrets.SERVER_SSH_PORT || 22 }} \
+          ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} \
+          "bash /opt/chatblue/scripts/backup.sh --quiet"
 
-      - name: Sincronizar código via rsync
+      - name: Sincronizar codigo via rsync
         run: |
           rsync -avz --delete \
-            --exclude='.git' \
-            --exclude='node_modules' \
-            --exclude='.next' \
-            --exclude='dist' \
-            --exclude='.env' \
-            --exclude='uploads' \
-            --exclude='logs' \
-            --exclude='backups' \
-            -e "ssh -i ~/.ssh/deploy_key -p ${{ secrets.SERVER_SSH_PORT || 22 }}" \
-            ./ ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:${{ env.APP_DIR }}/
+          --exclude='.git' \
+          --exclude='node_modules' \
+          --exclude='.next' \
+          --exclude='dist' \
+          --exclude='.env' \
+          --exclude='uploads' \
+          --exclude='logs' \
+          --exclude='backups' \
+          -e "ssh -i ~/.ssh/deploy_key -p ${{ secrets.SERVER_SSH_PORT || 22 }}" \
+          ./ ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:${{ env.APP_DIR }}/
 
-      - name: Verificar arquivos críticos no servidor
+      - name: Verificar arquivos criticos no servidor
         run: |
           ssh -i ~/.ssh/deploy_key \
-            -p ${{ secrets.SERVER_SSH_PORT || 22 }} \
-            ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} \
-            "test -f ${{ env.APP_DIR }}/apps/web/components/ui/label.tsx && test -f ${{ env.APP_DIR }}/apps/web/lib/api.ts && echo '✅ label.tsx e api.ts presentes' || (echo '❌ Faltam label.tsx ou api.ts no servidor'; exit 1)"
+          -p ${{ secrets.SERVER_SSH_PORT || 22 }} \
+          ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} \
+          "test -f ${{ env.APP_DIR }}/apps/web/components/ui/label.tsx && test -f ${{ env.APP_DIR }}/apps/web/lib/api.ts && echo 'label.tsx e api.ts presentes' || (echo 'ERRO: Faltam label.tsx ou api.ts no servidor'; exit 1)"
 
-      - name: Instalar dependências e fazer build
+      # CORRECAO: Adicionado set -eo pipefail, health check com retry
+      - name: Instalar dependencias e fazer build
         run: |
           ssh -i ~/.ssh/deploy_key \
-            -p ${{ secrets.SERVER_SSH_PORT || 22 }} \
-            ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} \
-            'bash -s' << 'DEPLOY_SCRIPT'
-          set -e
+          -p ${{ secrets.SERVER_SSH_PORT || 22 }} \
+          ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} \
+          'bash -s' << 'DEPLOY_SCRIPT'
+          set -eo pipefail
 
           echo "=========================================="
-          echo "  ChatBlue - Deploy Automático"
-          echo "  Commit: ${{ github.sha }}"
-          echo "  Branch: ${{ github.ref_name }}"
-          echo "  Data: $(date '+%Y-%m-%d %H:%M:%S')"
+          echo " ChatBlue - Deploy Automatico"
+          echo " Commit: ${{ github.sha }}"
+          echo " Branch: ${{ github.ref_name }}"
+          echo " Data: $(date '+%Y-%m-%d %H:%M:%S')"
           echo "=========================================="
 
           cd /opt/chatblue/app
 
           # Limpeza de cache antes do build (evita builds corrompidos)
-          echo "🧹 Limpando cache de build..."
+          echo "Limpando cache de build..."
           rm -rf apps/web/.next apps/api/dist
-          echo "✅ Cache limpo"
+          echo "Cache limpo"
 
-          # Carregar variáveis de ambiente
+          # Carregar variaveis de ambiente
           if [ -f /opt/chatblue/.env ]; then
             export $(grep -v '^#' /opt/chatblue/.env | xargs)
           fi
 
-          # Instalar dependências (NODE_ENV=development para incluir devDependencies ex.: TypeScript)
-          echo "📦 Instalando dependências..."
+          # Instalar dependencias (NODE_ENV=development para incluir devDependencies)
+          echo "Instalando dependencias..."
           NODE_ENV=development pnpm install 2>&1 | tail -10
-          echo "✅ Dependências instaladas"
+          echo "Dependencias instaladas"
 
           # Gerar Prisma Client
-          echo "🔧 Gerando Prisma Client..."
+          echo "Gerando Prisma Client..."
           cd apps/api
           npx prisma@5.22.0 generate
-          echo "✅ Prisma Client gerado"
+          echo "Prisma Client gerado"
 
           # Executar migrations pendentes
-          echo "🗄️ Executando migrations..."
-          npx prisma@5.22.0 migrate deploy 2>&1 || echo "⚠️ Nenhuma migration pendente"
-          echo "✅ Migrations OK"
+          echo "Executando migrations..."
+          npx prisma@5.22.0 migrate deploy 2>&1 || echo "Nenhuma migration pendente"
+          echo "Migrations OK"
 
-          # Build API (com fallback npx tsc se pnpm build falhar)
-          echo "🔨 Compilando API..."
+          # Build API
+          echo "Compilando API..."
           cd /opt/chatblue/app
-          pnpm --filter api build 2>&1 | tail -15
-          if [ ${PIPESTATUS[0]} -ne 0 ]; then
-            echo "⚠️ pnpm build API falhou, tentando npx tsc..."
+          if ! pnpm --filter api build 2>&1 | tee /tmp/api-build.log | tail -15; then
+            echo "pnpm build API falhou, tentando npx tsc..."
             cd /opt/chatblue/app/apps/api
             npx tsc --skipLibCheck 2>&1 || true
             cd /opt/chatblue/app
@@ -189,50 +205,67 @@ jobs:
 
           # Verificar se o build gerou server.js ou server.cjs
           if [ -f apps/api/dist/server.js ]; then
-            echo "✅ Build API OK (server.js)"
+            echo "Build API OK (server.js)"
           elif [ -f apps/api/dist/server.cjs ]; then
-            echo "✅ Build API OK (server.cjs)"
+            echo "Build API OK (server.cjs)"
           else
-            echo "❌ ERRO: Build API não gerou server.js"
+            echo "ERRO: Build API nao gerou server.js"
             exit 1
           fi
 
-          # Build Web (garantir diretório correto)
-          echo "🔨 Compilando Web..."
+          # Build Web
+          echo "Compilando Web..."
           cd /opt/chatblue/app
           pnpm --filter web build 2>&1 | tail -15
           if [ -f apps/web/.next/BUILD_ID ]; then
-            echo "✅ Build Web OK"
+            echo "Build Web OK"
           else
-            echo "❌ ERRO: Build Web não gerou .next/BUILD_ID"
+            echo "ERRO: Build Web nao gerou .next/BUILD_ID"
             exit 1
           fi
 
           # Reiniciar PM2
-          echo "🔄 Reiniciando serviços..."
+          echo "Reiniciando servicos..."
           cd /opt/chatblue
           pm2 restart ecosystem.config.js --update-env 2>&1 || \
             pm2 start ecosystem.config.js 2>&1
           pm2 save
-          echo "✅ PM2 reiniciado"
+          echo "PM2 reiniciado"
 
-          # Verificar saúde
-          echo "🏥 Verificando saúde..."
-          sleep 5
+          # Health check com retry (ate 30s em vez de sleep fixo de 5s)
+          echo "Verificando saude dos servicos..."
+          MAX_RETRIES=6
+          RETRY_INTERVAL=5
 
-          API_STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:3001/health 2>/dev/null || echo "000")
-          WEB_STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:3000/ 2>/dev/null || echo "000")
+          API_OK=false
+          WEB_OK=false
 
-          echo "  API: HTTP $API_STATUS"
-          echo "  Web: HTTP $WEB_STATUS"
+          for i in $(seq 1 $MAX_RETRIES); do
+            sleep $RETRY_INTERVAL
 
-          if [ "$API_STATUS" = "200" ] && [ "$WEB_STATUS" = "200" ]; then
+            API_STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:3001/health 2>/dev/null || echo "000")
+            WEB_STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:3000/ 2>/dev/null || echo "000")
+
+            echo "  Tentativa $i/$MAX_RETRIES - API: HTTP $API_STATUS | Web: HTTP $WEB_STATUS"
+
+            [ "$API_STATUS" = "200" ] && API_OK=true
+            [ "$WEB_STATUS" = "200" ] && WEB_OK=true
+
+            if $API_OK && $WEB_OK; then
+              break
+            fi
+          done
+
+          if $API_OK && $WEB_OK; then
             echo ""
-            echo "🎉 Deploy concluído com sucesso!"
+            echo "Deploy concluido com sucesso!"
           else
             echo ""
-            echo "⚠️ Deploy concluído mas serviços podem estar iniciando..."
-            echo "   Verifique com: pm2 status && pm2 logs --lines 20"
+            echo "ERRO: Servicos nao responderam apos ${MAX_RETRIES} tentativas"
+            echo "  API: $( $API_OK && echo 'OK' || echo 'FALHOU' )"
+            echo "  Web: $( $WEB_OK && echo 'OK' || echo 'FALHOU' )"
+            echo "  Verifique com: pm2 status && pm2 logs --lines 50"
+            exit 1
           fi
 
           # Salvar info do deploy
@@ -246,7 +279,7 @@ jobs:
       - name: Resumo do deploy
         if: success()
         run: |
-          echo "## ✅ Deploy Concluído" >> $GITHUB_STEP_SUMMARY
+          echo "## Deploy Concluido" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "- **Commit:** \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
           echo "- **Branch:** \`${{ github.ref_name }}\`" >> $GITHUB_STEP_SUMMARY
@@ -256,7 +289,7 @@ jobs:
       - name: Notificar falha
         if: failure()
         run: |
-          echo "## ❌ Deploy Falhou" >> $GITHUB_STEP_SUMMARY
+          echo "## Deploy Falhou" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "- **Commit:** \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
           echo "- **Branch:** \`${{ github.ref_name }}\`" >> $GITHUB_STEP_SUMMARY

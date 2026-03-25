@@ -1,3 +1,13 @@
+# =============================================================================
+# ChatBlue - Build and Push Docker Images (prod)
+# =============================================================================
+# Correcoes aplicadas:
+# - Adicionado --fail nos curls do Portainer (falha visivel se webhook falhar)
+# - Adicionado concurrency para evitar builds simultaneos
+# - Adicionado step de verificacao de secrets obrigatorios
+# - Adicionado validacao de que NEXT_PUBLIC_API_URL_PROD nao pode estar vazio
+# =============================================================================
+
 name: Build and Push Docker Images (prod)
 
 on:
@@ -5,6 +15,11 @@ on:
     tags:
       - 'v*'
   workflow_dispatch: {}
+
+# Impede builds de producao simultaneos
+concurrency:
+  group: build-prod
+  cancel-in-progress: false
 
 env:
   AWS_REGION: ${{ secrets.AWS_REGION || 'us-east-2' }}
@@ -23,6 +38,22 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      # CORRECAO: Verifica se secrets criticos estao configurados
+      - name: Verificar secrets obrigatorios
+        run: |
+          MISSING=""
+          [ -z "${{ secrets.AWS_ACCESS_KEY_ID }}" ] && MISSING="$MISSING AWS_ACCESS_KEY_ID"
+          [ -z "${{ secrets.AWS_SECRET_ACCESS_KEY }}" ] && MISSING="$MISSING AWS_SECRET_ACCESS_KEY"
+          [ -z "${{ secrets.NEXT_PUBLIC_API_URL_PROD }}" ] && MISSING="$MISSING NEXT_PUBLIC_API_URL_PROD"
+          [ -z "${{ secrets.NEXT_PUBLIC_SOCKET_URL_PROD }}" ] && MISSING="$MISSING NEXT_PUBLIC_SOCKET_URL_PROD"
+
+          if [ -n "$MISSING" ]; then
+            echo "ERRO: Os seguintes secrets nao estao configurados:$MISSING"
+            echo "Configure-os em Settings > Secrets and variables > Actions"
+            exit 1
+          fi
+          echo "Todos os secrets obrigatorios estao presentes."
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -99,17 +130,24 @@ jobs:
           docker push "$ECR_REGISTRY/$MIGRATION_REPOSITORY:$IMAGE_TAG"
           docker push "$ECR_REGISTRY/$MIGRATION_REPOSITORY:latest"
 
+      # CORRECAO: Adicionado --fail e --silent --show-error para falhar explicitamente
       - name: Atualizar API no Portainer (prod)
         if: success()
         run: |
-          curl -X POST "${{ secrets.PORTAINER_WEBHOOK_API_PROD }}?tag=${{ steps.tag.outputs.tag }}"
+          curl --fail --silent --show-error -X POST \
+            "${{ secrets.PORTAINER_WEBHOOK_API_PROD }}?tag=${{ steps.tag.outputs.tag }}" \
+            || (echo "ERRO: Webhook do Portainer para API falhou" && exit 1)
 
       - name: Atualizar Web no Portainer (prod)
         if: success()
         run: |
-          curl -X POST "${{ secrets.PORTAINER_WEBHOOK_WEB_PROD }}?tag=${{ steps.tag.outputs.tag }}"
+          curl --fail --silent --show-error -X POST \
+            "${{ secrets.PORTAINER_WEBHOOK_WEB_PROD }}?tag=${{ steps.tag.outputs.tag }}" \
+            || (echo "ERRO: Webhook do Portainer para Web falhou" && exit 1)
 
       - name: Executar migration no Portainer (prod)
         if: success()
         run: |
-          curl -X POST "${{ secrets.PORTAINER_WEBHOOK_MIGRATION_PROD }}?tag=${{ steps.tag.outputs.tag }}"
+          curl --fail --silent --show-error -X POST \
+            "${{ secrets.PORTAINER_WEBHOOK_MIGRATION_PROD }}?tag=${{ steps.tag.outputs.tag }}" \
+            || (echo "ERRO: Webhook do Portainer para Migration falhou" && exit 1)

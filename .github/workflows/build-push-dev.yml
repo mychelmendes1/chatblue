@@ -1,11 +1,26 @@
+# =============================================================================
+# ChatBlue - Build and Push Docker Images (dev)
+# =============================================================================
+# Correcoes aplicadas:
+# - Removido trigger em 'master' (repositorio usa apenas 'main')
+# - Removido fallback de URLs para localhost (falha explicita se secret nao existir)
+# - Adicionado --fail nos curls do Portainer (falha visivel se webhook falhar)
+# - Adicionado concurrency para evitar builds simultaneos
+# - Adicionado step de verificacao de secrets obrigatorios
+# =============================================================================
+
 name: Build and Push Docker Images (dev)
 
 on:
   push:
     branches:
       - main
-      - master
   workflow_dispatch: {}
+
+# Cancela builds anteriores do mesmo branch
+concurrency:
+  group: build-dev-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   AWS_REGION: ${{ secrets.AWS_REGION || 'us-east-2' }}
@@ -24,6 +39,22 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      # CORRECAO: Verifica se secrets criticos estao configurados
+      - name: Verificar secrets obrigatorios
+        run: |
+          MISSING=""
+          [ -z "${{ secrets.AWS_ACCESS_KEY_ID }}" ] && MISSING="$MISSING AWS_ACCESS_KEY_ID"
+          [ -z "${{ secrets.AWS_SECRET_ACCESS_KEY }}" ] && MISSING="$MISSING AWS_SECRET_ACCESS_KEY"
+          [ -z "${{ secrets.NEXT_PUBLIC_API_URL_DEV }}" ] && MISSING="$MISSING NEXT_PUBLIC_API_URL_DEV"
+          [ -z "${{ secrets.NEXT_PUBLIC_SOCKET_URL_DEV }}" ] && MISSING="$MISSING NEXT_PUBLIC_SOCKET_URL_DEV"
+
+          if [ -n "$MISSING" ]; then
+            echo "ERRO: Os seguintes secrets nao estao configurados:$MISSING"
+            echo "Configure-os em Settings > Secrets and variables > Actions"
+            exit 1
+          fi
+          echo "Todos os secrets obrigatorios estao presentes."
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -48,11 +79,12 @@ jobs:
           aws ecr describe-repositories --repository-names "$MIGRATION_REPOSITORY" >/dev/null 2>&1 || \
             aws ecr create-repository --repository-name "$MIGRATION_REPOSITORY"
 
+      # CORRECAO: Removido fallback para localhost - secrets sao obrigatorios
       - name: Build and push Docker images (dev)
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          NEXT_PUBLIC_API_URL: ${{ secrets.NEXT_PUBLIC_API_URL_DEV || 'http://localhost:3001' }}
-          NEXT_PUBLIC_SOCKET_URL: ${{ secrets.NEXT_PUBLIC_SOCKET_URL_DEV || 'http://localhost:3001' }}
+          NEXT_PUBLIC_API_URL: ${{ secrets.NEXT_PUBLIC_API_URL_DEV }}
+          NEXT_PUBLIC_SOCKET_URL: ${{ secrets.NEXT_PUBLIC_SOCKET_URL_DEV }}
           NEXT_PUBLIC_VAPID_PUBLIC_KEY: ${{ secrets.NEXT_PUBLIC_VAPID_PUBLIC_KEY_DEV || '' }}
         run: |
           set -e
@@ -91,17 +123,24 @@ jobs:
           docker push "$ECR_REGISTRY/$MIGRATION_REPOSITORY:$IMAGE_TAG"
           docker push "$ECR_REGISTRY/$MIGRATION_REPOSITORY:latest"
 
+      # CORRECAO: Adicionado --fail e --silent --show-error para falhar explicitamente
       - name: Atualizar API no Portainer (dev)
         if: success()
         run: |
-          curl -X POST "${{ secrets.PORTAINER_WEBHOOK_API_DEV }}?tag=${GITHUB_SHA}"
+          curl --fail --silent --show-error -X POST \
+            "${{ secrets.PORTAINER_WEBHOOK_API_DEV }}?tag=${GITHUB_SHA}" \
+            || (echo "ERRO: Webhook do Portainer para API falhou" && exit 1)
 
       - name: Atualizar Web no Portainer (dev)
         if: success()
         run: |
-          curl -X POST "${{ secrets.PORTAINER_WEBHOOK_WEB_DEV }}?tag=${GITHUB_SHA}"
+          curl --fail --silent --show-error -X POST \
+            "${{ secrets.PORTAINER_WEBHOOK_WEB_DEV }}?tag=${GITHUB_SHA}" \
+            || (echo "ERRO: Webhook do Portainer para Web falhou" && exit 1)
 
       - name: Executar migration no Portainer (dev)
         if: success()
         run: |
-          curl -X POST "${{ secrets.PORTAINER_WEBHOOK_MIGRATION_DEV }}?tag=${GITHUB_SHA}"
+          curl --fail --silent --show-error -X POST \
+            "${{ secrets.PORTAINER_WEBHOOK_MIGRATION_DEV }}?tag=${GITHUB_SHA}" \
+            || (echo "ERRO: Webhook do Portainer para Migration falhou" && exit 1)
