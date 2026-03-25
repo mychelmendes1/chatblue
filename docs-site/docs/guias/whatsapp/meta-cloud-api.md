@@ -51,7 +51,7 @@ Antes de comecar, certifique-se de ter:
 | Email de contato | seu-email@empresa.com |
 | Conta comercial | Selecione sua conta |
 
-![Placeholder: Tela de criacao de aplicativo Meta](/img/guias/meta-criar-app.png)
+*Imagem: Tela de criacao de aplicativo Meta*
 
 #### Passo 1.2: Adicionar WhatsApp
 
@@ -81,7 +81,7 @@ Anote as seguintes informacoes (voce precisara delas no ChatBlue):
 | Access Token | Configuracoes > Tokens de acesso |
 | App Secret | Configuracoes > Basico > Chave secreta |
 
-![Placeholder: Tela de credenciais Meta](/img/guias/meta-credenciais.png)
+*Imagem: Tela de credenciais Meta*
 
 ### Fase 2: Configurar Webhook
 
@@ -121,7 +121,7 @@ Apos verificar o webhook, inscreva-se nos eventos:
 - [x] message_reads
 - [x] message_template_status_update
 
-![Placeholder: Configuracao de webhook Meta](/img/guias/meta-webhook.png)
+*Imagem: Configuracao de webhook Meta*
 
 ### Fase 3: Configurar no ChatBlue
 
@@ -189,7 +189,7 @@ Insira as credenciais obtidas na Fase 1:
    - Configuracao do webhook
    - Permissoes do numero
 
-![Placeholder: Teste de conexao Meta Cloud API](/img/guias/meta-teste-conexao.png)
+*Imagem: Teste de conexao Meta Cloud API*
 
 ### Fase 4: Criar Token Permanente
 

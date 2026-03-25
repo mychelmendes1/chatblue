@@ -120,7 +120,7 @@ router.post(
       const url = UploadService.getFileUrl(req.file.filename, "avatars");
 
       // Update user avatar in database
-      const userId = (req as any).user.id;
+      const userId = req.user!.userId;
       await prisma.user.update({
         where: { id: userId },
         data: { avatar: url },

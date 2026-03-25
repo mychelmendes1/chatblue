@@ -47,7 +47,7 @@ A personalidade da IA define como ela se comunica com os clientes. Uma personali
 2. Clique na aba **Personalidade**
 3. Selecione **Criar Nova** ou edite uma existente
 
-![Placeholder: Tela de configuracao de personalidade](/img/guias/personalidade-menu.png)
+*Imagem: Tela de configuracao de personalidade*
 
 ### Passo 2: Definir Informacoes Basicas
 

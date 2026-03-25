@@ -6,7 +6,7 @@ description: Documentacao completa de todas as paginas do frontend ChatBlue
 
 # Paginas da Aplicacao
 
-Esta documentacao descreve todas as paginas disponíveis no frontend do ChatBlue, incluindo suas funcionalidades, componentes utilizados e fluxos de interacao.
+Esta documentacao descreve todas as paginas disponiveis no frontend do ChatBlue, incluindo suas funcionalidades, componentes utilizados e fluxos de interacao.
 
 ## Estrutura de Rotas
 
@@ -16,9 +16,13 @@ O ChatBlue utiliza o sistema de rotas do Next.js App Router com grupos de rotas 
 app/
 ├── (auth)/                 # Paginas de autenticacao
 │   ├── login/
+│   ├── forgot-password/
+│   ├── reset-password/
 │   └── layout.tsx
 ├── (dashboard)/            # Paginas do painel principal
 │   ├── chat/
+│   ├── inbox/
+│   ├── kanban/
 │   ├── contacts/
 │   ├── users/
 │   ├── connections/
@@ -26,7 +30,12 @@ app/
 │   ├── settings/
 │   ├── faq/
 │   ├── ai-agent/
+│   ├── ai-agents/          # Redireciona para ai-agent?tab=categorias
+│   ├── ai-knowledge/
+│   ├── knowledge/
 │   ├── knowledge-base/
+│   ├── profile/
+│   ├── open/[slug]/[phone]/
 │   └── layout.tsx
 └── layout.tsx              # Layout raiz
 ```
@@ -113,6 +122,18 @@ export default function LoginPage() {
 }
 ```
 
+### Esqueci a Senha (`/forgot-password`)
+
+Pagina para solicitar redefinicao de senha via email.
+
+**Arquivo:** `app/(auth)/forgot-password/page.tsx`
+
+### Redefinir Senha (`/reset-password`)
+
+Pagina para redefinir a senha usando o token recebido por email.
+
+**Arquivo:** `app/(auth)/reset-password/page.tsx`
+
 ---
 
 ## Paginas do Dashboard
@@ -193,6 +214,33 @@ function ChatPage() {
 | `DOCUMENT` | Documento para download |
 | `TEMPLATE` | Mensagem de template WhatsApp |
 | `SYSTEM` | Mensagem do sistema |
+
+---
+
+### Caixa de Entrada (`/inbox`)
+
+Visualizacao de tickets em formato de lista.
+
+**Arquivo:** `app/(dashboard)/inbox/page.tsx`
+
+**Funcionalidades:**
+- Listagem de tickets em formato de lista
+- Filtros por status, atendente e periodo
+- Visualizacao rapida do historico de cada ticket
+- Acesso direto ao chat do ticket selecionado
+
+---
+
+### Kanban (`/kanban`)
+
+Visualizacao de tickets em quadro Kanban.
+
+**Arquivo:** `app/(dashboard)/kanban/page.tsx`
+
+**Funcionalidades:**
+- Quadro Kanban com colunas organizadas por status dos tickets
+- Arrastar e soltar (drag-and-drop) para movimentar tickets entre colunas
+- Visualizacao visual do fluxo de atendimento
 
 ---
 
@@ -297,181 +345,6 @@ export default function ContactsPage() {
 
 ---
 
-### Usuarios (`/users`)
-
-Gerenciamento de usuarios e permissoes (apenas Admin).
-
-**Arquivo:** `app/(dashboard)/users/page.tsx`
-
-**Permissoes Necessarias:** `ADMIN` ou `SUPER_ADMIN`
-
-**Funcionalidades:**
-- Listagem de usuarios da empresa
-- Criacao de novos usuarios
-- Edicao de perfis e permissoes
-- Desativacao de usuarios
-- Atribuicao de departamentos
-
-**Roles Disponiveis:**
-
-| Role | Descricao |
-|------|-----------|
-| `AGENT` | Atendente comum |
-| `SUPERVISOR` | Supervisor de equipe |
-| `ADMIN` | Administrador da empresa |
-| `SUPER_ADMIN` | Super administrador (multi-tenant) |
-
-**Exemplo de Tabela de Usuarios:**
-
-```tsx
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Edit, Trash2 } from "lucide-react";
-
-function UsersTable({ users }: { users: User[] }) {
-  return (
-    <Table>
-      <TableHeader>
-        <TableRow>
-          <TableHead>Nome</TableHead>
-          <TableHead>Email</TableHead>
-          <TableHead>Funcao</TableHead>
-          <TableHead>Status</TableHead>
-          <TableHead>Acoes</TableHead>
-        </TableRow>
-      </TableHeader>
-      <TableBody>
-        {users.map((user) => (
-          <TableRow key={user.id}>
-            <TableCell>{user.name}</TableCell>
-            <TableCell>{user.email}</TableCell>
-            <TableCell>
-              <Badge variant="outline">{user.role}</Badge>
-            </TableCell>
-            <TableCell>
-              <Badge variant={user.isActive ? "default" : "secondary"}>
-                {user.isActive ? "Ativo" : "Inativo"}
-              </Badge>
-            </TableCell>
-            <TableCell>
-              <div className="flex gap-2">
-                <Button variant="ghost" size="icon">
-                  <Edit className="w-4 h-4" />
-                </Button>
-                <Button variant="ghost" size="icon">
-                  <Trash2 className="w-4 h-4 text-destructive" />
-                </Button>
-              </div>
-            </TableCell>
-          </TableRow>
-        ))}
-      </TableBody>
-    </Table>
-  );
-}
-```
-
----
-
-### Conexoes (`/connections`)
-
-Gerenciamento de conexoes WhatsApp.
-
-**Arquivo:** `app/(dashboard)/connections/page.tsx`
-
-**Funcionalidades:**
-- Listagem de conexoes WhatsApp
-- Conexao via QR Code (Evolution API)
-- Conexao via Meta Cloud API (oficial)
-- Monitoramento de status em tempo real
-- Desconexao e reconexao
-
-**Tipos de Conexao:**
-
-```typescript
-type ConnectionType = "EVOLUTION" | "META_CLOUD";
-
-interface Connection {
-  id: string;
-  name: string;
-  type: ConnectionType;
-  status: "CONNECTED" | "DISCONNECTED" | "CONNECTING" | "QR_CODE";
-  phone?: string;
-  qrCode?: string;
-  createdAt: string;
-}
-```
-
-**Exemplo de Card de Conexao:**
-
-```tsx
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Wifi, WifiOff, QrCode, Trash2 } from "lucide-react";
-
-function ConnectionCard({ connection }: { connection: Connection }) {
-  const statusColors = {
-    CONNECTED: "bg-green-500",
-    DISCONNECTED: "bg-red-500",
-    CONNECTING: "bg-yellow-500",
-    QR_CODE: "bg-blue-500",
-  };
-
-  return (
-    <Card>
-      <CardHeader>
-        <div className="flex items-center justify-between">
-          <CardTitle className="text-lg">{connection.name}</CardTitle>
-          <Badge className={statusColors[connection.status]}>
-            {connection.status === "CONNECTED" ? (
-              <Wifi className="w-3 h-3 mr-1" />
-            ) : (
-              <WifiOff className="w-3 h-3 mr-1" />
-            )}
-            {connection.status}
-          </Badge>
-        </div>
-      </CardHeader>
-      <CardContent>
-        <p className="text-sm text-muted-foreground mb-4">
-          Tipo: {connection.type === "EVOLUTION" ? "Evolution API" : "Meta Cloud API"}
-        </p>
-
-        {connection.status === "QR_CODE" && connection.qrCode && (
-          <div className="flex justify-center p-4 bg-white rounded-lg">
-            <img src={connection.qrCode} alt="QR Code" className="w-48 h-48" />
-          </div>
-        )}
-
-        <div className="flex gap-2 mt-4">
-          {connection.status !== "CONNECTED" && (
-            <Button variant="outline" size="sm">
-              <QrCode className="w-4 h-4 mr-2" />
-              Conectar
-            </Button>
-          )}
-          <Button variant="destructive" size="sm">
-            <Trash2 className="w-4 h-4 mr-2" />
-            Remover
-          </Button>
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
-```
-
----
-
 ### Metricas (`/metrics`)
 
 Dashboard de metricas e analytics.
@@ -560,6 +433,182 @@ function MetricCard({
 
 ---
 
+### Usuarios (`/users`)
+
+Gerenciamento de usuarios e permissoes (apenas Admin).
+
+**Arquivo:** `app/(dashboard)/users/page.tsx`
+
+**Permissoes Necessarias:** `ADMIN` ou `SUPER_ADMIN`
+
+**Funcionalidades:**
+- Listagem de usuarios da empresa
+- Criacao de novos usuarios
+- Edicao de perfis e permissoes
+- Desativacao de usuarios
+- Atribuicao de departamentos
+
+**Roles Disponiveis:**
+
+| Role | Descricao |
+|------|-----------|
+| `AGENT` | Atendente comum |
+| `SUPERVISOR` | Supervisor de equipe |
+| `ADMIN` | Administrador da empresa |
+| `SUPER_ADMIN` | Super administrador (multi-tenant) |
+
+**Exemplo de Tabela de Usuarios:**
+
+```tsx
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Edit, Trash2 } from "lucide-react";
+
+function UsersTable({ users }: { users: User[] }) {
+  return (
+    <Table>
+      <TableHeader>
+        <TableRow>
+          <TableHead>Nome</TableHead>
+          <TableHead>Email</TableHead>
+          <TableHead>Funcao</TableHead>
+          <TableHead>Status</TableHead>
+          <TableHead>Acoes</TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {users.map((user) => (
+          <TableRow key={user.id}>
+            <TableCell>{user.name}</TableCell>
+            <TableCell>{user.email}</TableCell>
+            <TableCell>
+              <Badge variant="outline">{user.role}</Badge>
+            </TableCell>
+            <TableCell>
+              <Badge variant={user.isActive ? "default" : "secondary"}>
+                {user.isActive ? "Ativo" : "Inativo"}
+              </Badge>
+            </TableCell>
+            <TableCell>
+              <div className="flex gap-2">
+                <Button variant="ghost" size="icon">
+                  <Edit className="w-4 h-4" />
+                </Button>
+                <Button variant="ghost" size="icon">
+                  <Trash2 className="w-4 h-4 text-destructive" />
+                </Button>
+              </div>
+            </TableCell>
+          </TableRow>
+        ))}
+      </TableBody>
+    </Table>
+  );
+}
+```
+
+---
+
+### Conexoes (`/connections`)
+
+Gerenciamento de conexoes WhatsApp e Instagram.
+
+**Arquivo:** `app/(dashboard)/connections/page.tsx`
+
+**Funcionalidades:**
+- Listagem de conexoes WhatsApp e Instagram
+- Conexao via QR Code (Baileys)
+- Conexao via Meta Cloud API (oficial)
+- Conexao de conta Instagram
+- Monitoramento de status em tempo real
+- Desconexao e reconexao
+
+**Tipos de Conexao:**
+
+```typescript
+type ConnectionType = "BAILEYS" | "META_CLOUD" | "INSTAGRAM";
+
+interface Connection {
+  id: string;
+  name: string;
+  type: ConnectionType;
+  status: "CONNECTED" | "DISCONNECTED" | "CONNECTING" | "QR_CODE";
+  phone?: string;
+  qrCode?: string;
+  createdAt: string;
+}
+```
+
+**Exemplo de Card de Conexao:**
+
+```tsx
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Wifi, WifiOff, QrCode, Trash2 } from "lucide-react";
+
+function ConnectionCard({ connection }: { connection: Connection }) {
+  const statusColors = {
+    CONNECTED: "bg-green-500",
+    DISCONNECTED: "bg-red-500",
+    CONNECTING: "bg-yellow-500",
+    QR_CODE: "bg-blue-500",
+  };
+
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex items-center justify-between">
+          <CardTitle className="text-lg">{connection.name}</CardTitle>
+          <Badge className={statusColors[connection.status]}>
+            {connection.status === "CONNECTED" ? (
+              <Wifi className="w-3 h-3 mr-1" />
+            ) : (
+              <WifiOff className="w-3 h-3 mr-1" />
+            )}
+            {connection.status}
+          </Badge>
+        </div>
+      </CardHeader>
+      <CardContent>
+        <p className="text-sm text-muted-foreground mb-4">
+          Tipo: {connection.type === "BAILEYS" ? "Baileys (QR Code)" : connection.type === "META_CLOUD" ? "Meta Cloud API" : "Instagram"}
+        </p>
+
+        {connection.status === "QR_CODE" && connection.qrCode && (
+          <div className="flex justify-center p-4 bg-white rounded-lg">
+            <img src={connection.qrCode} alt="QR Code" className="w-48 h-48" />
+          </div>
+        )}
+
+        <div className="flex gap-2 mt-4">
+          {connection.status !== "CONNECTED" && (
+            <Button variant="outline" size="sm">
+              <QrCode className="w-4 h-4 mr-2" />
+              Conectar
+            </Button>
+          )}
+          <Button variant="destructive" size="sm">
+            <Trash2 className="w-4 h-4 mr-2" />
+            Remover
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+```
+
+---
+
 ### Configuracoes (`/settings`)
 
 Configuracoes gerais da conta e empresa.
@@ -568,12 +617,11 @@ Configuracoes gerais da conta e empresa.
 
 **Secoes Disponiveis:**
 
-1. **Perfil** - Dados do usuario logado
-2. **Empresa** - Informacoes da empresa (Admin)
-3. **Notificacoes** - Preferencias de notificacao
-4. **Departamentos** - Gerenciamento de setores
-5. **Horarios** - Horarios de funcionamento
-6. **Mensagens Automaticas** - Respostas automaticas
+1. **Empresa** - Informacoes da empresa (Admin)
+2. **Notificacoes** - Preferencias de notificacao
+3. **Departamentos** - Gerenciamento de setores
+4. **Horarios** - Horarios de funcionamento
+5. **Mensagens Automaticas** - Respostas automaticas
 
 **Exemplo de Formulario de Configuracoes:**
 
@@ -599,31 +647,11 @@ export default function SettingsPage() {
     <div className="p-6 max-w-4xl mx-auto">
       <h1 className="text-2xl font-bold mb-6">Configuracoes</h1>
 
-      <Tabs defaultValue="profile">
+      <Tabs defaultValue="notifications">
         <TabsList>
-          <TabsTrigger value="profile">Perfil</TabsTrigger>
           <TabsTrigger value="notifications">Notificacoes</TabsTrigger>
           <TabsTrigger value="company">Empresa</TabsTrigger>
         </TabsList>
-
-        <TabsContent value="profile">
-          <Card>
-            <CardHeader>
-              <CardTitle>Informacoes do Perfil</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="name">Nome</Label>
-                <Input id="name" placeholder="Seu nome" />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="email">Email</Label>
-                <Input id="email" type="email" placeholder="seu@email.com" />
-              </div>
-              <Button>Salvar Alteracoes</Button>
-            </CardContent>
-          </Card>
-        </TabsContent>
 
         <TabsContent value="notifications">
           <Card>
@@ -670,80 +698,19 @@ export default function SettingsPage() {
 
 ---
 
-### FAQ (`/faq`)
+### Perfil (`/profile`)
 
-Gerenciamento de perguntas frequentes para treinamento da IA.
+Pagina de perfil do usuario logado.
 
-**Arquivo:** `app/(dashboard)/faq/page.tsx`
-
-**Permissoes Necessarias:** `ADMIN`
+**Arquivo:** `app/(dashboard)/profile/page.tsx`
 
 **Funcionalidades:**
-- CRUD completo de FAQs
-- Organizacao por categorias
-- Atribuicao a departamentos
-- Palavras-chave para busca semantica
-- Contador de usos pela IA
-- Ativacao/desativacao individual
+- Visualizacao e edicao da foto de perfil
+- Estatisticas pessoais de atendimento
+- Alteracao de senha
+- Dados pessoais do usuario
 
-**Estrutura de Dados:**
-
-```typescript
-interface FAQItem {
-  id: string;
-  question: string;
-  answer: string;
-  keywords: string[];
-  category?: string;
-  departmentId?: string;
-  department?: Department;
-  useCount: number;
-  isActive: boolean;
-  order: number;
-  createdAt: string;
-  updatedAt: string;
-}
-```
-
-**Exemplo de Card de FAQ:**
-
-```tsx
-<Card className="cursor-pointer hover:border-primary/50">
-  <CardHeader className="pb-3">
-    <div className="flex items-start justify-between">
-      <div className="flex-1">
-        <CardTitle className="text-base flex items-center gap-2">
-          <MessageCircle className="w-4 h-4 text-primary" />
-          {item.question}
-        </CardTitle>
-        <div className="flex items-center gap-2 mt-2">
-          {item.category && (
-            <Badge variant="secondary">{item.category}</Badge>
-          )}
-          <Badge variant="outline">
-            <TrendingUp className="w-3 h-3 mr-1" />
-            {item.useCount} usos
-          </Badge>
-        </div>
-      </div>
-    </div>
-  </CardHeader>
-  <CardContent>
-    <p className="text-sm text-muted-foreground line-clamp-2">
-      {item.answer}
-    </p>
-    {item.keywords.length > 0 && (
-      <div className="flex flex-wrap gap-1 mt-3">
-        {item.keywords.map((keyword) => (
-          <Badge key={keyword} variant="outline" className="text-xs">
-            {keyword}
-          </Badge>
-        ))}
-      </div>
-    )}
-  </CardContent>
-</Card>
-```
+O acesso ao perfil e feito pelo avatar do usuario na sidebar (dropdown com opcao "Configuracoes" que leva a `/profile`).
 
 ---
 
@@ -760,6 +727,9 @@ Configuracao de agentes de IA para atendimento automatizado.
 - Upload de PDF para treinamento
 - Palavras-chave para transferencia
 - Guardrails de seguranca
+- Aba "Agentes por categoria" (visivel para admins) para atribuir agentes por departamento/categoria
+
+A rota `/ai-agents` redireciona para `/ai-agent?tab=categorias`.
 
 **Modelos de IA Suportados:**
 
@@ -852,13 +822,13 @@ const PERSONALITY_STYLES = [
 
 ---
 
-### Knowledge Base (`/knowledge-base`)
+### Conhecimento (`/knowledge`)
 
 Base de conhecimento para treinamento da IA.
 
-**Arquivo:** `app/(dashboard)/knowledge-base/page.tsx`
+**Arquivo:** `app/(dashboard)/knowledge/page.tsx`
 
-**Permissoes Necessarias:** `ADMIN`
+**Permissoes Necessarias:** `ADMIN` ou `SUPER_ADMIN`
 
 **Funcionalidades:**
 - Upload de documentos (PDF, DOCX, TXT)
@@ -866,27 +836,85 @@ Base de conhecimento para treinamento da IA.
 - Indexacao automatica para RAG
 - Visualizacao de chunks processados
 
+A rota `/knowledge-base` tambem existe como uma pagina separada, mas a pagina principal de gestao de conhecimento e `/knowledge`, que e a exibida na sidebar.
+
+---
+
+### FAQ (`/faq`)
+
+Gerenciamento de perguntas frequentes para treinamento da IA.
+
+**Arquivo:** `app/(dashboard)/faq/page.tsx`
+
+**Permissoes Necessarias:** `ADMIN`
+
+**Funcionalidades:**
+- CRUD completo de FAQs
+- Organizacao por categorias
+- Atribuicao a departamentos
+- Palavras-chave para busca semantica
+- Contador de usos pela IA
+- Ativacao/desativacao individual
+
+Esta pagina nao aparece como item separado na sidebar. O acesso e feito por outras areas da aplicacao.
+
+**Estrutura de Dados:**
+
+```typescript
+interface FAQItem {
+  id: string;
+  question: string;
+  answer: string;
+  keywords: string[];
+  category?: string;
+  departmentId?: string;
+  department?: Department;
+  useCount: number;
+  isActive: boolean;
+  order: number;
+  createdAt: string;
+  updatedAt: string;
+}
+```
+
+---
+
+### Link Publico (`/open/[slug]/[phone]`)
+
+Rota publica para iniciar conversa via link compartilhavel.
+
+**Arquivo:** `app/(dashboard)/open/[slug]/[phone]/page.tsx`
+
+**Funcionalidades:**
+- Permite que clientes externos iniciem uma conversa atraves de um link
+- O `[slug]` identifica a empresa/conexao
+- O `[phone]` identifica o numero de telefone do contato
+- Nao requer autenticacao para acesso
+
 ---
 
 ## Navegacao
 
 ### Sidebar Desktop
 
-A sidebar desktop exibe todos os itens de navegacao em formato de icones:
+A sidebar desktop exibe todos os itens de navegacao em formato de icones. Itens marcados com `adminOnly` so aparecem para usuarios com role `ADMIN` ou `SUPER_ADMIN`:
 
 ```tsx
 const navigation = [
   { name: "Chat", href: "/chat", icon: MessageSquare },
+  { name: "Caixa de Entrada", href: "/inbox", icon: Inbox },
+  { name: "Kanban", href: "/kanban", icon: LayoutGrid },
   { name: "Contatos", href: "/contacts", icon: Users },
   { name: "Metricas", href: "/metrics", icon: BarChart3 },
   { name: "Usuarios", href: "/users", icon: Shield, adminOnly: true },
   { name: "Conexoes", href: "/connections", icon: Wifi },
   { name: "Atendente IA", href: "/ai-agent", icon: Bot },
-  { name: "Knowledge Base", href: "/knowledge-base", icon: Book, adminOnly: true },
-  { name: "FAQ", href: "/faq", icon: HelpCircle, adminOnly: true },
+  { name: "Conhecimento", href: "/knowledge", icon: Book, adminOnly: true },
   { name: "Configuracoes", href: "/settings", icon: Settings },
 ];
 ```
+
+Na parte inferior da sidebar, o avatar do usuario abre um dropdown com as opcoes "Configuracoes" (leva a `/profile`) e "Sair".
 
 ### Bottom Navigation Mobile
 
@@ -895,28 +923,31 @@ No mobile, a navegacao principal aparece na parte inferior com os itens mais imp
 ```tsx
 const bottomNavItems = [
   { name: "Chat", href: "/chat", icon: MessageSquare },
-  { name: "Contatos", href: "/contacts", icon: Users },
+  { name: "Entrada", href: "/inbox", icon: Inbox },
+  { name: "Kanban", href: "/kanban", icon: LayoutGrid },
   { name: "Metricas", href: "/metrics", icon: BarChart3 },
-  { name: "Conexoes", href: "/connections", icon: Wifi },
 ];
 ```
 
-Os demais itens ficam acessiveis atraves do menu "Mais" que abre um Sheet com todos os itens.
+Os demais itens ficam acessiveis atraves do menu "Mais" que abre um Sheet com todos os itens de navegacao, alem de secao de usuario com link para perfil e botao de sair.
 
 ---
 
 ## Protecao de Rotas
 
-As rotas do dashboard sao protegidas pelo middleware de autenticacao:
+As rotas do dashboard sao protegidas pelo layout que verifica o estado de autenticacao usando `user` e `isLoading` do `useAuthStore`. O layout envolve todo o conteudo com `SocketProvider` e inclui o `Header` e o mascote `BlueMascot`:
 
 ```tsx
 // app/(dashboard)/layout.tsx
 "use client";
 
 import { useEffect } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, usePathname } from "next/navigation";
 import { useAuthStore } from "@/stores/auth.store";
 import { Sidebar } from "@/components/layout/sidebar";
+import { Header } from "@/components/layout/header";
+import { SocketProvider } from "@/components/providers/socket-provider";
+import { BlueMascot } from "@/components/blue/blue-mascot";
 
 export default function DashboardLayout({
   children,
@@ -924,34 +955,54 @@ export default function DashboardLayout({
   children: React.ReactNode;
 }) {
   const router = useRouter();
-  const { isAuthenticated, isLoading, checkAuth } = useAuthStore();
+  const pathname = usePathname();
+  const { user, isLoading, checkAuth } = useAuthStore();
 
   useEffect(() => {
     checkAuth();
-  }, []);
+  }, [checkAuth]);
 
   useEffect(() => {
-    if (!isLoading && !isAuthenticated) {
-      router.push("/login");
+    if (!isLoading && !user) {
+      const currentPath = pathname || "/chat";
+      if (currentPath !== "/chat" && currentPath !== "/") {
+        router.push(`/login?redirect=${encodeURIComponent(currentPath)}`);
+      } else {
+        router.push("/login");
+      }
     }
-  }, [isLoading, isAuthenticated, router]);
+  }, [user, isLoading, router, pathname]);
 
   if (isLoading) {
-    return <LoadingScreen />;
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-chatblue" />
+      </div>
+    );
   }
 
-  if (!isAuthenticated) {
+  if (!user) {
     return null;
   }
 
   return (
-    <div className="flex h-screen">
-      <Sidebar />
-      <main className="flex-1 overflow-auto">{children}</main>
-    </div>
+    <SocketProvider>
+      <div className="flex h-screen h-screen-mobile overflow-hidden">
+        <Sidebar />
+        <div className="flex-1 flex flex-col overflow-hidden min-h-0">
+          <Header />
+          <main className="flex-1 overflow-y-auto overflow-x-hidden pb-16 md:pb-0 min-h-0">
+            {children}
+          </main>
+        </div>
+      </div>
+      <BlueMascot />
+    </SocketProvider>
   );
 }
 ```
+
+Quando o usuario nao esta autenticado, o layout redireciona para `/login` preservando o caminho atual como parametro `redirect` na URL (exceto para `/chat` e `/`).
 
 ---
 

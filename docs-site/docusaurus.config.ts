@@ -5,7 +5,7 @@ import type * as Preset from '@docusaurus/preset-classic';
 const config: Config = {
   title: 'ChatBlue',
   tagline: 'Plataforma Multi-tenant de Atendimento ao Cliente via WhatsApp',
-  favicon: 'img/favicon.ico',
+  favicon: 'img/favicon.png',
 
   future: {
     v4: true,
@@ -18,7 +18,14 @@ const config: Config = {
   projectName: 'chatblue',
 
   onBrokenLinks: 'warn',
-  onBrokenMarkdownLinks: 'warn',
+
+  // Capturas em /img/guias/ podem não existir em static/; placeholders MDX ({nome}) escapados nos .md onde necessário.
+  markdown: {
+    hooks: {
+      onBrokenMarkdownImages: 'ignore',
+      onBrokenMarkdownLinks: 'warn',
+    },
+  },
 
   i18n: {
     defaultLocale: 'pt-BR',
@@ -32,7 +39,6 @@ const config: Config = {
         docs: {
           sidebarPath: './sidebars.ts',
           routeBasePath: '/',
-          editUrl: 'https://github.com/chatblue/chatblue/tree/main/docs-site/',
         },
         blog: false,
         theme: {
@@ -58,8 +64,8 @@ const config: Config = {
     navbar: {
       title: 'ChatBlue',
       logo: {
-        alt: 'ChatBlue Logo',
-        src: 'img/logo.svg',
+        alt: 'ChatBlue',
+        src: 'img/favicon.png',
       },
       items: [
         {
@@ -85,11 +91,6 @@ const config: Config = {
           sidebarId: 'trainingSidebar',
           position: 'left',
           label: 'Treinamento',
-        },
-        {
-          href: 'https://github.com/chatblue/chatblue',
-          label: 'GitHub',
-          position: 'right',
         },
       ],
     },
@@ -164,17 +165,8 @@ const config: Config = {
             },
           ],
         },
-        {
-          title: 'Mais',
-          items: [
-            {
-              label: 'GitHub',
-              href: 'https://github.com/chatblue/chatblue',
-            },
-          ],
-        },
       ],
-      copyright: `Copyright © ${new Date().getFullYear()} ChatBlue. Documentacao construida com Docusaurus.`,
+      copyright: `Copyright © ${new Date().getFullYear()} ChatBlue.`,
     },
     prism: {
       theme: prismThemes.github,

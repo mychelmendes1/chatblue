@@ -66,7 +66,7 @@ O mapeamento de campos define como os dados sao transferidos entre o ChatBlue e 
 1. Acesse **Configuracoes > Integracoes > Notion**
 2. Clique na aba **Mapeamento de Campos**
 
-![Placeholder: Tela de mapeamento de campos](/img/guias/notion-mapeamento.png)
+*Imagem: Tela de mapeamento de campos*
 
 ### Passo 2: Mapear Campos Basicos
 
@@ -423,7 +423,7 @@ Combinar multiplos campos:
 3. Selecione um contato de exemplo
 4. Visualize a conversao
 
-![Placeholder: Teste de mapeamento](/img/guias/notion-mapeamento-teste.png)
+*Imagem: Teste de mapeamento*
 
 ### Via API
 

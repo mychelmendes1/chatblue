@@ -61,7 +61,7 @@ Departamentos sao divisoes organizacionais que:
 | Lider | Usuario responsavel | Nao |
 | Membros | Usuarios do departamento | Nao |
 
-![Placeholder: Formulario de criacao de departamento](/img/guias/departamento-criar.png)
+*Imagem: Formulario de criacao de departamento*
 
 ### Via API
 
@@ -368,7 +368,7 @@ POST /api/tickets/{id}/transfer
 3. Adicione uma observacao (opcional)
 4. Confirme a transferencia
 
-![Placeholder: Modal de transferencia](/img/guias/departamento-transferir.png)
+*Imagem: Modal de transferencia*
 
 ## Fila do Departamento
 

@@ -259,7 +259,7 @@ Apenas visualiza informacoes, sem poder de edicao.
 2. Clique em **+ Novo Papel**
 3. Configure as permissoes
 
-![Placeholder: Criacao de papel customizado](/img/guias/permissoes-criar-papel.png)
+*Imagem: Criacao de papel customizado*
 
 ### Via API
 

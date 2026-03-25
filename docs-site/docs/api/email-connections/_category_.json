@@ -1,0 +1,8 @@
+{
+  "label": "Conexoes Email",
+  "position": 12,
+  "link": {
+    "type": "generated-index",
+    "description": "Endpoints para gerenciar conexoes de email no ChatBlue"
+  }
+}

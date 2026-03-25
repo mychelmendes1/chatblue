@@ -147,10 +147,13 @@ router.post('/inbound', authenticateSgt, async (req, res, next) => {
       });
     }
 
-    // SLA para o departamento comercial
-    const slaDeadline = await SLAService.calculateDeadline(companyId, commercialDept.id);
+    const slaAnchor = new Date();
+    const slaDeadline = await SLAService.calculateFirstResponseDeadline(
+      slaAnchor,
+      companyId,
+      commercialDept.id
+    );
 
-    // Criar ticket atribuído à IA externa
     const protocol = generateProtocol();
     const ticket = await prisma.ticket.create({
       data: {

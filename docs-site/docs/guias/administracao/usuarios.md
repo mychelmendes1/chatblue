@@ -69,7 +69,7 @@ Os usuarios sao as pessoas que acessam o ChatBlue para realizar atendimentos, ge
 | Papel | Role do usuario | Sim |
 | Departamentos | Departamentos de atuacao | Sim |
 
-![Placeholder: Formulario de criacao de usuario](/img/guias/usuario-criar.png)
+*Imagem: Formulario de criacao de usuario*
 
 ### Via API
 

@@ -14,728 +14,688 @@ Os services encapsulam a logica de negocio do ChatBlue, separando-a das rotas e 
 apps/api/src/services/
 ├── ai/
 │   ├── ai.service.ts
+│   ├── assistant.service.ts
 │   ├── context-builder.service.ts
+│   ├── embedding.service.ts
+│   ├── guardrails.service.ts
+│   ├── knowledge-sync.service.ts
+│   ├── data-source-sync.service.ts
+│   ├── orchestrator.service.ts
 │   ├── personality.service.ts
 │   ├── transcription.service.ts
-│   ├── transfer-analyzer.service.ts
-│   └── guardrails.service.ts
+│   └── transfer-analyzer.service.ts
+│
+├── blue/
+│   ├── blue.service.ts
+│   ├── blue-context-builder.service.ts
+│   ├── code-rag.service.ts
+│   └── doc-rag.service.ts
+│
+├── email/
+│   └── email.service.ts
+│
+├── email-channel/
+│   ├── imap.service.ts
+│   ├── smtp.service.ts
+│   ├── google-oauth.service.ts
+│   ├── email-template.service.ts
+│   └── crypto.util.ts
+│
+├── external-ai/
+│   └── external-ai-webhook.service.ts
+│
+├── instagram/
+│   └── instagram.service.ts
+│
+├── knowledge/
+│   ├── context-retrieval.service.ts
+│   ├── embedding.service.ts
+│   └── ingestion.service.ts
+│
+├── ml/
+│   ├── ml-integration.service.ts
+│   ├── ml-response-generator.service.ts
+│   ├── intent-classifier.service.ts
+│   ├── pattern-detector.service.ts
+│   ├── quality-scorer.service.ts
+│   ├── training-pair-collector.service.ts
+│   └── index.ts
+│
+├── notion/
+│   └── notion.service.ts
+│
+├── nps/
+│   └── nps.service.ts
+│
+├── push/
+│   └── push.service.ts
+│
+├── sla/
+│   ├── sla.service.ts
+│   └── sla.service.test.ts
+│
+├── upload/
+│   ├── upload.service.ts
+│   └── upload.service.test.ts
 │
 ├── whatsapp/
 │   ├── whatsapp.service.ts
 │   ├── baileys.service.ts
 │   └── meta-cloud.service.ts
 │
+├── admin-assistant/
+│   └── admin-assistant.service.ts
+│
 ├── message-processor.service.ts
-├── notion.service.ts
-├── sla.service.ts
-├── email.service.ts
-├── push.service.ts
-└── upload.service.ts
+└── outbound-webhook.service.ts
 ```
 
-## WhatsApp Services
+---
+
+## WhatsApp Services (`whatsapp/`)
 
 ### WhatsAppService
 
-Servico principal que roteia para Baileys ou Meta Cloud:
+Servico principal que roteia para Baileys ou Meta Cloud com base no tipo da conexao. Recebe uma `WhatsAppConnection` no construtor e instancia automaticamente o provider correto:
 
 ```typescript
 class WhatsAppService {
-  async sendMessage(
-    companyId: string,
-    connectionId: string,
-    to: string,
-    message: SendMessageDto
-  ) {
-    const connection = await prisma.whatsAppConnection.findFirst({
-      where: { id: connectionId, companyId },
-    });
-
-    if (!connection) {
-      throw new NotFoundError('Conexao nao encontrada');
-    }
-
-    switch (connection.type) {
-      case 'BAILEYS':
-        return this.baileysService.sendMessage(connection, to, message);
-      case 'META_CLOUD':
-        return this.metaCloudService.sendMessage(connection, to, message);
-      default:
-        throw new Error('Tipo de conexao nao suportado');
+  constructor(connection: WhatsAppConnection) {
+    if (connection.type === 'BAILEYS') {
+      this.baileysService = BaileysService.getInstance(connection.id);
+    } else {
+      this.metaService = new MetaCloudService(connection);
     }
   }
 
-  async getConnection(companyId: string) {
-    // Buscar conexao padrao ou primeira conectada
-    return prisma.whatsAppConnection.findFirst({
-      where: {
-        companyId,
-        status: 'CONNECTED',
-      },
-      orderBy: [
-        { isDefault: 'desc' },
-        { lastConnectedAt: 'desc' },
-      ],
-    });
-  }
+  async sendMessage(to: string, content: string, options?: {
+    quotedMessageId?: string;
+  }): Promise<{ messageId: string }>;
+
+  async sendMedia(to: string, mediaUrl: string, mediaType: string, caption?: string, options?: {
+    quotedMessageId?: string;
+    filename?: string;
+    mimetype?: string;
+  }): Promise<{ messageId: string; finalMediaUrl?: string }>;
 }
 ```
+
+Alem de texto e midia, suporta templates, mensagens interativas (botoes, listas) e conversao de audio (OGG/Opus via ffmpeg).
 
 ### BaileysService
 
-Gerencia conexoes nao-oficiais via Baileys:
+Gerencia conexoes nao-oficiais via Baileys (library open-source). Usa um **singleton por conexao** (`Map<string, BaileysService>`) para manter a sessao do WebSocket ativa. Busca a versao do WhatsApp Web em cache (TTL de 6 horas) e faz fallback para uma versao conhecida se a busca falhar.
 
-```typescript
-class BaileysService {
-  private connections: Map<string, WASocket> = new Map();
+Principais responsabilidades:
 
-  async connect(connectionId: string) {
-    const connection = await prisma.whatsAppConnection.findUnique({
-      where: { id: connectionId },
-    });
-
-    const { state, saveCreds } = await useMultiFileAuthState(
-      `./sessions/${connectionId}`
-    );
-
-    const socket = makeWASocket({
-      auth: state,
-      printQRInTerminal: true,
-    });
-
-    socket.ev.on('connection.update', async (update) => {
-      const { connection, lastDisconnect, qr } = update;
-
-      if (qr) {
-        // Salvar QR code
-        await prisma.whatsAppConnection.update({
-          where: { id: connectionId },
-          data: { qrCode: qr, status: 'CONNECTING' },
-        });
-      }
-
-      if (connection === 'close') {
-        const shouldReconnect =
-          (lastDisconnect?.error as Boom)?.output?.statusCode !==
-          DisconnectReason.loggedOut;
-
-        if (shouldReconnect) {
-          this.connect(connectionId);
-        }
-      }
-
-      if (connection === 'open') {
-        await prisma.whatsAppConnection.update({
-          where: { id: connectionId },
-          data: {
-            status: 'CONNECTED',
-            qrCode: null,
-            lastConnectedAt: new Date(),
-          },
-        });
-      }
-    });
-
-    socket.ev.on('messages.upsert', async ({ messages }) => {
-      for (const msg of messages) {
-        if (!msg.key.fromMe) {
-          await this.messageProcessor.process(connectionId, msg);
-        }
-      }
-    });
-
-    socket.ev.on('creds.update', saveCreds);
-
-    this.connections.set(connectionId, socket);
-    return socket;
-  }
-
-  async sendMessage(
-    connection: WhatsAppConnection,
-    to: string,
-    message: SendMessageDto
-  ) {
-    const socket = this.connections.get(connection.id);
-    if (!socket) {
-      throw new Error('Conexao nao disponivel');
-    }
-
-    const jid = `${to}@s.whatsapp.net`;
-
-    let content: AnyMessageContent;
-
-    switch (message.type) {
-      case 'TEXT':
-        content = { text: message.content };
-        break;
-      case 'IMAGE':
-        content = {
-          image: { url: message.mediaUrl },
-          caption: message.content,
-        };
-        break;
-      case 'AUDIO':
-        content = {
-          audio: { url: message.mediaUrl },
-          ptt: true,
-        };
-        break;
-      // ... outros tipos
-    }
-
-    const result = await socket.sendMessage(jid, content);
-    return result;
-  }
-}
-```
+- Conexao e geracao de QR Code (salvo no banco como base64)
+- Reconexao automatica com backoff (exceto se desconectado por `loggedOut`)
+- Roteamento de mensagens recebidas para `MessageProcessor`
+- Download de midia recebida (imagens, audio, documentos, video, stickers)
+- Envio de mensagens de texto, midia, templates e mensagens interativas
+- Alerta por email (`emailService`) quando a conexao cai
 
 ### MetaCloudService
 
-Gerencia conexoes oficiais via Meta Cloud API:
+Gerencia conexoes oficiais via Meta Cloud API (`graph.facebook.com/v18.0`). Cada instancia recebe uma `WhatsAppConnection` com `accessToken` e `phoneNumberId`.
 
-```typescript
-class MetaCloudService {
-  async sendMessage(
-    connection: WhatsAppConnection,
-    to: string,
-    message: SendMessageDto
-  ) {
-    const url = `https://graph.facebook.com/v18.0/${connection.phoneNumberId}/messages`;
+Principais responsabilidades:
 
-    const body = this.buildMessageBody(to, message);
+- Envio de mensagens de texto, imagens, audio, video, documentos e stickers
+- Envio de templates com variaveis e botoes
+- Envio de mensagens interativas (botoes de resposta e listas)
+- Processamento de webhooks da Meta (mensagens recebidas e status updates)
+- Download de midia recebida via Media API da Meta
+- Teste de conexao (`testConnection`)
 
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${connection.accessToken}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(body),
-    });
+---
 
-    if (!response.ok) {
-      throw new Error('Falha ao enviar mensagem');
-    }
-
-    return response.json();
-  }
-
-  private buildMessageBody(to: string, message: SendMessageDto) {
-    const base = {
-      messaging_product: 'whatsapp',
-      to,
-    };
-
-    switch (message.type) {
-      case 'TEXT':
-        return {
-          ...base,
-          type: 'text',
-          text: { body: message.content },
-        };
-      case 'IMAGE':
-        return {
-          ...base,
-          type: 'image',
-          image: {
-            link: message.mediaUrl,
-            caption: message.content,
-          },
-        };
-      // ... outros tipos
-    }
-  }
-
-  async processWebhook(connectionId: string, body: WebhookBody) {
-    const entry = body.entry?.[0];
-    const changes = entry?.changes?.[0];
-    const value = changes?.value;
-
-    if (value?.messages) {
-      for (const msg of value.messages) {
-        await this.messageProcessor.process(connectionId, msg);
-      }
-    }
-
-    if (value?.statuses) {
-      for (const status of value.statuses) {
-        await this.updateMessageStatus(status);
-      }
-    }
-  }
-}
-```
-
-## AI Services
+## AI Services (`ai/`)
 
 ### AIService
 
-Servico principal de IA:
+Classe base para geracao de texto com suporte a OpenAI e Anthropic. Recebe `provider` e `apiKey` no construtor e instancia o client correto.
 
 ```typescript
+type AIProvider = 'openai' | 'anthropic';
+
 class AIService {
+  constructor(provider: string, apiKey: string);
+
   async generateResponse(
-    companyId: string,
-    ticketId: string,
-    message: Message
-  ): Promise<string> {
-    const settings = await prisma.companySettings.findUnique({
-      where: { companyId },
-    });
-
-    if (!settings?.aiApiKey) {
-      throw new Error('IA nao configurada');
-    }
-
-    // Construir contexto
-    const context = await this.contextBuilder.build(ticketId);
-
-    // Aplicar personalidade
-    const systemPrompt = this.personalityService.buildPrompt(settings);
-
-    // Verificar guardrails
-    if (settings.aiGuardrails) {
-      const isAllowed = await this.guardrailsService.check(message.content);
-      if (!isAllowed) {
-        return 'Desculpe, nao posso ajudar com esse assunto.';
-      }
-    }
-
-    // Gerar resposta
-    let response: string;
-
-    if (settings.aiProvider === 'openai') {
-      response = await this.generateOpenAI(settings, systemPrompt, context, message);
-    } else if (settings.aiProvider === 'anthropic') {
-      response = await this.generateAnthropic(settings, systemPrompt, context, message);
-    }
-
-    // Verificar se precisa transferir
-    const shouldTransfer = await this.transferAnalyzer.analyze(
-      ticketId,
-      message.content,
-      response
-    );
-
-    if (shouldTransfer) {
-      await this.transferToHuman(ticketId);
-    }
-
-    return response;
-  }
-
-  private async generateOpenAI(
-    settings: CompanySettings,
     systemPrompt: string,
-    context: Context,
-    message: Message
-  ): Promise<string> {
-    const openai = new OpenAI({ apiKey: settings.aiApiKey });
-
-    const response = await openai.chat.completions.create({
-      model: settings.aiModel || 'gpt-4-turbo-preview',
-      messages: [
-        { role: 'system', content: systemPrompt },
-        ...context.messages.map(m => ({
-          role: m.isFromContact ? 'user' : 'assistant',
-          content: m.content,
-        })),
-        { role: 'user', content: message.content },
-      ],
-      temperature: 0.7,
-      max_tokens: 500,
-    });
-
-    return response.choices[0].message.content;
-  }
-
-  private async generateAnthropic(
-    settings: CompanySettings,
-    systemPrompt: string,
-    context: Context,
-    message: Message
-  ): Promise<string> {
-    const anthropic = new Anthropic({ apiKey: settings.aiApiKey });
-
-    const response = await anthropic.messages.create({
-      model: settings.aiModel || 'claude-3-5-sonnet-20240620',
-      max_tokens: 500,
-      system: systemPrompt,
-      messages: [
-        ...context.messages.map(m => ({
-          role: m.isFromContact ? 'user' : 'assistant',
-          content: m.content,
-        })),
-        { role: 'user', content: message.content },
-      ],
-    });
-
-    return response.content[0].text;
-  }
+    userMessage: string,
+    context: AIContext,
+    options?: AIOptions
+  ): Promise<string>;
 }
 ```
 
+Modelos disponiveis sao declarados em `AI_MODELS`: GPT-4 Turbo, GPT-4o, GPT-4o Mini, GPT-3.5 Turbo para OpenAI; Claude Opus 4, Claude Sonnet 4, Claude 3.5 Sonnet, Claude 3 Opus e Claude 3 Haiku para Anthropic.
+
+O `AIContext` enriquece o system prompt com nome do contato, telefone, status de cliente, historico de mensagens, nome da empresa, departamento e atendente.
+
+### AIAssistantService
+
+Servico de alto nivel que processa consultas `@ia` feitas por atendentes dentro de um ticket. Gerencia um cache de `OrchestratorService` por empresa.
+
+```typescript
+class AIAssistantService {
+  async processQuery(request: AIAssistantQueryRequest): Promise<AIAssistantQueryResponse>;
+  async processAutoSuggestion(request: AIAutoSuggestionRequest): Promise<AIAssistantQueryResponse>;
+  async submitFeedback(request: AIFeedbackRequest): Promise<void>;
+}
+```
+
+A resposta inclui a categoria classificada, confianca, fontes utilizadas (com excerpts e scores), tempo de processamento e deteccao de lacunas de conhecimento (`hasKnowledgeGap`).
+
+### OrchestratorService
+
+Orquestra o pipeline completo de uma consulta IA: classificacao de categoria, busca semantica de documentos relevantes e geracao de resposta.
+
+```typescript
+class OrchestratorService {
+  constructor(provider: string, apiKey: string);
+
+  async processQuery(
+    query: string,
+    context: OrchestratorContext,
+    selectedCategory?: string
+  ): Promise<OrchestratorResult>;
+}
+```
+
+O `OrchestratorResult` retorna metricas de processamento detalhadas: tempo de classificacao, busca e geracao.
+
 ### ContextBuilderService
 
-Constroi contexto para a IA:
+Constroi o contexto completo para geracao de respostas da IA em atendimentos automaticos. Busca o ticket com contato, departamento, empresa, configuracoes e historico de mensagens, depois combina com os servicos de personalidade, guardrails e recuperacao de conhecimento.
 
 ```typescript
 class ContextBuilderService {
-  async build(ticketId: string): Promise<Context> {
-    const ticket = await prisma.ticket.findUnique({
-      where: { id: ticketId },
-      include: {
-        contact: true,
-        messages: {
-          orderBy: { createdAt: 'desc' },
-          take: 20,
-        },
-        company: {
-          include: { settings: true },
-        },
-      },
-    });
+  constructor(config?: Partial<ContextBuilderConfig>);
 
-    // Buscar base de conhecimento relevante
-    const knowledge = await prisma.knowledgeBase.findMany({
-      where: {
-        companyId: ticket.companyId,
-        isActive: true,
-      },
-      take: 5,
-    });
+  async buildContext(
+    ticketId: string,
+    userMessage: string,
+    aiAgentConfig: any
+  ): Promise<BuiltContext>;
+}
+```
 
-    // Buscar FAQs relevantes
-    const faqs = await prisma.faq.findMany({
-      where: {
-        companyId: ticket.companyId,
-        isActive: true,
-      },
-      take: 10,
-    });
+O `BuiltContext` retorna o system prompt montado, o `AIContext`, e as instancias de `PersonalityService` e `GuardrailsService` configuradas.
 
-    return {
-      contact: {
-        name: ticket.contact.name,
-        phone: ticket.contact.phone,
-        isClient: ticket.contact.notionClientStatus === 'CLIENT',
-        clientSince: ticket.contact.notionClientSince,
-      },
-      messages: ticket.messages.reverse(),
-      knowledge: knowledge.map(k => k.content),
-      faqs: faqs.map(f => ({ q: f.question, a: f.answer })),
-      ticketInfo: {
-        protocol: ticket.protocol,
-        department: ticket.department?.name,
-        createdAt: ticket.createdAt,
-      },
-    };
-  }
+### EmbeddingService (`ai/embedding.service.ts`)
+
+Gera embeddings vetoriais e faz busca semantica nos documentos da empresa. Suporta OpenAI (`text-embedding-3-small`) e referencia Voyage AI para Anthropic.
+
+```typescript
+class EmbeddingService {
+  constructor(provider: string, apiKey: string);
+
+  async generateEmbedding(text: string): Promise<EmbeddingResult>;
+  async semanticSearch(
+    companyId: string,
+    query: string,
+    options?: SemanticSearchOptions
+  ): Promise<SearchResult[]>;
+}
+```
+
+O `SemanticSearchOptions` permite filtrar por `dataSourceIds`, `categories`, `departmentId` e threshold minimo de similaridade.
+
+### PersonalityService
+
+Configura tom e estilo das respostas da IA. Suporta quatro tons (`friendly`, `formal`, `technical`, `empathetic`) e quatro estilos (`concise`, `detailed`, `conversational`, `whatsapp`). O estilo `whatsapp` e o padrao, otimizado para mensagens curtas e naturais.
+
+Inclui variacoes de saudacao por idioma (pt-BR, en-US, es-ES) e gera system prompts adaptados a personalidade configurada.
+
+### GuardrailsService
+
+Valida mensagens de entrada contra regras de seguranca antes da geracao de respostas:
+
+- **Dados sensiveis**: bloqueia solicitacoes de CPF, CNPJ, cartao de credito, senhas
+- **Jailbreak**: detecta tentativas como "ignore your instructions", "pretend you are", "developer mode"
+- **Off-topic**: filtra assuntos nao relacionados ao negocio (politica, religiao, esportes, etc.)
+
+Retorna um `ValidationResult` com acao (`block`, `warn`, `redirect`) e resposta sugerida.
+
+### TransferAnalyzerService
+
+Analisa se uma conversa deve ser transferida da IA para um atendente humano. Usa Claude 3 Haiku para analise rapida e economica.
+
+Opera em dois momentos:
+
+- **Pre-analise**: antes de gerar a resposta, verifica se o caso e obviamente para humanos (evita gasto desnecessario com geracao)
+- **Pos-analise**: apos a resposta da IA, avalia se ela nao conseguiu resolver e sugere transferencia com departamento especifico
+
+```typescript
+class TransferAnalyzerService {
+  constructor(apiKey: string);
+
+  async preAnalyze(userMessage: string, ...): Promise<PreAnalysisResult>;
+  async postAnalyze(userMessage: string, aiResponse: string, ...): Promise<PostAnalysisResult>;
 }
 ```
 
 ### TranscriptionService
 
-Transcreve audio para texto:
+Transcreve audio para texto usando OpenAI Whisper. Mesmo que o provider principal seja Anthropic, a transcricao usa OpenAI (Whisper e exclusivo da OpenAI).
 
 ```typescript
 class TranscriptionService {
-  async transcribe(audioUrl: string): Promise<string> {
-    const settings = await this.getSettings();
+  constructor(apiKey: string);
 
-    if (!settings.whisperApiKey) {
-      throw new Error('Whisper nao configurado');
-    }
-
-    // Baixar audio
-    const response = await fetch(audioUrl);
-    const audioBuffer = await response.arrayBuffer();
-
-    // Enviar para Whisper
-    const openai = new OpenAI({ apiKey: settings.whisperApiKey });
-
-    const transcription = await openai.audio.transcriptions.create({
-      file: new File([audioBuffer], 'audio.ogg', { type: 'audio/ogg' }),
-      model: 'whisper-1',
-      language: 'pt',
-    });
-
-    return transcription.text;
-  }
+  async transcribe(audioPath: string, language?: string): Promise<string>;
 }
 ```
 
-## MessageProcessorService
+Valida tamanho do arquivo (limite de 25MB do Whisper) e usa `pt` como idioma padrao.
 
-Processa mensagens recebidas:
+### KnowledgeSyncService (`ai/knowledge-sync.service.ts`)
+
+Sincroniza automaticamente artigos da Base de Conhecimento e itens de FAQ com `AIDocument`. Cada empresa tem um data source interno (`type: 'INTERNAL'`) criado automaticamente.
+
+- `syncKnowledgeBaseItem`: sincroniza um artigo especifico (cria, atualiza ou desativa o documento)
+- `syncFAQItem`: sincroniza um item de FAQ
+- `removeSyncedDocument`: remove documento sincronizado
+
+Usa checksums MD5 para evitar re-sincronizacoes desnecessarias.
+
+### DataSourceSyncService (`ai/data-source-sync.service.ts`)
+
+Sincroniza fontes de dados externas com o sistema de documentos da IA. Suporta multiplos tipos de fonte:
+
+- **Notion**: conecta via API do Notion, extrai paginas de um database
+- **Google Drive**: acessa via OAuth2, suporta filtro por `mimeTypes`
+- **Confluence**: conecta via API Token, filtra por `spaceKey` e labels
+
+Gera embeddings automaticamente apos a ingestao de documentos novos/atualizados.
+
+---
+
+## Blue Services (`blue/`)
+
+Servicos do assistente interno "Blue", que ajuda atendentes a usar o sistema de forma eficiente.
+
+### BlueService
+
+Servico principal do Blue. Gera dicas contextuais baseadas na pagina atual e responde perguntas dos atendentes via chat.
 
 ```typescript
-class MessageProcessorService {
-  async process(connectionId: string, rawMessage: RawMessage) {
-    const connection = await prisma.whatsAppConnection.findUnique({
-      where: { id: connectionId },
-      include: { company: true },
-    });
+class BlueService {
+  constructor(provider: string, apiKey: string, companyId: string);
 
-    // Normalizar telefone
-    const phone = this.normalizePhone(rawMessage.from);
+  async getContextualTip(context: PageContext): Promise<string>;
+  async chat(messages: ChatMessage[], context: PageContext): Promise<string>;
+}
+```
 
-    // Buscar ou criar contato
-    const contact = await this.getOrCreateContact(
-      connection.companyId,
-      phone,
-      rawMessage.pushName
-    );
+Usa modelos mais rapidos e economicos (GPT-4o Mini ou Claude 3 Haiku) para manter baixo o custo.
 
-    // Buscar ou criar ticket
-    const ticket = await this.getOrCreateTicket(
-      connection.companyId,
-      contact.id
-    );
+### BlueContextBuilder
 
-    // Processar tipo de mensagem
-    const messageData = await this.parseMessage(rawMessage);
+Constroi prompts contextuais para o Blue combinando informacoes da pagina atual com trechos de codigo-fonte e documentacao via RAG.
 
-    // Transcrever audio se necessario
-    if (messageData.type === 'AUDIO') {
-      messageData.transcription = await this.transcriptionService.transcribe(
-        messageData.mediaUrl
-      );
-    }
+### CodeRAGService
 
-    // Salvar mensagem
-    const message = await prisma.message.create({
-      data: {
-        companyId: connection.companyId,
-        ticketId: ticket.id,
-        wamid: rawMessage.id,
-        type: messageData.type,
-        content: messageData.content,
-        mediaUrl: messageData.mediaUrl,
-        transcription: messageData.transcription,
-        status: 'DELIVERED',
-      },
-    });
+Busca trechos de codigo-fonte relevantes usando o sistema `KnowledgeContext` com slug `system-code`.
 
-    // Notificar via Socket.io
-    this.socketService.emitToCompany(connection.companyId, 'message:received', {
-      message,
-      ticket,
-    });
+### DocRAGService
 
-    // Processar com IA se configurado
-    if (ticket.isAIHandled) {
-      await this.processWithAI(ticket, message);
-    }
+Busca trechos de documentacao relevantes usando o sistema `KnowledgeContext` com slug `system-docs`.
 
-    return message;
-  }
+---
 
-  private async getOrCreateContact(
+## Email Services
+
+### EmailService (`email/email.service.ts`)
+
+Servico de envio de emails do sistema (alertas e notificacoes internas) via **Brevo** (antigo Sendinblue). Nao e usado para canal de atendimento -- apenas para alertas como:
+
+- Aviso de SLA proximo do limite
+- Notificacao de SLA violado
+- Alerta de desconexao do WhatsApp
+- Relatorios diarios
+
+Os destinatarios de alerta sao configurados via variavel de ambiente `ALERT_RECIPIENTS`.
+
+### Canal de Email (`email-channel/`)
+
+Conjunto de servicos que implementam email como canal de atendimento (receber e responder tickets por email).
+
+#### IMAPService
+
+Conecta a caixas de entrada via IMAP (suporta senha e OAuth2/Gmail). Busca emails novos, faz threading (vincula respostas ao ticket correto) usando:
+
+- Plus-addressing (`suporte+ticketid@empresa.com`)
+- Protocolo no assunto (`[#ABC-123]`)
+- Headers `In-Reply-To` / `References`
+
+Cria tickets novos quando nao encontra threading. Sanitiza HTML recebido e extrai anexos.
+
+#### SMTPService
+
+Envia respostas por email via SMTP (suporta senha e OAuth2/Gmail). Gera HTML a partir de templates e insere headers de threading para manter a conversa no mesmo thread do cliente de email.
+
+```typescript
+async function sendTicketReply(opts: SendEmailOpts): Promise<{ messageId: string }>;
+```
+
+#### GoogleOAuthService
+
+Gerencia o fluxo OAuth2 para contas Gmail. Gera URL de consentimento, troca authorization code por tokens e faz refresh automatico de access tokens expirados.
+
+#### EmailTemplateService
+
+Gera o HTML e texto plano dos emails enviados. Inclui historico de mensagens, branding da empresa e links para resposta.
+
+#### CryptoUtil
+
+Utilitario para criptografia AES-256-GCM de credenciais de email (senhas IMAP/SMTP) armazenadas no banco. Usa `EMAIL_ENCRYPTION_KEY` ou `JWT_SECRET` como chave.
+
+---
+
+## External AI (`external-ai/`)
+
+### ExternalAIWebhookService
+
+Integra o ChatBlue com provedores de IA externos via webhook. Envia o payload da conversa para uma URL configurada e recebe a resposta de volta. Suporta dois formatos de payload:
+
+- **Formato ChatBlue** (`WebhookPayload`): formato padrao com evento, ticket, contato, mensagem e historico
+- **Formato BlueChatPayload**: formato especifico para integracao com o bluetoken-ai, inclui `conversation_id`, canal, contexto e company metadata
+
+Eventos suportados: `message.received`, `ticket.assigned`, `ticket.unassigned`.
+
+---
+
+## Instagram (`instagram/`)
+
+### InstagramService
+
+Gerencia a integracao com Instagram via Meta Graph API. Reutiliza a mesma `WhatsAppConnection` (com `instagramAccountId` adicional).
+
+Funcionalidades:
+
+- Teste de conexao e busca de informacoes da conta
+- Envio de mensagens de texto, imagens, audio, video e stickers
+- Envio de templates e mensagens interativas (generic templates)
+- Processamento de webhooks da Meta (mensagens e stories)
+- Download de midia recebida
+
+---
+
+## Knowledge Services (`knowledge/`)
+
+### ContextRetrievalService
+
+Busca o contexto de conhecimento mais relevante para uma mensagem do usuario. Navega pelos `KnowledgeContext` da empresa, detecta o mais relevante por palavras-chave e recupera o conteudo das fontes.
+
+```typescript
+class ContextRetrievalService {
+  async findRelevantContext(
     companyId: string,
-    phone: string,
-    name?: string
-  ) {
-    let contact = await prisma.contact.findUnique({
-      where: { companyId_phone: { companyId, phone } },
-    });
-
-    if (!contact) {
-      contact = await prisma.contact.create({
-        data: {
-          companyId,
-          phone,
-          name,
-        },
-      });
-
-      // Sincronizar com Notion
-      await this.notionService.syncContact(contact);
-    }
-
-    return contact;
-  }
-
-  private async getOrCreateTicket(companyId: string, contactId: string) {
-    // Buscar ticket aberto
-    let ticket = await prisma.ticket.findFirst({
-      where: {
-        companyId,
-        contactId,
-        status: { notIn: ['CLOSED', 'RESOLVED'] },
-      },
-    });
-
-    if (!ticket) {
-      // Verificar configuracoes
-      const settings = await prisma.companySettings.findUnique({
-        where: { companyId },
-      });
-
-      ticket = await prisma.ticket.create({
-        data: {
-          companyId,
-          contactId,
-          protocol: generateProtocol(),
-          isAIHandled: settings?.aiApiKey ? true : false,
-          departmentId: settings?.defaultDepartmentId,
-        },
-      });
-    }
-
-    return ticket;
-  }
+    userMessage: string,
+    aiAgentId?: string,
+    aiProvider?: string,
+    aiApiKey?: string
+  ): Promise<{ context: any; sources: any[]; content: string } | null>;
 }
 ```
 
-## SLAService
+### EmbeddingService (`knowledge/embedding.service.ts`)
 
-Gerencia SLA:
+Versao simplificada do embedding service, focada em geracao de embeddings para o sistema de knowledge. Usa `text-embedding-3-small` da OpenAI (faz fallback para OpenAI mesmo quando o provider principal e Anthropic).
 
 ```typescript
-class SLAService {
-  async calculateDeadline(ticket: Ticket): Promise<Date> {
-    const config = await this.getConfig(ticket.companyId, ticket.departmentId);
+class EmbeddingService {
+  constructor(provider: EmbeddingProvider, apiKey: string);
 
-    const now = new Date();
-    const deadline = addMinutes(now, config.firstResponseTime);
-
-    // Ajustar para horario comercial
-    return this.adjustToBusinessHours(deadline, config.businessHours);
-  }
-
-  async checkSLABreach() {
-    const breachedTickets = await prisma.ticket.findMany({
-      where: {
-        status: { in: ['PENDING', 'IN_PROGRESS'] },
-        slaDeadline: { lt: new Date() },
-        firstResponseAt: null,
-      },
-      include: {
-        company: true,
-        user: true,
-      },
-    });
-
-    for (const ticket of breachedTickets) {
-      // Criar atividade
-      await prisma.activity.create({
-        data: {
-          companyId: ticket.companyId,
-          ticketId: ticket.id,
-          type: 'SLA_BREACH',
-          metadata: {
-            deadline: ticket.slaDeadline,
-            breachedAt: new Date(),
-          },
-        },
-      });
-
-      // Notificar
-      this.notificationService.notifySLABreach(ticket);
-    }
-  }
-
-  async getMetrics(companyId: string, period: DateRange) {
-    const tickets = await prisma.ticket.findMany({
-      where: {
-        companyId,
-        createdAt: {
-          gte: period.start,
-          lte: period.end,
-        },
-      },
-    });
-
-    const total = tickets.length;
-    const withinSLA = tickets.filter(t =>
-      t.firstResponseAt && t.firstResponseAt <= t.slaDeadline
-    ).length;
-
-    return {
-      total,
-      withinSLA,
-      breached: total - withinSLA,
-      complianceRate: total > 0 ? (withinSLA / total) * 100 : 100,
-      avgFirstResponseTime: this.calculateAverage(
-        tickets.map(t => t.responseTime).filter(Boolean)
-      ),
-      avgResolutionTime: this.calculateAverage(
-        tickets.map(t => t.resolutionTime).filter(Boolean)
-      ),
-    };
-  }
+  async generateEmbedding(text: string): Promise<number[]>;
+  async cosineSimilarity(a: number[], b: number[]): Promise<number>;
 }
 ```
 
-## NotionService
+### KnowledgeIngestionService
 
-Integracao com Notion:
+Processa fontes de conhecimento de diversos formatos e extrai o conteudo textual:
+
+| Tipo | Descricao |
+|------|-----------|
+| `TEXT` | Texto plano direto |
+| `PDF` | Extrai texto de PDFs (lazy-load do `pdf-parse`) |
+| `NOTION` | Extrai paginas via NotionService |
+| `URL` | Faz scraping de paginas web |
+| `DOCX` | Extrai texto de documentos Word via `mammoth` |
+| `CSV` | Processa arquivos CSV |
+| `JSON` | Processa arquivos JSON |
+
+---
+
+## ML Services (`ml/`)
+
+Sistema de Machine Learning que aprende com atendimentos reais para melhorar respostas futuras.
+
+### MLIntegrationService
+
+Ponto de integracao do sistema de ML com o fluxo de atendimento. Fornece hooks estaticos para eventos importantes:
+
+- `onTicketResolved`: agenda coleta de training pairs quando um ticket e resolvido
+- `onAIToHumanTransfer`: registra transferencias IA-para-humano para aprendizado futuro
+- `onMessageRated`: registra avaliacoes de mensagens
+
+Verifica se ML esta habilitado (`aiEnabled` no `CompanySettings`) antes de agendar jobs.
+
+### TrainingPairCollectorService
+
+Coleta pares de treinamento (pergunta do cliente + resposta do atendente) de alta qualidade. Filtra por criterios configuravies:
+
+- Tamanho minimo da resposta
+- Tempo maximo de resposta (padrao: 1 hora)
+- Exclusao de respostas de template
+- Rating minimo
+
+Gera embeddings dos pares coletados para busca semantica futura.
+
+### IntentClassifierService
+
+Classifica a intencao de mensagens de clientes. Combina patterns predefinidos (keywords + frases exemplo) com classificacao por IA.
+
+Categorias predefinidas: vendas (`PRICE_INQUIRY`, `PRODUCT_INFO`, `PURCHASE_INTENT`), suporte (`COMPLAINT`, `ORDER_STATUS`), financeiro, entre outras. Aprende novas intencoes a partir dos training pairs coletados.
+
+### PatternDetectorService
+
+Detecta padroes recorrentes em training pairs e extrai templates de resposta. Usa IA para agrupar mensagens similares e sugerir templates parametrizados.
+
+### QualityScorerService
+
+Avalia a qualidade de respostas (IA e humanas) em multiplas dimensoes:
+
+- **Relevancia**: a resposta atende a pergunta?
+- **Completude**: a resposta e completa?
+- **Clareza**: a resposta e clara?
+- **Tom**: o tom e apropriado?
+- **Fidelidade factual**: confere com a base de conhecimento?
+
+Retorna um score geral (0-100) com breakdown por dimensao.
+
+### MLResponseGeneratorService
+
+Gera respostas usando o conhecimento aprendido. Combina multiplas fontes para encontrar a melhor resposta:
+
+- Templates extraidos de padroes
+- Base de conhecimento (busca semantica)
+- Padroes aprendidos de atendimentos anteriores
+- Geracao via IA (fallback)
+
+A fonte da resposta e rastreada (`TEMPLATE`, `KNOWLEDGE_BASE`, `LEARNED_PATTERN`, `GENERATED`, `HYBRID`).
+
+---
+
+## Notion Service (`notion/`)
+
+### NotionService
+
+Integracao com a API do Notion para sincronizacao de contatos com databases externos. Permite que empresas vinculem sua base de clientes no Notion.
 
 ```typescript
 class NotionService {
-  async syncContact(contact: Contact) {
-    const settings = await prisma.companySettings.findUnique({
-      where: { companyId: contact.companyId },
-    });
+  constructor(apiKey: string);
 
-    if (!settings?.notionEnabled || !settings?.notionApiKey) {
-      return;
-    }
-
-    const notion = new Client({ auth: settings.notionApiKey });
-
-    // Buscar na base do Notion
-    const response = await notion.databases.query({
-      database_id: settings.notionDatabaseId,
-      filter: {
-        or: [
-          {
-            property: 'Telefone',
-            phone_number: { equals: contact.phone },
-          },
-          {
-            property: 'Email',
-            email: { equals: contact.email },
-          },
-        ],
-      },
-    });
-
-    if (response.results.length > 0) {
-      const page = response.results[0];
-
-      // Extrair dados
-      const clientStatus = this.extractProperty(page, 'Status');
-      const clientSince = this.extractProperty(page, 'Cliente Desde');
-
-      // Atualizar contato
-      await prisma.contact.update({
-        where: { id: contact.id },
-        data: {
-          notionPageId: page.id,
-          notionClientStatus: clientStatus,
-          notionClientSince: clientSince,
-        },
-      });
-    }
-  }
-
-  async testConnection(apiKey: string, databaseId: string) {
-    try {
-      const notion = new Client({ auth: apiKey });
-
-      await notion.databases.retrieve({
-        database_id: databaseId,
-      });
-
-      return { success: true };
-    } catch (error) {
-      return { success: false, error: error.message };
-    }
-  }
+  async testConnection(databaseId?: string): Promise<boolean>;
+  async searchContact(databaseId: string, phone: string, email?: string): Promise<NotionContact | null>;
+  async updateContactFromNotion(contactId: string, databaseId: string): Promise<void>;
 }
 ```
+
+Detecta automaticamente o tipo da propriedade "Telefone" no database (phone_number ou rich_text) e adapta as queries.
+
+---
+
+## NPS Service (`nps/`)
+
+### NPSService
+
+Envia pesquisas de satisfacao (NPS) automaticamente quando um ticket e resolvido/fechado. Gera um token unico por pesquisa e envia via WhatsApp.
+
+```typescript
+class NPSService {
+  static async sendNPSSurvey(ticketId: string): Promise<void>;
+}
+```
+
+Validacoes antes do envio: verifica se NPS esta habilitado, se o ticket ja foi avaliado (`npsRatedAt`), e se o token ja existe (para evitar envio duplicado).
+
+---
+
+## SLA Service (`sla/`)
+
+### SLAService
+
+Gerencia SLA (Service Level Agreement) com metodos estaticos. Resolve a configuracao por departamento (especifica primeiro, depois default da empresa).
+
+```typescript
+class SLAService {
+  static async getSLAConfig(
+    companyId: string,
+    departmentId?: string | null
+  ): Promise<SLAConfig | null>;
+
+  static async calculateFirstResponseDeadline(
+    anchor: Date,
+    companyId: string,
+    departmentId?: string | null
+  ): Promise<Date>;
+
+  static async calculateResolutionDeadline(
+    anchor: Date,
+    companyId: string,
+    departmentId?: string | null
+  ): Promise<Date>;
+}
+```
+
+- **First Response**: padrao de 15 minutos (`DEFAULT_FIRST_RESPONSE_MINUTES`)
+- **Resolucao**: padrao de 240 minutos / 4 horas (`DEFAULT_RESOLUTION_MINUTES`)
+- **Horario comercial**: quando configurado no `SLAConfig`, os deadlines sao calculados apenas dentro do horario util (pula finais de semana e horas fora do expediente)
+
+---
+
+## Push Service (`push/`)
+
+### PushService
+
+Notificacoes push via Web Push API usando o protocolo VAPID. Configurado via variaveis de ambiente `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` e `VAPID_SUBJECT`.
+
+Gerencia subscriptions por usuario e envia notificacoes com suporte a titulo, corpo, icone, badge, tag e acoes interativas.
+
+---
+
+## Upload Service (`upload/`)
+
+### UploadService
+
+Gerencia upload de arquivos usando multer com armazenamento em disco. Organiza arquivos em subdiretorios:
+
+| Diretorio | Uso |
+|-----------|-----|
+| `media/` | Imagens e midias gerais |
+| `documents/` | PDFs, DOCX, planilhas |
+| `avatars/` | Fotos de perfil |
+| `temp/` | Arquivos temporarios |
+
+Limites de tamanho: imagens (5MB), documentos (25MB), audio (16MB), video (100MB).
+
+---
+
+## Admin Assistant (`admin-assistant/`)
+
+### AdminAssistantService
+
+Assistente de IA para administradores que responde perguntas sobre o dia atual com base em dados reais. Coleta contexto em tempo real:
+
+- Tickets criados, pendentes, em andamento, resolvidos e com SLA violado
+- Desempenho por atendente (tickets, mensagens enviadas/recebidas, follow-ups)
+- Status online dos atendentes
+
+```typescript
+class AdminAssistantService {
+  constructor(openAiApiKey: string, companyId: string);
+
+  async getTodayContext(): Promise<TodayContext>;
+  async chat(messages: ChatMessage[]): Promise<string>;
+}
+```
+
+O system prompt instrui a IA a responder **apenas** com base nos dados fornecidos, sem inventar numeros.
+
+---
+
+## MessageProcessor (raiz)
+
+Servico central que processa todas as mensagens recebidas (WhatsApp e Instagram). Classe `MessageProcessor` com metodos estaticos.
+
+Fluxo de processamento:
+
+1. **Horario comercial**: verifica se esta dentro do expediente configurado (com cooldown de 4h para mensagens fora do horario)
+2. **Contato**: busca ou cria o contato, sincroniza com Notion se configurado
+3. **Ticket**: busca ticket aberto ou cria um novo com protocolo gerado, calcula deadlines de SLA
+4. **Mensagem**: salva a mensagem no banco com tipo, conteudo, midia e metadados
+5. **Transcricao**: se a mensagem for audio, transcreve via Whisper
+6. **Notificacao**: emite evento via Socket.io para o frontend
+7. **IA**: se o ticket esta em modo IA, processa com o pipeline de IA (pre-analise de transferencia, geracao de resposta, pos-analise)
+8. **Webhook externo**: se configurado, envia para o provider de IA externo
+9. **Outbound webhook**: dispara evento `message_created` para integracao externa
+
+```typescript
+class MessageProcessor {
+  static async processIncomingMessage(data: IncomingMessage): Promise<void>;
+}
+```
+
+Suporta metadados de plataforma (WhatsApp ou Instagram), localizacao, contatos compartilhados e respostas interativas (botoes e listas).
+
+---
+
+## Outbound Webhook (raiz)
+
+### sendOutboundEvent
+
+Funcao fire-and-forget que envia eventos para uma URL configurada no `CompanySettings` (ex: Supabase function).
+
+```typescript
+async function sendOutboundEvent(
+  companyId: string,
+  event: OutboundEvent,
+  payload: Record<string, unknown>
+): Promise<void>;
+```
+
+Eventos: `conversation_created`, `conversation_updated`, `conversation_resolved`, `message_created`.
+
+Inclui header `X-Webhook-Secret` quando o secret esta configurado. Timeout de 10 segundos. Executa via `setImmediate` para nao bloquear o request.
+
+---
 
 ## Proximos Passos
 

@@ -114,7 +114,7 @@ Respostas rapidas sao **mensagens pre-configuradas** que voce envia com poucos c
 │  Buscar: [________________]                                  │
 │                                                              │
 │  /saudacao                                                   │
-│  "Ola, {{nome}}! Como posso ajudar?"                        │
+│  "Ola, &#123;&#123;nome&#125;&#125;! Como posso ajudar?"                        │
 │                                                              │
 │  /prazo                                                      │
 │  "O prazo de entrega e de 3 a 7 dias uteis..."              │
@@ -133,7 +133,7 @@ Respostas rapidas sao **mensagens pre-configuradas** que voce envia com poucos c
 | Caracteristica | Descricao |
 |----------------|-----------|
 | **Curtas e objetivas** | Vai direto ao ponto |
-| **Personalizaveis** | Usa variaveis como {{nome}} |
+| **Personalizaveis** | Usa variaveis como &#123;&#123;nome&#125;&#125; |
 | **Atualizadas** | Informacoes sempre corretas |
 | **Organizadas** | Nomeadas de forma logica |
 
@@ -141,7 +141,7 @@ Respostas rapidas sao **mensagens pre-configuradas** que voce envia com poucos c
 
 | Atalho | Uso | Modelo |
 |--------|-----|--------|
-| `/ola` | Saudacao inicial | "Ola, {{nome}}! Tudo bem? Como posso ajudar?" |
+| `/ola` | Saudacao inicial | "Ola, &#123;&#123;nome&#125;&#125;! Tudo bem? Como posso ajudar?" |
 | `/prazo` | Prazo de entrega | "O prazo de entrega e de 3 a 7 dias uteis..." |
 | `/rastrear` | Como rastrear | "Para rastrear, use o codigo no site dos Correios..." |
 | `/troca` | Politica de troca | "Voce pode trocar em ate 30 dias..." |

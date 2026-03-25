@@ -34,7 +34,7 @@ O Baileys e uma solucao nao-oficial. O WhatsApp pode alterar suas politicas a qu
 3. Selecione **Conexoes WhatsApp**
 4. Clique no botao **+ Nova Conexao**
 
-![Placeholder: Tela de conexoes WhatsApp](/img/guias/baileys-lista-conexoes.png)
+*Imagem: Tela de conexoes WhatsApp*
 
 ### Passo 2: Selecionar Tipo Baileys
 
@@ -47,7 +47,7 @@ O Baileys e uma solucao nao-oficial. O WhatsApp pode alterar suas politicas a qu
 | Descricao | Descricao opcional | "Numero principal de vendas" |
 | Departamento | Departamento padrao | Vendas |
 
-![Placeholder: Formulario de nova conexao Baileys](/img/guias/baileys-formulario.png)
+*Imagem: Formulario de nova conexao Baileys*
 
 ### Passo 3: Configuracoes Avancadas (Opcional)
 
@@ -84,7 +84,7 @@ Expanda a secao **Configuracoes Avancadas** para ajustar:
 2. Um QR Code sera exibido na tela
 3. O QR Code tem validade de 60 segundos
 
-![Placeholder: QR Code para conexao](/img/guias/baileys-qrcode.png)
+*Imagem: QR Code para conexao*
 
 ### Passo 5: Escanear QR Code
 
@@ -96,7 +96,7 @@ No seu celular:
 4. Toque em **Conectar um dispositivo**
 5. Escaneie o QR Code exibido no ChatBlue
 
-![Placeholder: Instrucoes para escanear QR Code no celular](/img/guias/baileys-celular.png)
+*Imagem: Instrucoes para escanear QR Code no celular*
 
 ### Passo 6: Confirmar Conexao
 

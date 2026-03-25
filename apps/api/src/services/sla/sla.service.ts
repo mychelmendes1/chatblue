@@ -1,51 +1,102 @@
 import { prisma } from '../../config/database.js';
-import { addMinutes, isWithinInterval, getDay, setHours, setMinutes } from 'date-fns';
-import { logger } from '../../config/logger.js';
+import { addMinutes, getDay, setHours, setMinutes } from 'date-fns';
+import type { SLAConfig } from '@prisma/client';
 
-interface BusinessHours {
+export interface BusinessHours {
   start: string; // "09:00"
   end: string; // "18:00"
   days: number[]; // [1, 2, 3, 4, 5] for Mon-Fri
 }
 
+/** Default first-response window when no SLAConfig exists (minutes). */
+export const DEFAULT_FIRST_RESPONSE_MINUTES = 15;
+/** Matches Prisma SLAConfig.resolutionTime @default(240). */
+export const DEFAULT_RESOLUTION_MINUTES = 240;
+
 export class SLAService {
   /**
-   * Calculate SLA deadline based on company/department config
+   * Resolve SLA config: department-specific row first, then company default (isDefault + active).
    */
-  static async calculateDeadline(
+  static async getSLAConfig(
+    companyId: string,
+    departmentId?: string | null
+  ): Promise<SLAConfig | null> {
+    if (departmentId) {
+      const byDept = await prisma.sLAConfig.findUnique({
+        where: { departmentId },
+      });
+      if (byDept) return byDept;
+    }
+
+    return prisma.sLAConfig.findFirst({
+      where: {
+        companyId,
+        isDefault: true,
+        isActive: true,
+      },
+    });
+  }
+
+  /**
+   * First-response deadline from a fixed anchor (e.g. ticket.createdAt).
+   * Uses business hours when configured on the resolved SLAConfig.
+   */
+  static async calculateFirstResponseDeadline(
+    anchor: Date,
     companyId: string,
     departmentId?: string | null
   ): Promise<Date> {
-    // Get SLA config (department-specific or default)
-    let slaConfig = null;
-
-    if (departmentId) {
-      slaConfig = await prisma.sLAConfig.findUnique({
-        where: { departmentId },
-      });
-    }
-
-    if (!slaConfig) {
-      slaConfig = await prisma.sLAConfig.findFirst({
-        where: {
-          companyId,
-          isDefault: true,
-          isActive: true,
-        },
-      });
-    }
-
-    // Default to 15 minutes if no config
-    const firstResponseTime = slaConfig?.firstResponseTime || 15;
-    const businessHours = slaConfig?.businessHours as BusinessHours | null;
-
-    const now = new Date();
+    const slaConfig = await this.getSLAConfig(companyId, departmentId);
+    const firstResponseTime =
+      slaConfig?.firstResponseTime ?? DEFAULT_FIRST_RESPONSE_MINUTES;
+    const businessHours = slaConfig?.businessHours as unknown as BusinessHours | null;
 
     if (businessHours) {
-      return this.calculateBusinessHoursDeadline(now, firstResponseTime, businessHours);
+      return this.calculateBusinessHoursDeadline(
+        anchor,
+        firstResponseTime,
+        businessHours
+      );
     }
 
-    return addMinutes(now, firstResponseTime);
+    return addMinutes(anchor, firstResponseTime);
+  }
+
+  /**
+   * Resolution deadline from anchor (minutes from config; default 240 like schema).
+   * Uses the same businessHours rules as first-response when configured.
+   */
+  static async calculateResolutionDeadline(
+    anchor: Date,
+    companyId: string,
+    departmentId?: string | null
+  ): Promise<Date> {
+    const slaConfig = await this.getSLAConfig(companyId, departmentId);
+    const resolutionTime =
+      slaConfig?.resolutionTime ?? DEFAULT_RESOLUTION_MINUTES;
+    const businessHours = slaConfig?.businessHours as unknown as BusinessHours | null;
+
+    if (businessHours) {
+      return this.calculateBusinessHoursDeadline(
+        anchor,
+        resolutionTime,
+        businessHours
+      );
+    }
+
+    return addMinutes(anchor, resolutionTime);
+  }
+
+  /**
+   * @deprecated Prefer calculateFirstResponseDeadline(anchor, ...) for ticket-relative deadlines.
+   * Calculates first-response deadline from "now" (e.g. quick preview).
+   */
+  static async calculateDeadline(
+    companyId: string,
+    departmentId?: string | null,
+    anchor: Date = new Date()
+  ): Promise<Date> {
+    return this.calculateFirstResponseDeadline(anchor, companyId, departmentId);
   }
 
   /**
@@ -104,40 +155,7 @@ export class SLAService {
   }
 
   /**
-   * Check and update SLA status for all open tickets
-   */
-  static async checkSLABreaches(): Promise<void> {
-    const now = new Date();
-
-    // Find tickets that have breached SLA
-    const breachedTickets = await prisma.ticket.findMany({
-      where: {
-        status: { in: ['PENDING', 'IN_PROGRESS', 'WAITING'] },
-        slaBreached: false,
-        slaDeadline: { lt: now },
-      },
-    });
-
-    for (const ticket of breachedTickets) {
-      await prisma.ticket.update({
-        where: { id: ticket.id },
-        data: { slaBreached: true },
-      });
-
-      await prisma.activity.create({
-        data: {
-          type: 'SLA_BREACH',
-          description: 'SLA deadline breached',
-          ticketId: ticket.id,
-        },
-      });
-
-      logger.warn(`SLA breached for ticket ${ticket.protocol}`);
-    }
-  }
-
-  /**
-   * Get tickets that are close to breaching SLA
+   * Get tickets that are close to breaching SLA (first-response deadline).
    */
   static async getAtRiskTickets(
     companyId: string,
@@ -148,8 +166,9 @@ export class SLAService {
     return prisma.ticket.findMany({
       where: {
         companyId,
-        status: { in: ['PENDING', 'IN_PROGRESS'] },
+        status: { in: ['PENDING', 'IN_PROGRESS', 'WAITING'] },
         slaBreached: false,
+        firstResponse: null,
         slaDeadline: {
           gte: new Date(),
           lte: threshold,
@@ -168,7 +187,8 @@ export class SLAService {
   }
 
   /**
-   * Calculate SLA metrics for a period
+   * Calculate SLA metrics for a period.
+   * Note: responseTime and resolutionTime on Ticket are stored in seconds.
    */
   static async calculateMetrics(
     companyId: string,

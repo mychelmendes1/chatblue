@@ -450,6 +450,116 @@ Emergencia: 24/7
 - SLA considera horario comercial
 ```
 
+## API de Departamentos
+
+### Endpoint de Arvore Hierarquica
+
+O endpoint `GET /api/departments/tree` retorna a estrutura completa de departamentos em formato de arvore hierarquica:
+
+```
+GET /api/departments/tree
+```
+
+**Resposta:**
+
+```typescript
+[
+  {
+    id: "dept_atendimento",
+    name: "Atendimento",
+    color: "#6366f1",
+    order: 1,
+    parentId: null,
+    children: [
+      {
+        id: "dept_comercial",
+        name: "Comercial",
+        color: "#22c55e",
+        order: 1,
+        parentId: "dept_atendimento",
+        children: []
+      },
+      {
+        id: "dept_suporte",
+        name: "Suporte",
+        color: "#f59e0b",
+        order: 2,
+        parentId: "dept_atendimento",
+        children: [
+          {
+            id: "dept_suporte_n3",
+            name: "Suporte N3",
+            color: "#f59e0b",
+            order: 1,
+            parentId: "dept_suporte",
+            children: []
+          }
+        ]
+      }
+    ]
+  }
+]
+```
+
+A arvore e montada recursivamente a partir do campo `parentId`. Departamentos sem `parentId` (null) sao raizes da hierarquia. O frontend utiliza esta estrutura para renderizar a visualizacao em arvore e os breadcrumbs de navegacao.
+
+### Hierarquia via parentId
+
+O campo `parentId` no modelo Department estabelece a relacao pai-filho entre departamentos:
+
+- Quando `parentId` e `null`, o departamento e uma raiz (nivel 1)
+- Quando `parentId` aponta para outro departamento, ele e filho daquele departamento
+- A relacao auto-referencial `DepartmentHierarchy` no Prisma permite queries recursivas
+- O limite recomendado e de 5 niveis de profundidade
+
+```
+parentId: null        -> Departamento raiz
+parentId: "dept_001"  -> Filho do departamento dept_001
+```
+
+### SLA Config por Departamento
+
+Cada departamento pode ter uma configuracao de SLA independente atraves do modelo `SLAConfig` vinculado pelo campo `departmentId`:
+
+```prisma
+model SLAConfig {
+  id                    String   @id @default(uuid())
+  companyId             String
+  departmentId          String?  @unique
+  firstResponseTime     Int      // Minutos para primeira resposta
+  resolutionTime        Int      // Minutos para resolucao
+  businessHoursOnly     Boolean  @default(true)
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  company    Company     @relation(fields: [companyId], references: [id])
+  department Department? @relation(fields: [departmentId], references: [id])
+}
+```
+
+Quando um departamento nao possui `SLAConfig` proprio, o sistema herda a configuracao do departamento pai ou, em ultimo caso, a configuracao padrao da empresa.
+
+### AI Documents por Departamento
+
+Documentos de IA (base de conhecimento para o assistente) podem ser vinculados a departamentos especificos. Isso permite que a IA utilize contexto especializado conforme o departamento do ticket:
+
+```prisma
+model AIDocument {
+  id           String   @id @default(uuid())
+  companyId    String
+  departmentId String?
+  title        String
+  content      String
+  embeddings   Float[]
+  createdAt    DateTime @default(now())
+
+  company    Company     @relation(fields: [companyId], references: [id])
+  department Department? @relation(fields: [departmentId], references: [id])
+}
+```
+
+Quando `departmentId` e preenchido, o documento e utilizado prioritariamente em tickets daquele departamento. Documentos sem `departmentId` ficam disponiveis globalmente para todos os departamentos da empresa.
+
 ## Integracao com Outras Funcionalidades
 
 ### Tickets
@@ -466,14 +576,14 @@ Emergencia: 24/7
 
 ### SLA
 
-- Configuracao independente por departamento
-- Heranca de configuracao do pai
+- Configuracao independente por departamento via `SLAConfig`
+- Heranca de configuracao do pai quando nao ha config propria
 - Metricas separadas por departamento
 
 ### Base de Conhecimento
 
 - Artigos podem ser especificos de departamento
-- IA usa conhecimento do departamento
+- IA usa conhecimento do departamento (AIDocument com departmentId)
 - FAQs por departamento
 
 ### Notificacoes

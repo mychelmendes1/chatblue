@@ -302,7 +302,7 @@ Para grandes volumes de dados, use sincronizacao incremental:
 3. Selecione a direcao
 4. Acompanhe o progresso
 
-![Placeholder: Interface de sincronizacao manual](/img/guias/notion-sync-manual.png)
+*Imagem: Interface de sincronizacao manual*
 
 ### Via API
 

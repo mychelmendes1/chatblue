@@ -588,11 +588,116 @@ model AIUserConfig {
 6. IA comeca a responder automaticamente
 ```
 
+## API de Usuarios
+
+### Endpoints de AI Agents
+
+Usuarios de IA possuem endpoints dedicados para gerenciamento:
+
+```
+GET  /api/users/ai-agents        Lista todos os usuarios de IA da empresa
+POST /api/users/ai-agent         Cria um novo usuario de IA com aiConfig
+PUT  /api/users/:id/ai-config    Atualiza a configuracao de IA de um usuario
+```
+
+**Criar usuario de IA:**
+
+```typescript
+POST /api/users/ai-agent
+{
+  name: "Assistente IA",
+  email: "ia@empresa.com",
+  aiConfig: {
+    provider: "openai",
+    model: "gpt-4",
+    apiKey: "sk-...",
+    personality: "Profissional e cordial",
+    tone: "friendly",
+    guardrails: true,
+    autoTransfer: true,
+    maxMessages: 10
+  }
+}
+```
+
+**Atualizar configuracao de IA:**
+
+```typescript
+PUT /api/users/:id/ai-config
+{
+  model: "gpt-4-turbo",
+  personality: "Novo prompt de personalidade",
+  maxMessages: 15,
+  useEmoji: true
+}
+```
+
+### Treinamento por PDF
+
+O sistema permite treinar a base de conhecimento do usuario de IA atraves de upload de documentos PDF:
+
+```
+POST /api/users/process-training-pdf
+Content-Type: multipart/form-data
+
+body: {
+  file: <arquivo.pdf>
+}
+```
+
+O processamento extrai o texto do PDF, divide em chunks e gera embeddings para uso pelo sistema de RAG durante o atendimento.
+
+### Acesso Multi-Empresa via API
+
+Endpoints para gerenciar o acesso de um usuario a multiplas empresas:
+
+```
+POST   /api/users/:id/company-access              Concede acesso a uma empresa
+DELETE /api/users/:id/company-access/:companyId    Remove acesso a uma empresa
+```
+
+**Conceder acesso:**
+
+```typescript
+POST /api/users/:id/company-access
+{
+  companyId: "company_uuid",
+  role: "USER"  // ou "ADMIN"
+}
+```
+
+## Campos Adicionais do Modelo
+
+Alem dos campos basicos documentados na estrutura Prisma acima, o modelo User possui:
+
+| Campo | Tipo | Descricao |
+|-------|------|-----------|
+| `isAI` | Boolean | Indica se o usuario e um agente de IA |
+| `aiConfig` | Json | Configuracao completa de IA (armazenada como JSON) |
+| `pushSubscription` | String? | Subscription para notificacoes push (Web Push API) |
+| `passwordResetToken` | String? | Token temporario para reset de senha |
+| `passwordResetExpires` | DateTime? | Data de expiracao do token de reset |
+
+### Nota sobre Atribuicao de Tickets
+
+No modelo de Ticket, o campo que referencia o agente responsavel e `assignedToId`, e nao `userId`. Isso diferencia o agente atribuido ao ticket do usuario que criou ou interagiu com o ticket:
+
+```prisma
+model Ticket {
+  // ...
+  assignedToId  String?   // Agente responsavel pelo ticket
+  assignedTo    User?     @relation(fields: [assignedToId], references: [id])
+  // ...
+}
+```
+
+O `assignedToId` e utilizado pelo sistema de auto-assign, transferencias e calculo de metricas individuais de cada agente.
+
 ## Integracao com Outras Funcionalidades
 
 ### Tickets
 
-- Usuarios sao atribuidos a tickets
+- Usuarios sao atribuidos a tickets via `assignedToId`
 - Metricas calculadas por usuario
 - Transferencias registram usuarios
 

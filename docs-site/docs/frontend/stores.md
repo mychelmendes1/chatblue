@@ -20,10 +20,12 @@ O ChatBlue utiliza o **Zustand** como biblioteca de gerenciamento de estado glob
 ## Arquitetura das Stores
 
 ```
-stores/
+apps/web/stores/
 ├── auth.store.ts    # Autenticacao e usuario
 └── chat.store.ts    # Chat, tickets e mensagens
 ```
+
+Existem apenas essas duas stores no projeto. Imports nos componentes usam o alias `@/stores/`.
 
 ---
 
@@ -31,7 +33,7 @@ stores/
 
 A `auth.store` gerencia todo o estado de autenticacao do usuario, incluindo login, logout, tokens e troca de empresas (multi-tenant).
 
-**Arquivo:** `stores/auth.store.ts`
+**Arquivo:** `apps/web/stores/auth.store.ts`
 
 ### Interfaces
 
@@ -331,7 +333,7 @@ const { user, isLoading } = useAuthStore((state) => ({
 
 A `chat.store` gerencia todo o estado relacionado ao chat, incluindo tickets, mensagens, filtros e selecao.
 
-**Arquivo:** `stores/chat.store.ts`
+**Arquivo:** `apps/web/stores/chat.store.ts`
 
 ### Interfaces
 

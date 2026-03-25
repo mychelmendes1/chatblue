@@ -42,7 +42,7 @@ A OpenAI oferece os modelos GPT, que sao excelentes para atendimento ao cliente.
 3. De um nome descritivo: "ChatBlue Production"
 4. Copie a chave gerada
 
-![Placeholder: Tela de criacao de API Key OpenAI](/img/guias/openai-apikey.png)
+*Imagem: Tela de criacao de API Key OpenAI*
 
 :::danger Atencao
 A chave so e exibida uma vez. Guarde-a em local seguro!
@@ -60,7 +60,7 @@ A chave so e exibida uma vez. Guarde-a em local seguro!
 | Organization ID | org-... (opcional) |
 | Modelo | gpt-4-turbo |
 
-![Placeholder: Configuracao OpenAI no ChatBlue](/img/guias/openai-config.png)
+*Imagem: Configuracao OpenAI no ChatBlue*
 
 ### Passo 4: Configuracoes Avancadas
 

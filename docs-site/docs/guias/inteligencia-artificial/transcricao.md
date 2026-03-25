@@ -40,7 +40,7 @@ A transcricao usa a mesma chave de API da OpenAI. Nao precisa de configuracao ad
 2. Clique na aba **Transcricao**
 3. Ative a opcao **Transcricao Automatica**
 
-![Placeholder: Configuracao de transcricao](/img/guias/transcricao-config.png)
+*Imagem: Configuracao de transcricao*
 
 ### Passo 2: Configurar Opcoes
 

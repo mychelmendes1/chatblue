@@ -91,7 +91,6 @@ describe("SLAService", () => {
       const deadline = await SLAService.calculateDeadline("company-123");
       const afterCall = new Date();
 
-      // Should be approximately 15 minutes from now
       const expectedMin = beforeCall.getTime() + 15 * 60 * 1000;
       const expectedMax = afterCall.getTime() + 15 * 60 * 1000;
 
@@ -117,48 +116,39 @@ describe("SLAService", () => {
       const beforeCall = new Date();
       const deadline = await SLAService.calculateDeadline("company-123", "dept-123");
 
-      // Should be approximately 30 minutes from now
       const expected = beforeCall.getTime() + 30 * 60 * 1000;
       expect(deadline.getTime()).toBeGreaterThanOrEqual(expected - 1000);
       expect(deadline.getTime()).toBeLessThanOrEqual(expected + 2000);
     });
   });
 
-  describe("checkSLABreaches", () => {
-    it("should mark breached tickets and create activity", async () => {
-      const mockTicket = {
-        id: "ticket-1",
-        protocol: "2024010001",
-        slaBreached: false,
-        slaDeadline: new Date(Date.now() - 60000), // 1 minute ago
-      };
+  describe("calculateFirstResponseDeadline", () => {
+    it("should offset anchor by firstResponseTime without business hours", async () => {
+      vi.mocked(prisma.sLAConfig.findUnique).mockResolvedValue(null);
+      vi.mocked(prisma.sLAConfig.findFirst).mockResolvedValue(null);
 
-      vi.mocked(prisma.ticket.findMany).mockResolvedValue([mockTicket] as any);
-      vi.mocked(prisma.ticket.update).mockResolvedValue({} as any);
-      vi.mocked(prisma.activity.create).mockResolvedValue({} as any);
+      const anchor = new Date("2024-01-15T12:00:00.000Z");
+      const deadline = await SLAService.calculateFirstResponseDeadline(
+        anchor,
+        "company-123"
+      );
 
-      await SLAService.checkSLABreaches();
-
-      expect(prisma.ticket.update).toHaveBeenCalledWith({
-        where: { id: "ticket-1" },
-        data: { slaBreached: true },
-      });
-
-      expect(prisma.activity.create).toHaveBeenCalledWith({
-        data: {
-          type: "SLA_BREACH",
-          description: "SLA deadline breached",
-          ticketId: "ticket-1",
-        },
-      });
+      expect(deadline.getTime()).toBe(anchor.getTime() + 15 * 60 * 1000);
     });
+  });
 
-    it("should not update tickets that have not breached", async () => {
-      vi.mocked(prisma.ticket.findMany).mockResolvedValue([]);
+  describe("calculateResolutionDeadline", () => {
+    it("should use 240 minutes default when no config", async () => {
+      vi.mocked(prisma.sLAConfig.findUnique).mockResolvedValue(null);
+      vi.mocked(prisma.sLAConfig.findFirst).mockResolvedValue(null);
 
-      await SLAService.checkSLABreaches();
+      const anchor = new Date("2024-01-15T10:00:00.000Z");
+      const deadline = await SLAService.calculateResolutionDeadline(
+        anchor,
+        "company-123"
+      );
 
-      expect(prisma.ticket.update).not.toHaveBeenCalled();
+      expect(deadline.getTime()).toBe(anchor.getTime() + 240 * 60 * 1000);
     });
   });
 

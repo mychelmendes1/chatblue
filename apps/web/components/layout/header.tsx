@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Building2 } from "lucide-react";
+import { Building2, Library } from "lucide-react";
 import { useAuthStore, type Company } from "@/stores/auth.store";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
@@ -9,6 +9,12 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { Notifications } from "./notifications";
+import { Button } from "@/components/ui/button";
+
+const docsHref =
+  (typeof process.env.NEXT_PUBLIC_DOCS_URL === "string" &&
+    process.env.NEXT_PUBLIC_DOCS_URL.trim()) ||
+  "/docs/";
 
 export function Header() {
   const { user, companies, switchCompany, isSwitchingCompany } = useAuthStore();
@@ -131,6 +137,12 @@ export function Header() {
       </div>
 
       <div className="flex items-center gap-2 md:gap-3 flex-shrink-0">
+        <Button variant="ghost" size="icon" className="h-9 w-9 shrink-0" asChild>
+          <a href={docsHref} title="Wiki / Documentação">
+            <Library className="h-5 w-5" />
+            <span className="sr-only">Abrir wiki e documentação</span>
+          </a>
+        </Button>
         <Notifications />
         <div className="text-right hidden md:block">
           <p className="text-sm font-medium">{user.name}</p>

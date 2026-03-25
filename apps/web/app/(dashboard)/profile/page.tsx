@@ -1,21 +1,34 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { User, Lock, Loader2, Check, Eye, EyeOff } from "lucide-react";
+import {
+  User,
+  Lock,
+  Loader2,
+  Check,
+  Eye,
+  EyeOff,
+  BarChart3,
+  Camera,
+  Link2,
+  Trash2,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useAuthStore } from "@/stores/auth.store";
 import { useToast } from "@/components/ui/use-toast";
 import { api } from "@/lib/api";
+import { normalizeMediaUrl } from "@/utils/media-url.util";
 
 // ============================================================================
-// Schemas
+// Schemas & helpers
 // ============================================================================
 const profileSchema = z.object({
   name: z.string().min(2, "Nome deve ter no mínimo 2 caracteres"),
@@ -35,12 +48,47 @@ const passwordSchema = z
 type ProfileForm = z.infer<typeof profileSchema>;
 type PasswordForm = z.infer<typeof passwordSchema>;
 
+const MAX_AVATAR_BYTES = 5 * 1024 * 1024;
+const ACCEPT_AVATAR = "image/jpeg,image/png,image/gif,image/webp";
+
+function formatDurationSeconds(seconds: number): string {
+  if (!Number.isFinite(seconds) || seconds <= 0) return "—";
+  if (seconds < 60) return `${seconds}s`;
+  if (seconds < 3600) return `${Math.floor(seconds / 60)} min`;
+  return `${Math.floor(seconds / 3600)}h ${Math.floor((seconds % 3600) / 60)}min`;
+}
+
+interface MetricsSummary {
+  totalTickets: number;
+  resolvedTickets: number;
+  avgResponseTime: number;
+  avgResolutionTime: number;
+  slaBreached: number;
+  avgRating: number | null;
+  totalRatings: number;
+}
+
+interface UserMetricsResponse {
+  summary: MetricsSummary;
+}
+
 // ============================================================================
 // Page
 // ============================================================================
 export default function ProfilePage() {
   const { user, checkAuth } = useAuthStore();
   const { toast } = useToast();
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const [avatarUrlInput, setAvatarUrlInput] = useState("");
+  const [isUploadingAvatar, setIsUploadingAvatar] = useState(false);
+  const [isSavingAvatarUrl, setIsSavingAvatarUrl] = useState(false);
+  const [isRemovingAvatar, setIsRemovingAvatar] = useState(false);
+
+  const [statsPeriod, setStatsPeriod] = useState<7 | 30 | 90>(30);
+  const [metrics, setMetrics] = useState<MetricsSummary | null>(null);
+  const [metricsLoading, setMetricsLoading] = useState(false);
+  const [metricsError, setMetricsError] = useState<string | null>(null);
 
   // Profile form
   const [isUpdatingProfile, setIsUpdatingProfile] = useState(false);
@@ -48,10 +96,19 @@ export default function ProfilePage() {
     register: registerProfile,
     handleSubmit: handleProfileSubmit,
     formState: { errors: profileErrors },
+    reset: resetProfileForm,
   } = useForm<ProfileForm>({
     resolver: zodResolver(profileSchema),
     defaultValues: { name: user?.name || "" },
   });
+
+  useEffect(() => {
+    resetProfileForm({ name: user?.name || "" });
+  }, [user?.name, user?.id, resetProfileForm]);
+
+  useEffect(() => {
+    setAvatarUrlInput(user?.avatar?.trim() && !user.avatar.startsWith("/uploads/") ? user.avatar : "");
+  }, [user?.avatar]);
 
   // Password form
   const [isChangingPassword, setIsChangingPassword] = useState(false);
@@ -66,6 +123,26 @@ export default function ProfilePage() {
     resolver: zodResolver(passwordSchema),
   });
 
+  const fetchMyMetrics = useCallback(async () => {
+    if (!user?.id || user.isAI) return;
+    setMetricsLoading(true);
+    setMetricsError(null);
+    try {
+      const res = await api.get<UserMetricsResponse>(`/metrics/users/${user.id}?period=${statsPeriod}`);
+      setMetrics(res.data.summary);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : "Não foi possível carregar as estatísticas";
+      setMetricsError(msg);
+      setMetrics(null);
+    } finally {
+      setMetricsLoading(false);
+    }
+  }, [user?.id, user?.isAI, statsPeriod]);
+
+  useEffect(() => {
+    fetchMyMetrics();
+  }, [fetchMyMetrics]);
+
   const initials = user?.name
     ?.split(" ")
     .map((n) => n[0])
@@ -73,17 +150,18 @@ export default function ProfilePage() {
     .toUpperCase()
     .slice(0, 2);
 
-  // ========== Profile submit ==========
+  const avatarSrc = normalizeMediaUrl(user?.avatar);
+
   const onProfileSubmit = async (data: ProfileForm) => {
     setIsUpdatingProfile(true);
     try {
       await api.put("/auth/profile", { name: data.name });
-      await checkAuth(); // Refresh user data
+      await checkAuth();
       toast({ title: "Perfil atualizado", description: "Seu nome foi atualizado com sucesso." });
-    } catch (error: any) {
+    } catch (error: unknown) {
       toast({
         title: "Erro ao atualizar perfil",
-        description: error.message || "Tente novamente.",
+        description: error instanceof Error ? error.message : "Tente novamente.",
         variant: "destructive",
       });
     } finally {
@@ -91,7 +169,6 @@ export default function ProfilePage() {
     }
   };
 
-  // ========== Password submit ==========
   const onPasswordSubmit = async (data: PasswordForm) => {
     setIsChangingPassword(true);
     try {
@@ -101,14 +178,90 @@ export default function ProfilePage() {
       });
       resetPasswordForm();
       toast({ title: "Senha alterada", description: "Sua senha foi alterada com sucesso." });
-    } catch (error: any) {
+    } catch (error: unknown) {
       toast({
         title: "Erro ao alterar senha",
-        description: error.message || "Verifique a senha atual e tente novamente.",
+        description: error instanceof Error ? error.message : "Verifique a senha atual e tente novamente.",
         variant: "destructive",
       });
     } finally {
       setIsChangingPassword(false);
+    }
+  };
+
+  const handleAvatarFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    if (file.size > MAX_AVATAR_BYTES) {
+      toast({
+        title: "Arquivo grande demais",
+        description: "Use uma imagem de até 5 MB.",
+        variant: "destructive",
+      });
+      return;
+    }
+    if (!ACCEPT_AVATAR.split(",").includes(file.type)) {
+      toast({
+        title: "Formato inválido",
+        description: "Use JPEG, PNG, GIF ou WebP.",
+        variant: "destructive",
+      });
+      return;
+    }
+    setIsUploadingAvatar(true);
+    try {
+      await api.uploadAvatar(file);
+      await checkAuth();
+      toast({ title: "Foto atualizada", description: "Sua foto de perfil foi enviada." });
+    } catch (error: unknown) {
+      toast({
+        title: "Erro no upload",
+        description: error instanceof Error ? error.message : "Tente novamente.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsUploadingAvatar(false);
+    }
+  };
+
+  const handleSaveAvatarUrl = async () => {
+    const url = avatarUrlInput.trim();
+    if (!url) {
+      toast({ title: "URL vazia", description: "Informe uma URL válida.", variant: "destructive" });
+      return;
+    }
+    setIsSavingAvatarUrl(true);
+    try {
+      await api.put("/auth/profile", { avatar: url });
+      await checkAuth();
+      toast({ title: "Foto atualizada", description: "URL da imagem salva no perfil." });
+    } catch (error: unknown) {
+      toast({
+        title: "Erro ao salvar URL",
+        description: error instanceof Error ? error.message : "Verifique se a URL é válida (https://...).",
+        variant: "destructive",
+      });
+    } finally {
+      setIsSavingAvatarUrl(false);
+    }
+  };
+
+  const handleRemoveAvatar = async () => {
+    setIsRemovingAvatar(true);
+    try {
+      await api.put("/auth/profile", { avatar: "" });
+      setAvatarUrlInput("");
+      await checkAuth();
+      toast({ title: "Foto removida", description: "Sua foto de perfil foi removida." });
+    } catch (error: unknown) {
+      toast({
+        title: "Erro",
+        description: error instanceof Error ? error.message : "Tente novamente.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsRemovingAvatar(false);
     }
   };
 
@@ -119,9 +272,6 @@ export default function ProfilePage() {
         <p className="text-sm text-gray-500">Gerencie suas informações pessoais e segurança</p>
       </div>
 
-      {/* ============================================================ */}
-      {/* Informações do perfil                                        */}
-      {/* ============================================================ */}
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
@@ -131,15 +281,84 @@ export default function ProfilePage() {
           <CardDescription>Atualize seu nome e foto de perfil</CardDescription>
         </CardHeader>
         <CardContent>
-          <div className="flex items-center gap-4 mb-6">
-            <Avatar className="w-16 h-16">
-              <AvatarImage src={user?.avatar} />
-              <AvatarFallback className="bg-chatblue text-white text-lg">{initials}</AvatarFallback>
+          <div className="flex flex-col sm:flex-row sm:items-start gap-4 mb-6">
+            <Avatar className="w-20 h-20 shrink-0">
+              <AvatarImage src={avatarSrc} />
+              <AvatarFallback className="bg-chatblue text-white text-xl">{initials}</AvatarFallback>
             </Avatar>
-            <div>
-              <p className="font-medium text-gray-900">{user?.name}</p>
-              <p className="text-sm text-gray-500">{user?.email}</p>
-              <p className="text-xs text-gray-400 capitalize">{user?.role?.toLowerCase()}</p>
+            <div className="flex-1 space-y-3 min-w-0">
+              <div>
+                <p className="font-medium text-gray-900">{user?.name}</p>
+                <p className="text-sm text-gray-500">{user?.email}</p>
+                <p className="text-xs text-gray-400 capitalize">{user?.role?.toLowerCase()}</p>
+              </div>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept={ACCEPT_AVATAR}
+                className="hidden"
+                onChange={handleAvatarFileChange}
+              />
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={isUploadingAvatar}
+                  onClick={() => fileInputRef.current?.click()}
+                >
+                  {isUploadingAvatar ? (
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  ) : (
+                    <Camera className="mr-2 h-4 w-4" />
+                  )}
+                  Enviar foto
+                </Button>
+                {user?.avatar && (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="text-muted-foreground"
+                    disabled={isRemovingAvatar}
+                    onClick={handleRemoveAvatar}
+                  >
+                    {isRemovingAvatar ? (
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    ) : (
+                      <Trash2 className="mr-2 h-4 w-4" />
+                    )}
+                    Remover foto
+                  </Button>
+                )}
+              </div>
+              <p className="text-xs text-muted-foreground">JPEG, PNG, GIF ou WebP — máx. 5 MB</p>
+              <div className="space-y-2 pt-2 border-t">
+                <Label htmlFor="avatar-url" className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                  <Link2 className="h-3.5 w-3.5" />
+                  Ou use URL da imagem (ex.: Gravatar)
+                </Label>
+                <div className="flex gap-2 flex-col sm:flex-row">
+                  <Input
+                    id="avatar-url"
+                    type="url"
+                    placeholder="https://..."
+                    value={avatarUrlInput}
+                    onChange={(e) => setAvatarUrlInput(e.target.value)}
+                    className="flex-1"
+                  />
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    className="shrink-0"
+                    disabled={isSavingAvatarUrl}
+                    onClick={handleSaveAvatarUrl}
+                  >
+                    {isSavingAvatarUrl ? <Loader2 className="h-4 w-4 animate-spin" /> : "Aplicar URL"}
+                  </Button>
+                </div>
+              </div>
             </div>
           </div>
 
@@ -164,15 +383,103 @@ export default function ProfilePage() {
               ) : (
                 <Check className="mr-2 h-4 w-4" />
               )}
-              Salvar Alterações
+              Salvar nome
             </Button>
           </form>
         </CardContent>
       </Card>
 
-      {/* ============================================================ */}
-      {/* Alterar Senha                                                */}
-      {/* ============================================================ */}
+      {!user?.isAI && user?.id && (
+        <Card>
+          <CardHeader className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 space-y-0">
+            <div>
+              <CardTitle className="flex items-center gap-2">
+                <BarChart3 className="w-5 h-5" />
+                Minhas estatísticas
+              </CardTitle>
+              <CardDescription>Tickets atribuídos a você no período</CardDescription>
+            </div>
+            <Tabs
+              value={String(statsPeriod)}
+              onValueChange={(v) => setStatsPeriod(Number(v) as 7 | 30 | 90)}
+            >
+              <TabsList className="h-8">
+                <TabsTrigger value="7" className="text-xs px-2">
+                  7 dias
+                </TabsTrigger>
+                <TabsTrigger value="30" className="text-xs px-2">
+                  30 dias
+                </TabsTrigger>
+                <TabsTrigger value="90" className="text-xs px-2">
+                  90 dias
+                </TabsTrigger>
+              </TabsList>
+            </Tabs>
+          </CardHeader>
+          <CardContent>
+            {metricsLoading && (
+              <div className="flex items-center justify-center py-10 text-muted-foreground">
+                <Loader2 className="h-8 w-8 animate-spin" />
+              </div>
+            )}
+            {!metricsLoading && metricsError && (
+              <p className="text-sm text-destructive text-center py-6">{metricsError}</p>
+            )}
+            {!metricsLoading && !metricsError && metrics && metrics.totalTickets === 0 && (
+              <p className="text-sm text-muted-foreground text-center py-8">
+                Nenhum ticket atribuído a você neste período.
+              </p>
+            )}
+            {!metricsLoading && !metricsError && metrics && metrics.totalTickets > 0 && (
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                <div className="rounded-lg border p-3 bg-muted/30">
+                  <p className="text-xs text-muted-foreground">No período</p>
+                  <p className="text-2xl font-semibold">{metrics.totalTickets}</p>
+                  <p className="text-xs text-muted-foreground">tickets</p>
+                </div>
+                <div className="rounded-lg border p-3 bg-muted/30">
+                  <p className="text-xs text-muted-foreground">Resolvidos</p>
+                  <p className="text-2xl font-semibold">{metrics.resolvedTickets}</p>
+                </div>
+                <div className="rounded-lg border p-3 bg-muted/30">
+                  <p className="text-xs text-muted-foreground">SLA violado</p>
+                  <p className="text-2xl font-semibold">{metrics.slaBreached}</p>
+                </div>
+                <div className="rounded-lg border p-3 bg-muted/30">
+                  <p className="text-xs text-muted-foreground">Tempo médio resposta</p>
+                  <p className="text-lg font-semibold">{formatDurationSeconds(metrics.avgResponseTime)}</p>
+                </div>
+                <div className="rounded-lg border p-3 bg-muted/30">
+                  <p className="text-xs text-muted-foreground">Tempo médio resolução</p>
+                  <p className="text-lg font-semibold">{formatDurationSeconds(metrics.avgResolutionTime)}</p>
+                </div>
+                <div className="rounded-lg border p-3 bg-muted/30">
+                  <p className="text-xs text-muted-foreground">Nota média (CSAT)</p>
+                  <p className="text-2xl font-semibold">
+                    {metrics.avgRating != null ? metrics.avgRating.toFixed(1) : "—"}
+                  </p>
+                  {metrics.totalRatings > 0 && (
+                    <p className="text-xs text-muted-foreground">{metrics.totalRatings} avaliações</p>
+                  )}
+                </div>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {user?.isAI && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <BarChart3 className="w-5 h-5" />
+              Minhas estatísticas
+            </CardTitle>
+            <CardDescription>Estatísticas de atendimento não se aplicam a contas de IA.</CardDescription>
+          </CardHeader>
+        </Card>
+      )}
+
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">

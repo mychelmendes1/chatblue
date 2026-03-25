@@ -68,6 +68,15 @@ const sidebars: SidebarsConfig = {
         'funcionalidades/base-conhecimento',
         'funcionalidades/faq',
         'funcionalidades/notificacoes',
+        'funcionalidades/email',
+        'funcionalidades/instagram',
+        'funcionalidades/campanhas',
+        'funcionalidades/ml-learning',
+        'funcionalidades/ai-assistant',
+        'funcionalidades/blue',
+        'funcionalidades/mensagens-predefinidas',
+        'funcionalidades/nps',
+        'funcionalidades/metas-alertas',
       ],
     },
     {
@@ -162,6 +171,17 @@ const sidebars: SidebarsConfig = {
     },
     {
       type: 'category',
+      label: 'Conexoes Email',
+      collapsed: true,
+      items: [
+        'api/email-connections/listar',
+        'api/email-connections/criar',
+        'api/email-connections/oauth',
+        'api/email-connections/gerenciar',
+      ],
+    },
+    {
+      type: 'category',
       label: 'Tickets',
       collapsed: true,
       items: [
@@ -188,6 +208,14 @@ const sidebars: SidebarsConfig = {
     },
     {
       type: 'category',
+      label: 'Busca no Chat',
+      collapsed: true,
+      items: [
+        'api/chat/busca',
+      ],
+    },
+    {
+      type: 'category',
       label: 'Contatos',
       collapsed: true,
       items: [
@@ -206,6 +234,8 @@ const sidebars: SidebarsConfig = {
         'api/metricas/sla',
         'api/metricas/agentes',
         'api/metricas/departamentos',
+        'api/metricas/metas',
+        'api/metricas/alertas',
       ],
     },
     {
@@ -236,6 +266,78 @@ const sidebars: SidebarsConfig = {
       collapsed: true,
       items: [
         'api/upload/arquivo',
+      ],
+    },
+    {
+      type: 'category',
+      label: 'Notificacoes',
+      collapsed: true,
+      items: [
+        'api/notifications/endpoints',
+      ],
+    },
+    {
+      type: 'category',
+      label: 'Push Notifications',
+      collapsed: true,
+      items: [
+        'api/push/endpoints',
+      ],
+    },
+    {
+      type: 'category',
+      label: 'Mensagens Pre-definidas',
+      collapsed: true,
+      items: [
+        'api/predefined-messages/endpoints',
+      ],
+    },
+    {
+      type: 'category',
+      label: 'AI Assistant',
+      collapsed: true,
+      items: [
+        'api/ai-assistant/endpoints',
+      ],
+    },
+    {
+      type: 'category',
+      label: 'Blue Assistant',
+      collapsed: true,
+      items: [
+        'api/blue/endpoints',
+      ],
+    },
+    {
+      type: 'category',
+      label: 'ML Learning',
+      collapsed: true,
+      items: [
+        'api/ml-learning/endpoints',
+      ],
+    },
+    {
+      type: 'category',
+      label: 'External AI',
+      collapsed: true,
+      items: [
+        'api/external-ai/endpoints',
+      ],
+    },
+    {
+      type: 'category',
+      label: 'API Publica',
+      collapsed: true,
+      items: [
+        'api/public/endpoints',
+      ],
+    },
+    {
+      type: 'category',
+      label: 'Integracoes',
+      collapsed: true,
+      items: [
+        'api/integracoes/sgt',
       ],
     },
     {
@@ -313,6 +415,8 @@ const sidebars: SidebarsConfig = {
     },
     'treinamento/faq',
     'treinamento/glossario',
+    'treinamento/faq-atendimentos',
+    'treinamento/faq-tokeniza-ai',
   ],
 
   guidesSidebar: [

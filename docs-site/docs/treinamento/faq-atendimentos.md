@@ -1,8 +1,12 @@
 ---
-sidebar_position: 51
+sidebar_position: 52
 title: FAQ - Atendimentos Reais
 description: Perguntas frequentes extraídas das conversas atendidas
 ---
+
+:::info
+Este documento contem FAQs baseados em atendimentos reais da empresa Tokeniza. O conteudo e especifico para este cliente.
+:::
 
 # FAQ - Baseado em Atendimentos Reais
 

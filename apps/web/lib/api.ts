@@ -103,6 +103,36 @@ class ApiClient {
     const result = await response.json();
     return { data: result };
   }
+
+  /** POST /upload/avatar — campo multipart deve ser "avatar" (multer). */
+  async uploadAvatar(file: File): Promise<{ data: { success: boolean; file: { filename: string; url: string } } }> {
+    const token = this.getToken();
+    const formData = new FormData();
+    formData.append("avatar", file);
+
+    const headers: HeadersInit = {};
+    if (token) {
+      headers["Authorization"] = `Bearer ${token}`;
+    }
+
+    const response = await fetch(`${this.baseUrl}/upload/avatar`, {
+      method: "POST",
+      headers,
+      body: formData,
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}));
+      throw new Error(
+        (error as { message?: string; error?: string }).message ||
+          (error as { error?: string }).error ||
+          "Falha ao enviar foto de perfil"
+      );
+    }
+
+    const result = await response.json();
+    return { data: result };
+  }
 }
 
 export const api = new ApiClient(`${API_URL}/api`);

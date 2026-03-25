@@ -51,7 +51,7 @@ O Anthropic Claude e conhecido por respostas mais naturais e contextos longos. E
 3. De um nome: "ChatBlue Production"
 4. Copie a chave gerada
 
-![Placeholder: Tela de criacao de API Key Anthropic](/img/guias/anthropic-apikey.png)
+*Imagem: Tela de criacao de API Key Anthropic*
 
 :::danger Atencao
 A chave so e exibida uma vez. Guarde-a em local seguro!
@@ -68,7 +68,7 @@ A chave so e exibida uma vez. Guarde-a em local seguro!
 | API Key | sk-ant-... (sua chave) |
 | Modelo | claude-3-sonnet-20240229 |
 
-![Placeholder: Configuracao Anthropic no ChatBlue](/img/guias/anthropic-config.png)
+*Imagem: Configuracao Anthropic no ChatBlue*
 
 ### Passo 4: Configuracoes Avancadas
 

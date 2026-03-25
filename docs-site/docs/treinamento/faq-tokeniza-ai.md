@@ -4,6 +4,10 @@ title: FAQ Tokeniza - Gerado com IA
 description: Perguntas frequentes dos clientes Tokeniza com respostas profissionais geradas por IA
 ---
 
+:::info
+Este documento contem FAQs geradas com IA a partir de dados da empresa Tokeniza. O conteudo e especifico para este cliente e pode nao se aplicar a outras empresas.
+:::
+
 # FAQ Tokeniza - Respostas Profissionais
 
 Este FAQ foi gerado automaticamente usando Inteligência Artificial, analisando o histórico de atendimento da Tokeniza e criando respostas profissionais baseadas nas respostas dos atendentes.
@@ -170,7 +174,7 @@ Sim Lívia. Obrigado..."
 
 **Resposta:**
 
-Tokeniza <> Jonas Bazzanini Quarta-feira, 14 de janeiro · 9:00 – 9:30am Fuso horário: America/Sao_Paulo Como participar do Google Meet Link da videochamada: https://meet.google.com/skq-ppzt-eaj Ou disque: ‪(BR) +55 41 4560-9969‬ PIN: ‪301 939 347‬# Outros números de telefone: https://tel.meet/skq-ppzt-eaj?pin=5570685334338
+Tokeniza &lt;&gt; Jonas Bazzanini Quarta-feira, 14 de janeiro · 9:00 – 9:30am Fuso horário: America/Sao_Paulo Como participar do Google Meet Link da videochamada: https://meet.google.com/skq-ppzt-eaj Ou disque: ‪(BR) +55 41 4560-9969‬ PIN: ‪301 939 347‬# Outros números de telefone: https://tel.meet/skq-ppzt-eaj?pin=5570685334338
 
 **Exemplos de perguntas similares:**
 
@@ -297,7 +301,7 @@ Conte-me, qual é a sua necessidade? ✨
 
 **Resposta:**
 
-Tokeniza <> Denis Andreoli  Quinta-feira, 15 de janeiro · 5:00 – 5:30pm Fuso horário: America/Sao_Paulo Como participar do Google Meet Link da videochamada: https://meet.google.com/xmc-axdf-wre Ou disque: ‪(BR) +55 19 4560-9929‬ PIN: ‪179 872 428‬# Outros números de telefone: https://tel.meet/xmc-axdf-wre?pin=5059450172914
+Tokeniza &lt;&gt; Denis Andreoli  Quinta-feira, 15 de janeiro · 5:00 – 5:30pm Fuso horário: America/Sao_Paulo Como participar do Google Meet Link da videochamada: https://meet.google.com/xmc-axdf-wre Ou disque: ‪(BR) +55 19 4560-9929‬ PIN: ‪179 872 428‬# Outros números de telefone: https://tel.meet/xmc-axdf-wre?pin=5059450172914
 
 **Exemplos de perguntas similares:**
 

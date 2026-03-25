@@ -10,14 +10,14 @@ Esta documentacao descreve os hooks customizados utilizados no ChatBlue para enc
 
 ## Visao Geral
 
-O ChatBlue utiliza uma combinacao de hooks customizados e hooks de bibliotecas externas:
+O diretorio `apps/web/hooks/` existe mas esta **vazio** -- nao ha arquivos de hooks dedicados nele. Os hooks customizados do ChatBlue sao definidos inline dentro de providers e componentes UI:
 
-| Hook | Categoria | Descricao |
-|------|-----------|-----------|
-| `useSocket` | Comunicacao | Gerencia conexao WebSocket |
-| `useToast` | UI | Sistema de notificacoes toast |
-| `useAuthStore` | Estado | Hook do Zustand para autenticacao |
-| `useChatStore` | Estado | Hook do Zustand para chat |
+| Hook | Arquivo | Descricao |
+|------|---------|-----------|
+| `useSocket` | `components/providers/socket-provider.tsx` | Conexao WebSocket via Socket.IO |
+| `useToast` | `components/ui/use-toast.ts` | Sistema de notificacoes toast |
+
+Alem desses, os hooks de estado do Zustand (`useAuthStore`, `useChatStore`) sao exportados diretamente das stores em `apps/web/stores/`. Veja a documentacao completa em [Stores](/docs/frontend/stores).
 
 ---
 
@@ -393,7 +393,7 @@ async function uploadFile(file: File) {
 
 ## Hooks de Estado (Zustand)
 
-Os hooks de estado do ChatBlue sao baseados no Zustand. Veja a documentacao completa em [Stores](/docs/frontend/stores).
+Os hooks de estado do ChatBlue sao gerados pelo Zustand diretamente nas stores em `apps/web/stores/`. Veja a documentacao completa em [Stores](/docs/frontend/stores).
 
 ### useAuthStore
 
@@ -445,11 +445,13 @@ function TicketList() {
 
 ---
 
-## Hooks Utilitarios Comuns
+## Padroes de Hooks Utilitarios
+
+Os padroes abaixo nao existem como arquivos dedicados em `apps/web/hooks/`. Sao implementados inline dentro dos componentes que os utilizam. Estao documentados aqui como referencia de padroes reutilizaveis no projeto.
 
 ### useDebounce
 
-Hook para debounce de valores (util para busca):
+Padrao para debounce de valores (util para busca):
 
 ```tsx
 import { useState, useEffect } from "react";
@@ -492,7 +494,7 @@ function SearchInput() {
 
 ### useLocalStorage
 
-Hook para persistir estado no localStorage:
+Padrao para persistir estado no localStorage:
 
 ```tsx
 import { useState, useEffect } from "react";
@@ -539,7 +541,7 @@ function Settings() {
 
 ### useMediaQuery
 
-Hook para responsive design:
+Padrao para responsive design:
 
 ```tsx
 import { useState, useEffect } from "react";
@@ -581,7 +583,7 @@ function ResponsiveComponent() {
 
 ### useOnClickOutside
 
-Hook para detectar cliques fora de um elemento:
+Padrao para detectar cliques fora de um elemento:
 
 ```tsx
 import { useEffect, useRef } from "react";
@@ -628,7 +630,7 @@ function Dropdown() {
 
 ### useInterval
 
-Hook para intervalos controlados:
+Padrao para intervalos controlados:
 
 ```tsx
 import { useEffect, useRef } from "react";

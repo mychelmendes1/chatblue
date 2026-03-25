@@ -1,0 +1,8 @@
+{
+  "label": "Push Notifications",
+  "position": 14,
+  "link": {
+    "type": "generated-index",
+    "description": "Endpoints para push notifications no ChatBlue"
+  }
+}

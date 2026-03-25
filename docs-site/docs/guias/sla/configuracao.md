@@ -6,11 +6,11 @@ description: Guia para configurar acordos de nivel de servico (SLA) no ChatBlue
 
 # Configuracao de SLA
 
-O SLA (Service Level Agreement) define metas de tempo de resposta e resolucao para os atendimentos. Este guia explica como configurar e monitorar SLAs no ChatBlue.
+O SLA (Service Level Agreement) define metas de tempo de resposta e resolucao para os atendimentos. Este guia explica como configurar SLAs no ChatBlue.
 
 ## Nivel de Dificuldade
 
-**Intermediario** - Tempo estimado: 20-30 minutos
+**Intermediario** - Tempo estimado: 15-20 minutos
 
 ## O Que e SLA?
 
@@ -18,9 +18,8 @@ SLA define compromissos de tempo para o atendimento:
 
 | Metrica | Descricao | Exemplo |
 |---------|-----------|---------|
-| Primeira Resposta | Tempo ate a primeira resposta | 15 minutos |
+| Primeira Resposta | Tempo ate a primeira resposta do agente | 15 minutos |
 | Tempo de Resolucao | Tempo ate fechar o ticket | 4 horas |
-| Tempo de Espera | Tempo maximo aguardando atendente | 5 minutos |
 
 ## Por Que Usar SLA?
 
@@ -45,12 +44,13 @@ SLA define compromissos de tempo para o atendimento:
 │                   SLA: Primeira Resposta                     │
 │                      Meta: 15 minutos                        │
 ├─────────────────────────────────────────────────────────────┤
-│  ⏱️ Tempo correndo...                                        │
+│  Tempo correndo...                                          │
 │                                                              │
 │  ┌──────────┐  ┌──────────┐  ┌──────────┐                  │
-│  │ 0-10 min │  │10-14 min │  │ 15+ min  │                  │
+│  │   OK     │  │ Warning  │  │ Breach   │                  │
 │  │  Verde   │  │ Amarelo  │  │ Vermelho │                  │
-│  │          │  │ (Alerta) │  │(Violacao)│                  │
+│  │          │  │ (~10%    │  │(Deadline │                  │
+│  │          │  │ restante)│  │ passou)  │                  │
 │  └──────────┘  └──────────┘  └──────────┘                  │
 └──────────────────────────┬──────────────────────────────────┘
                            │
@@ -59,365 +59,211 @@ SLA define compromissos de tempo para o atendimento:
 │                   SLA: Resolucao                             │
 │                      Meta: 4 horas                           │
 ├─────────────────────────────────────────────────────────────┤
-│  ⏱️ Tempo correndo...                                        │
+│  Tempo correndo...                                          │
 │                                                              │
-│  (Conta apenas horario comercial)                           │
+│  (Conta apenas horario comercial, se configurado)           │
 └──────────────────────────┬──────────────────────────────────┘
                            │
                            ▼ (Ticket fechado)
 ┌─────────────────────────────────────────────────────────────┐
 │                   SLA Concluido                              │
-│           Registrar metricas no historico                    │
+│           Registrar metricas no ticket                       │
+│    (responseTime, resolutionTime em segundos)               │
 └─────────────────────────────────────────────────────────────┘
 ```
 
+## API de Configuracao
+
+A configuracao de SLA e gerenciada pelos seguintes endpoints:
+
+| Metodo | Endpoint | Descricao |
+|--------|----------|-----------|
+| `GET` | `/api/settings/sla` | Listar todas as configuracoes de SLA |
+| `POST` | `/api/settings/sla` | Criar nova configuracao de SLA |
+| `PUT` | `/api/settings/sla/:id` | Atualizar configuracao existente |
+| `DELETE` | `/api/settings/sla/:id` | Remover configuracao de SLA |
+
+### Campos do SLAConfig
+
+| Campo | Tipo | Obrigatorio | Descricao |
+|-------|------|-------------|-----------|
+| `name` | string | Sim | Nome identificador da configuracao |
+| `firstResponseTime` | number | Sim | Tempo de primeira resposta em minutos |
+| `resolutionTime` | number | Sim | Tempo de resolucao em minutos |
+| `businessHours` | object | Nao | Horario comercial (opcional) |
+| `isDefault` | boolean | Sim | Se e a configuracao padrao da empresa |
+| `departmentId` | string | Nao | Departamento associado (opcional) |
+| `isActive` | boolean | Sim | Se a configuracao esta ativa |
+
 ## Passo a Passo
 
-### Passo 1: Acessar Configuracoes de SLA
+### Passo 1: Criar SLA Padrao
 
-1. Acesse **Configuracoes > SLA**
-2. Clique em **+ Nova Politica de SLA**
+Crie uma configuracao padrao para toda a empresa:
 
-![Placeholder: Tela de configuracao de SLA](/img/guias/sla-config.png)
+```typescript
+POST /api/settings/sla
+{
+  "name": "SLA Padrao",
+  "firstResponseTime": 30,
+  "resolutionTime": 240,
+  "isDefault": true,
+  "isActive": true
+}
+```
 
-### Passo 2: Configurar Politica Basica
+Esta configuracao sera usada para tickets de departamentos que nao possuem SLA proprio.
 
-| Campo | Descricao | Exemplo |
+### Passo 2: Criar SLA por Departamento
+
+Crie configuracoes especificas para departamentos que precisam de metas diferentes:
+
+```typescript
+// SLA para Suporte (mais rapido)
+POST /api/settings/sla
+{
+  "name": "SLA Suporte",
+  "firstResponseTime": 15,
+  "resolutionTime": 120,
+  "departmentId": "dept_suporte_123",
+  "isDefault": false,
+  "isActive": true
+}
+
+// SLA para Financeiro (mais tempo)
+POST /api/settings/sla
+{
+  "name": "SLA Financeiro",
+  "firstResponseTime": 60,
+  "resolutionTime": 480,
+  "departmentId": "dept_financeiro_456",
+  "isDefault": false,
+  "isActive": true
+}
+```
+
+### Passo 3: Configurar Horario Comercial (Opcional)
+
+Se o SLA deve contar apenas horas uteis, adicione o campo `businessHours`:
+
+```typescript
+POST /api/settings/sla
+{
+  "name": "SLA Comercial",
+  "firstResponseTime": 15,
+  "resolutionTime": 240,
+  "businessHours": {
+    "start": "09:00",
+    "end": "18:00",
+    "days": [1, 2, 3, 4, 5]
+  },
+  "isDefault": false,
+  "departmentId": "dept_comercial_789",
+  "isActive": true
+}
+```
+
+O formato do `businessHours`:
+
+| Campo | Tipo | Descricao |
+|-------|------|-----------|
+| `start` | string | Horario de inicio (HH:mm) |
+| `end` | string | Horario de fim (HH:mm) |
+| `days` | number[] | Dias da semana (1=segunda ... 7=domingo) |
+
+Nao existe configuracao de horario diferente por dia da semana nem lista de feriados. O horario e o mesmo para todos os dias listados em `days`.
+
+### Passo 4: Verificar Configuracao
+
+Liste as configuracoes criadas:
+
+```
+GET /api/settings/sla
+```
+
+## Heranca de Configuracao
+
+O sistema busca a configuracao de SLA na seguinte ordem:
+
+```
+1. Buscar SLAConfig do departamento do ticket
+   - Se existe e isActive = true -> usar esta config
+   
+2. Se nao encontrou, buscar SLAConfig padrao (isDefault = true)
+   - Usar como fallback
+```
+
+```
+Empresa (SLA Padrao - isDefault: true)
+├── FRT: 30 min
+└── RT: 4 horas
+
+    ├── Comercial (sem config propria -> herda padrao)
+    │   ├── FRT: 30 min
+    │   └── RT: 4 horas
+    │
+    ├── Suporte (config propria)
+    │   ├── FRT: 15 min
+    │   └── RT: 2 horas
+    │
+    └── Financeiro (config propria)
+        ├── FRT: 60 min
+        └── RT: 8 horas
+```
+
+O SLA nao diferencia por prioridade do ticket. A diferenciacao e feita exclusivamente por departamento.
+
+## Atualizar Configuracao
+
+Para alterar uma configuracao existente:
+
+```typescript
+PUT /api/settings/sla/sla_config_id_123
+{
+  "name": "SLA Suporte Atualizado",
+  "firstResponseTime": 10,
+  "resolutionTime": 180,
+  "isActive": true
+}
+```
+
+## Desativar Configuracao
+
+Para desativar sem remover:
+
+```typescript
+PUT /api/settings/sla/sla_config_id_123
+{
+  "isActive": false
+}
+```
+
+## Como o SLA e Verificado
+
+O job `sla-check.processor` roda a cada 60 segundos e verifica os tickets abertos:
+
+1. **WARNING**: enviado quando o tempo restante e inferior a ~10% do SLA (minimo 5 min para FRT, 10 min para resolucao)
+2. **BREACH**: enviado quando o deadline passou. Marca `ticket.slaBreached = true` e cria Activity `SLA_BREACH`
+
+As notificacoes sao enviadas via WebSocket ao agente atribuido (`assignedToId`) nos eventos `sla:warning` e `sla:breach`.
+
+## Metricas Armazenadas
+
+Quando o ticket e respondido ou resolvido, o sistema registra:
+
+| Campo | Descricao | Unidade |
 |-------|-----------|---------|
-| Nome | Identificador da politica | SLA Padrao |
-| Descricao | Descricao da politica | Politica para atendimento geral |
-| Prioridade | Ordem de aplicacao | 1 (mais alta) |
-| Ativo | Se esta em uso | Sim |
+| `firstResponse` | Timestamp da primeira resposta | DateTime |
+| `responseTime` | Tempo ate primeira resposta | Segundos |
+| `resolutionTime` | Tempo total de resolucao | Segundos |
+| `waitingTime` | Tempo aguardando cliente | Segundos |
+| `slaBreached` | Se o SLA foi violado | Boolean |
 
-```typescript
-{
-  sla: {
-    name: "SLA Padrao",
-    description: "Politica padrao para todos os tickets",
-    priority: 1,
-    active: true
-  }
-}
-```
-
-### Passo 3: Definir Metas de Tempo
-
-```typescript
-{
-  sla: {
-    targets: {
-      // Primeira resposta
-      firstResponse: {
-        target: 15, // minutos
-        warning: 10, // alerta em 10 minutos
-        unit: "minutes"
-      },
-
-      // Resolucao do ticket
-      resolution: {
-        target: 240, // 4 horas
-        warning: 180, // alerta em 3 horas
-        unit: "minutes"
-      },
-
-      // Tempo entre respostas
-      nextResponse: {
-        target: 30, // minutos
-        warning: 20,
-        unit: "minutes"
-      }
-    }
-  }
-}
-```
-
-### Passo 4: Configurar Horario Comercial
-
-O SLA pode considerar apenas horario comercial:
-
-```typescript
-{
-  sla: {
-    businessHours: {
-      enabled: true,
-      timezone: "America/Sao_Paulo",
-
-      schedule: {
-        monday: { start: "09:00", end: "18:00" },
-        tuesday: { start: "09:00", end: "18:00" },
-        wednesday: { start: "09:00", end: "18:00" },
-        thursday: { start: "09:00", end: "18:00" },
-        friday: { start: "09:00", end: "17:00" },
-        saturday: null, // Fechado
-        sunday: null    // Fechado
-      },
-
-      // Feriados
-      holidays: [
-        { date: "2024-01-01", name: "Ano Novo" },
-        { date: "2024-02-12", name: "Carnaval" },
-        { date: "2024-02-13", name: "Carnaval" },
-        { date: "2024-04-21", name: "Tiradentes" },
-        { date: "2024-05-01", name: "Dia do Trabalho" },
-        { date: "2024-12-25", name: "Natal" }
-      ]
-    }
-  }
-}
-```
-
-### Passo 5: Definir Condicoes de Aplicacao
-
-Configure quando a politica deve ser aplicada:
-
-```typescript
-{
-  sla: {
-    conditions: {
-      // Aplicar a todos os tickets
-      applyTo: "all",
-
-      // OU: Condicoes especificas
-      rules: [
-        {
-          field: "department",
-          operator: "equals",
-          value: "suporte"
-        },
-        {
-          field: "priority",
-          operator: "in",
-          value: ["high", "urgent"]
-        },
-        {
-          field: "tags",
-          operator: "contains",
-          value: "vip"
-        }
-      ],
-
-      // Logica das condicoes
-      logic: "any" // all, any
-    }
-  }
-}
-```
-
-## Politicas por Prioridade
-
-Crie politicas diferentes por prioridade:
-
-### SLA Urgente
-
-```typescript
-{
-  name: "SLA Urgente",
-  priority: 1,
-  conditions: {
-    rules: [{ field: "priority", equals: "urgent" }]
-  },
-  targets: {
-    firstResponse: { target: 5, unit: "minutes" },
-    resolution: { target: 60, unit: "minutes" }
-  }
-}
-```
-
-### SLA Alta
-
-```typescript
-{
-  name: "SLA Alta Prioridade",
-  priority: 2,
-  conditions: {
-    rules: [{ field: "priority", equals: "high" }]
-  },
-  targets: {
-    firstResponse: { target: 15, unit: "minutes" },
-    resolution: { target: 120, unit: "minutes" }
-  }
-}
-```
-
-### SLA Normal
-
-```typescript
-{
-  name: "SLA Normal",
-  priority: 3,
-  conditions: {
-    rules: [{ field: "priority", equals: "normal" }]
-  },
-  targets: {
-    firstResponse: { target: 30, unit: "minutes" },
-    resolution: { target: 480, unit: "minutes" }
-  }
-}
-```
-
-### SLA Baixa
-
-```typescript
-{
-  name: "SLA Baixa Prioridade",
-  priority: 4,
-  conditions: {
-    rules: [{ field: "priority", equals: "low" }]
-  },
-  targets: {
-    firstResponse: { target: 60, unit: "minutes" },
-    resolution: { target: 1440, unit: "minutes" } // 24 horas
-  }
-}
-```
-
-## Politicas por Departamento
-
-```typescript
-// SLA para Vendas
-{
-  name: "SLA Vendas",
-  conditions: {
-    rules: [{ field: "department", equals: "vendas" }]
-  },
-  targets: {
-    firstResponse: { target: 5, unit: "minutes" }, // Resposta rapida
-    resolution: { target: 1440, unit: "minutes" } // Ciclo de venda mais longo
-  }
-}
-
-// SLA para Suporte Tecnico
-{
-  name: "SLA Suporte",
-  conditions: {
-    rules: [{ field: "department", equals: "suporte" }]
-  },
-  targets: {
-    firstResponse: { target: 15, unit: "minutes" },
-    resolution: { target: 240, unit: "minutes" }
-  }
-}
-
-// SLA para Financeiro
-{
-  name: "SLA Financeiro",
-  conditions: {
-    rules: [{ field: "department", equals: "financeiro" }]
-  },
-  targets: {
-    firstResponse: { target: 30, unit: "minutes" },
-    resolution: { target: 480, unit: "minutes" }
-  }
-}
-```
-
-## Politicas VIP
-
-Para clientes especiais:
-
-```typescript
-{
-  name: "SLA VIP",
-  priority: 0, // Maior prioridade
-  conditions: {
-    rules: [
-      { field: "tags", contains: "vip" },
-      // OU
-      { field: "contact.plan", equals: "enterprise" }
-    ],
-    logic: "any"
-  },
-  targets: {
-    firstResponse: { target: 2, unit: "minutes" },
-    resolution: { target: 60, unit: "minutes" }
-  },
-  escalation: {
-    onWarning: {
-      notify: ["supervisor@empresa.com"]
-    },
-    onBreach: {
-      notify: ["gerente@empresa.com"],
-      assignTo: "senior_agent"
-    }
-  }
-}
-```
-
-## Pausas no SLA
-
-Configure quando o timer deve pausar:
-
-```typescript
-{
-  sla: {
-    pause: {
-      // Pausar quando aguardando resposta do cliente
-      onWaitingCustomer: true,
-
-      // Pausar quando em status especifico
-      onStatus: ["pending", "on_hold"],
-
-      // Pausar fora do horario comercial
-      outsideBusinessHours: true,
-
-      // Pausar em feriados
-      onHolidays: true
-    }
-  }
-}
-```
-
-## Escalacao Automatica
-
-Configure acoes automaticas quando SLA esta em risco:
-
-```typescript
-{
-  sla: {
-    escalation: {
-      // Quando atingir tempo de alerta (warning)
-      onWarning: {
-        actions: [
-          {
-            type: "notification",
-            to: ["agent", "supervisor"],
-            message: "SLA em risco para ticket {ticket.id}"
-          },
-          {
-            type: "priority_increase",
-            newPriority: "high"
-          }
-        ]
-      },
-
-      // Quando violar SLA
-      onBreach: {
-        actions: [
-          {
-            type: "notification",
-            to: ["supervisor", "manager"],
-            message: "SLA violado no ticket {ticket.id}"
-          },
-          {
-            type: "reassign",
-            to: "available_senior"
-          },
-          {
-            type: "tag_add",
-            tag: "sla_violado"
-          }
-        ]
-      }
-    }
-  }
-}
-```
+Os tempos sao armazenados em **segundos** no banco de dados.
 
 ## Visualizacao no Dashboard
 
 ### Indicadores de SLA
-
-O dashboard exibe o status do SLA em tempo real:
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -427,9 +273,9 @@ O dashboard exibe o status do SLA em tempo real:
 │  Tickets Abertos: 45        SLA OK: 38 (84%)                │
 │                                                              │
 │  ┌─────────────────────────────────────────────────────┐    │
-│  │  🟢 Dentro do SLA    │████████████████      │ 38     │    │
-│  │  🟡 Em risco         │███                   │ 5      │    │
-│  │  🔴 SLA violado      │██                    │ 2      │    │
+│  │  Dentro do SLA       │████████████████      │ 38     │    │
+│  │  Em risco (Warning)  │███                   │ 5      │    │
+│  │  Violado (Breach)    │██                    │ 2      │    │
 │  └─────────────────────────────────────────────────────┘    │
 │                                                              │
 │  Tempo Medio Primeira Resposta: 8 min (meta: 15 min)        │
@@ -443,94 +289,72 @@ O dashboard exibe o status do SLA em tempo real:
 | Cor | Status | Descricao |
 |-----|--------|-----------|
 | Verde | OK | Dentro do tempo |
-| Amarelo | Warning | Proximo do limite |
+| Amarelo | Warning | Proximo do limite (~10% restante) |
 | Vermelho | Breach | SLA violado |
-| Cinza | Pausado | Timer pausado |
 
 ## Solucao de Problemas
 
 ### SLA nao esta sendo aplicado
 
 **Verificacoes**:
-1. Politica esta ativa?
-2. Condicoes estao corretas?
-3. Prioridade esta adequada?
-
-```typescript
-// Verificar qual SLA foi aplicado ao ticket
-GET /api/tickets/{id}/sla
-
-// Resposta
-{
-  "appliedPolicy": "SLA Padrao",
-  "status": "ok",
-  "firstResponse": {
-    "target": 15,
-    "elapsed": 8,
-    "remaining": 7
-  }
-}
-```
-
-### Timer nao pausa corretamente
-
-**Causa**: Configuracao de pausa incorreta
-
-**Solucao**: Verifique as condicoes de pausa
-
-```typescript
-{
-  pause: {
-    // Verificar se status esta na lista
-    onStatus: ["pending", "waiting_customer", "on_hold"]
-  }
-}
-```
+1. A configuracao existe? (`GET /api/settings/sla`)
+2. A configuracao esta ativa? (`isActive: true`)
+3. O departamento esta correto? (`departmentId`)
+4. Existe uma configuracao padrao? (`isDefault: true`)
 
 ### Horario comercial calculado errado
 
-**Causa**: Timezone incorreto
+**Causa**: Campo `businessHours` com valores incorretos.
 
-**Solucao**: Configure o timezone correto
+**Solucao**: Verifique os campos `start`, `end` e `days`:
 
-```typescript
+```json
 {
-  businessHours: {
-    timezone: "America/Sao_Paulo" // Verificar timezone
-  }
+  "start": "09:00",
+  "end": "18:00",
+  "days": [1, 2, 3, 4, 5]
 }
 ```
+
+Lembre-se: 1 = segunda, 7 = domingo.
+
+### Alertas nao estao chegando
+
+**Verificacoes**:
+1. O ticket tem `slaDeadline` definido?
+2. O ticket tem agente atribuido (`assignedToId`)?
+3. O agente esta conectado via WebSocket?
+4. O job sla-check.processor esta rodando?
 
 ## Boas Praticas
 
 ### 1. Metas Realistas
 
-- Baseie metas em dados historicos
-- Considere capacidade da equipe
+- Baseie metas em dados historicos (consulte `GET /api/metrics/sla`)
+- Considere a capacidade da equipe
 - Deixe margem para imprevistos
 
 ### 2. Horario Comercial
 
-- Configure corretamente
-- Inclua feriados
-- Atualize anualmente
+- Configure `businessHours` se a equipe nao atende 24h
+- Use os dias corretos no array `days`
+- Lembre que o horario e o mesmo para todos os dias configurados
 
-### 3. Escalacao
+### 3. SLA por Departamento
 
-- Configure alertas antes da violacao
-- Tenha plano de acao claro
-- Notifique pessoas certas
+- Crie SLAs especificos para departamentos com necessidades diferentes
+- Mantenha sempre um SLA padrao (`isDefault: true`) como fallback
+- Desative configs que nao estao mais em uso (`isActive: false`)
 
 ### 4. Revisao Periodica
 
-- Analise metricas mensalmente
-- Ajuste metas conforme necessario
-- Identifique padroes de violacao
+- Analise metricas mensalmente via `GET /api/metrics/sla`
+- Compare periodos via `GET /api/metrics/comparison`
+- Ajuste metas conforme necessario via `PUT /api/settings/sla/:id`
 
 ## Proximos Passos
 
 Apos configurar SLA:
 
-- [Configurar Alertas](/guias/sla/alertas)
-- [Configurar Relatorios](/guias/sla/relatorios)
-- [Configurar Departamentos](/guias/administracao/departamentos)
+- [Alertas de SLA](/guias/sla/alertas) - Entender as notificacoes
+- [Relatorios de SLA](/guias/sla/relatorios) - Consultar e exportar metricas

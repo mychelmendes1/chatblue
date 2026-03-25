@@ -54,7 +54,7 @@ Voce configura e gerencia o sistema. Aqui voce aprendera:
 | 2 | [Interface do Chat](/treinamento/atendente/interface-chat) | 20 min |
 | 3 | [Enviando Mensagens](/treinamento/atendente/enviando-mensagens) | 15 min |
 | 4 | [Gerenciando Tickets](/treinamento/atendente/gerenciando-tickets) | 20 min |
-| 5 | [Pratica Supervisionada](/treinamento/atendente/pratica) | 30 min |
+| 5 | Pratica Supervisionada | 30 min |
 
 ### Para Novos Supervisores (Primeira Semana)
 
@@ -98,7 +98,7 @@ Se tiver duvidas durante o treinamento, anote-as e pergunte ao seu supervisor. N
 
 - **[Boas Praticas de Atendimento](/treinamento/boas-praticas/comunicacao)** - Dicas para um atendimento de excelencia
 - **[FAQ do Sistema](/treinamento/faq)** - Perguntas frequentes
-- **[Videos Tutoriais](#)** - Em breve
+- **Videos Tutoriais** - Em desenvolvimento
 - **[Glossario](/treinamento/glossario)** - Termos utilizados no sistema
 
 ---

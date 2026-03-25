@@ -321,6 +321,44 @@ REGRAS:
 `;
 ```
 
+## Endpoints Adicionais
+
+### Importacao de PDF
+
+```
+POST /api/knowledge/import-pdf
+Content-Type: multipart/form-data
+```
+
+Permite importar documentos PDF diretamente para a base de conhecimento. O sistema extrai o texto do PDF e cria um novo artigo com o conteudo extraido. O titulo pode ser informado ou sera inferido do nome do arquivo.
+
+| Campo | Tipo | Obrigatorio | Descricao |
+|-------|------|-------------|-----------|
+| `file` | File (PDF) | Sim | Arquivo PDF a ser importado |
+| `title` | String | Nao | Titulo do artigo (padrao: nome do arquivo) |
+| `category` | String | Nao | Categoria do artigo |
+| `departmentId` | String | Nao | Departamento associado |
+| `tags` | String[] | Nao | Tags para busca |
+
+### Reordenacao em Lote
+
+```
+PUT /api/knowledge/order/bulk
+Content-Type: application/json
+```
+
+Permite reordenar multiplos artigos de uma vez, atualizando o campo `order` de cada artigo. Util para reorganizar a ordem de exibicao dos artigos via drag-and-drop na interface.
+
+```typescript
+{
+  "items": [
+    { "id": "article-uuid-1", "order": 0 },
+    { "id": "article-uuid-2", "order": 1 },
+    { "id": "article-uuid-3", "order": 2 }
+  ]
+}
+```
+
 ## Busca Avancada
 
 ### Interface de Busca

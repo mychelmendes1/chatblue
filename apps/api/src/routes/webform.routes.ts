@@ -7,6 +7,7 @@ import { toCanonicalPhone } from '../utils/canonical-phone.js';
 import { WhatsAppService } from '../services/whatsapp/whatsapp.service.js';
 import { normalizeMediaUrl } from '../utils/media-url.util.js';
 import { sendOutboundEvent } from '../services/outbound-webhook.service.js';
+import { SLAService } from '../services/sla/sla.service.js';
 
 const router = Router();
 
@@ -155,6 +156,13 @@ router.post('/submit', authenticateWebform, async (req, res, next) => {
         },
       });
 
+      const slaAnchorWf = new Date();
+      const slaDeadlineWf = await SLAService.calculateFirstResponseDeadline(
+        slaAnchorWf,
+        companyId,
+        defaultDepartment?.id ?? null
+      );
+
       ticket = await prisma.ticket.create({
         data: {
           protocol,
@@ -164,6 +172,7 @@ router.post('/submit', authenticateWebform, async (req, res, next) => {
           connectionId: connectionToUse.id,
           companyId,
           departmentId: defaultDepartment?.id,
+          slaDeadline: slaDeadlineWf,
         },
         include: {
           connection: true,

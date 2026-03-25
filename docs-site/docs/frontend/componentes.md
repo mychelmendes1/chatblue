@@ -1,577 +1,493 @@
 ---
 sidebar_position: 3
 title: Componentes
-description: Componentes React do ChatBlue
 ---
 
 # Componentes
 
-Documentacao dos principais componentes React do ChatBlue.
+Documentacao dos principais componentes React do ChatBlue. Todos os arquivos de componentes seguem a convencao **kebab-case** (ex: `chat-sidebar.tsx`).
+
+## Estrutura de Diretorios
+
+```
+apps/web/components/
+  chat/               # Componentes do chat (atendimento)
+  kanban/             # Quadro Kanban de tickets
+  inbox/              # Caixa de entrada
+  layout/             # Header, Sidebar, Notifications
+  blue/               # Mascote Blue (assistente IA do operador)
+  admin-assistant/    # Assistente de monitoramento (admin)
+  ai-agents/          # Configuracao de agentes IA
+  connections/        # Gerenciamento de conexoes (WhatsApp, email)
+  providers/          # Providers (Socket.IO, etc.)
+  shared/             # Componentes compartilhados
+  landing/            # Pagina de landing page
+  ui/                 # Componentes base (shadcn/ui)
+```
 
 ## Componentes do Chat
 
-### ChatSidebar
+Localizados em `components/chat/`. Formam a tela principal de atendimento.
 
-Lista de conversas/tickets:
+### chat-sidebar.tsx
 
-```typescript
-// components/chat/ChatSidebar.tsx
-'use client';
-
-import { useState } from 'react';
-import { useTickets } from '@/hooks/useTickets';
-import { useChatStore } from '@/stores/chat.store';
-import { Input } from '@/components/ui/input';
-import { Badge } from '@/components/ui/badge';
-import { Avatar } from '@/components/ui/avatar';
-import { ScrollArea } from '@/components/ui/scroll-area';
-import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Search, MessageSquare } from 'lucide-react';
-import { formatRelative, cn } from '@/lib/utils';
-
-type TabFilter = 'all' | 'mine' | 'ai' | 'pending';
-
-export function ChatSidebar() {
-  const [search, setSearch] = useState('');
-  const [tab, setTab] = useState<TabFilter>('all');
-  const { activeTicketId, setActiveTicket } = useChatStore();
-
-  const { data: tickets, isLoading } = useTickets({
-    search,
-    filter: tab,
-  });
-
-  return (
-    <div className="w-80 border-r flex flex-col h-full">
-      {/* Header */}
-      <div className="p-4 border-b">
-        <h2 className="font-semibold text-lg mb-4">Conversas</h2>
-
-        {/* Search */}
-        <div className="relative">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-          <Input
-            placeholder="Buscar conversas..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="pl-9"
-          />
-        </div>
-
-        {/* Tabs */}
-        <Tabs value={tab} onValueChange={(v) => setTab(v as TabFilter)} className="mt-4">
-          <TabsList className="w-full">
-            <TabsTrigger value="all" className="flex-1">Todas</TabsTrigger>
-            <TabsTrigger value="mine" className="flex-1">Minhas</TabsTrigger>
-            <TabsTrigger value="ai" className="flex-1">IA</TabsTrigger>
-            <TabsTrigger value="pending" className="flex-1">Fila</TabsTrigger>
-          </TabsList>
-        </Tabs>
-      </div>
-
-      {/* Ticket List */}
-      <ScrollArea className="flex-1">
-        {isLoading ? (
-          <TicketListSkeleton />
-        ) : tickets?.length === 0 ? (
-          <EmptyState />
-        ) : (
-          <div className="divide-y">
-            {tickets?.map((ticket) => (
-              <TicketItem
-                key={ticket.id}
-                ticket={ticket}
-                isActive={ticket.id === activeTicketId}
-                onClick={() => setActiveTicket(ticket.id)}
-              />
-            ))}
-          </div>
-        )}
-      </ScrollArea>
-    </div>
-  );
-}
-
-function TicketItem({ ticket, isActive, onClick }) {
-  return (
-    <button
-      onClick={onClick}
-      className={cn(
-        'w-full p-4 text-left hover:bg-muted/50 transition-colors',
-        isActive && 'bg-muted'
-      )}
-    >
-      <div className="flex items-start gap-3">
-        <Avatar>
-          <img src={ticket.contact.avatarUrl || '/placeholder-avatar.png'} />
-        </Avatar>
-
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center justify-between">
-            <span className="font-medium truncate">
-              {ticket.contact.name || ticket.contact.phone}
-            </span>
-            <span className="text-xs text-muted-foreground">
-              {formatRelative(ticket.updatedAt)}
-            </span>
-          </div>
-
-          <p className="text-sm text-muted-foreground truncate mt-1">
-            {ticket.lastMessage?.content || 'Sem mensagens'}
-          </p>
-
-          <div className="flex items-center gap-2 mt-2">
-            <Badge variant={getStatusVariant(ticket.status)}>
-              {ticket.status}
-            </Badge>
-            {ticket.isAIHandled && (
-              <Badge variant="secondary">IA</Badge>
-            )}
-            {ticket.unreadCount > 0 && (
-              <Badge variant="destructive">{ticket.unreadCount}</Badge>
-            )}
-          </div>
-        </div>
-      </div>
-    </button>
-  );
-}
-```
-
-### ChatWindow
-
-Janela de mensagens:
+Lista de conversas/tickets com busca, filtros e abas. Componente grande (~1400 linhas) que gerencia a listagem completa de tickets.
 
 ```typescript
-// components/chat/ChatWindow.tsx
-'use client';
+// components/chat/chat-sidebar.tsx
+"use client";
 
-import { useEffect, useRef } from 'react';
-import { useChatStore } from '@/stores/chat.store';
-import { useMessages } from '@/hooks/useMessages';
-import { useTicketSocket } from '@/hooks/useTicketSocket';
-import { MessageBubble } from './MessageBubble';
-import { ChatInput } from './ChatInput';
-import { TicketHeader } from './TicketHeader';
-import { TypingIndicator } from './TypingIndicator';
-import { ScrollArea } from '@/components/ui/scroll-area';
-import { Skeleton } from '@/components/ui/skeleton';
-
-export function ChatWindow() {
-  const { activeTicketId, messages, typingUserId } = useChatStore();
-  const messagesEndRef = useRef<HTMLDivElement>(null);
-
-  const { data: ticket, isLoading: ticketLoading } = useTicket(activeTicketId);
-  const { isLoading: messagesLoading } = useMessages(activeTicketId);
-
-  // Socket hooks
-  const { sendMessage, startTyping, stopTyping } = useTicketSocket(activeTicketId);
-
-  // Auto-scroll
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
-
-  if (!activeTicketId) {
-    return (
-      <div className="flex-1 flex items-center justify-center text-muted-foreground">
-        <div className="text-center">
-          <MessageSquare className="h-12 w-12 mx-auto mb-4 opacity-50" />
-          <p>Selecione uma conversa para comecar</p>
-        </div>
-      </div>
-    );
-  }
-
-  if (ticketLoading) {
-    return <ChatWindowSkeleton />;
-  }
-
-  return (
-    <div className="flex-1 flex flex-col h-full">
-      {/* Header */}
-      <TicketHeader ticket={ticket} />
-
-      {/* Messages */}
-      <ScrollArea className="flex-1 p-4">
-        {messagesLoading ? (
-          <MessagesSkeleton />
-        ) : (
-          <div className="space-y-4">
-            {messages.map((message) => (
-              <MessageBubble key={message.id} message={message} />
-            ))}
-
-            {typingUserId && <TypingIndicator />}
-
-            <div ref={messagesEndRef} />
-          </div>
-        )}
-      </ScrollArea>
-
-      {/* Input */}
-      <ChatInput
-        onSend={sendMessage}
-        onTypingStart={startTyping}
-        onTypingStop={stopTyping}
-        disabled={ticket?.status === 'CLOSED'}
-      />
-    </div>
-  );
-}
+import { useEffect, useState, useRef } from "react";
+import { Search, Filter, Bot, User, Clock, Plus, Loader2 } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { cn, formatDate, formatPhone, getStatusColor, formatSLATime } from "@/lib/utils";
+import { useChatStore } from "@/stores/chat.store";
 ```
 
-### MessageBubble
+Principais funcionalidades:
+- Busca por nome, telefone ou protocolo
+- Filtro por departamento, atendente e status
+- Abas: Todas, Minhas, IA, Fila, Mencoes
+- Dialog de novo ticket com selecao de contato e conexao
+- Indicadores de SLA e contagem de nao lidas
 
-Bolha de mensagem:
+### chat-window.tsx
+
+Janela de mensagens com input, header do ticket e area de mensagens. Componente grande (~2200 linhas) que engloba toda a logica de envio, recebimento, reacoes, resposta e renderizacao de mensagens.
 
 ```typescript
-// components/chat/MessageBubble.tsx
-import { cn, formatTime } from '@/lib/utils';
-import { Avatar } from '@/components/ui/avatar';
-import { Check, CheckCheck, Clock, AlertCircle } from 'lucide-react';
+// components/chat/chat-window.tsx
+"use client";
 
-interface MessageBubbleProps {
-  message: Message;
-}
-
-export function MessageBubble({ message }: MessageBubbleProps) {
-  const isFromContact = !message.userId;
-  const isInternal = message.isInternal;
-
-  return (
-    <div
-      className={cn(
-        'flex gap-2 max-w-[80%]',
-        isFromContact ? 'mr-auto' : 'ml-auto flex-row-reverse'
-      )}
-    >
-      {/* Avatar */}
-      {isFromContact && (
-        <Avatar className="h-8 w-8">
-          <img src="/placeholder-avatar.png" />
-        </Avatar>
-      )}
-
-      {/* Bubble */}
-      <div
-        className={cn(
-          'rounded-lg px-4 py-2',
-          isFromContact
-            ? 'bg-muted'
-            : isInternal
-              ? 'bg-yellow-100 dark:bg-yellow-900'
-              : 'bg-primary text-primary-foreground'
-        )}
-      >
-        {/* AI Badge */}
-        {message.isAIGenerated && (
-          <span className="text-xs opacity-70 block mb-1">
-            Resposta da IA
-          </span>
-        )}
-
-        {/* Content */}
-        {message.type === 'TEXT' && (
-          <p className="whitespace-pre-wrap">{message.content}</p>
-        )}
-
-        {message.type === 'IMAGE' && (
-          <img
-            src={message.mediaUrl}
-            alt="Imagem"
-            className="rounded max-w-sm"
-          />
-        )}
-
-        {message.type === 'AUDIO' && (
-          <audio controls src={message.mediaUrl} className="max-w-xs" />
-        )}
-
-        {message.type === 'VIDEO' && (
-          <video controls src={message.mediaUrl} className="rounded max-w-sm" />
-        )}
-
-        {message.type === 'DOCUMENT' && (
-          <a
-            href={message.mediaUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="flex items-center gap-2 text-blue-500 underline"
-          >
-            <FileText className="h-4 w-4" />
-            Documento
-          </a>
-        )}
-
-        {/* Footer */}
-        <div className="flex items-center justify-end gap-1 mt-1">
-          <span className="text-xs opacity-70">
-            {formatTime(message.createdAt)}
-          </span>
-
-          {/* Status */}
-          {!isFromContact && (
-            <MessageStatus status={message.status} />
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function MessageStatus({ status }: { status: string }) {
-  switch (status) {
-    case 'PENDING':
-      return <Clock className="h-3 w-3 opacity-70" />;
-    case 'SENT':
-      return <Check className="h-3 w-3 opacity-70" />;
-    case 'DELIVERED':
-      return <CheckCheck className="h-3 w-3 opacity-70" />;
-    case 'READ':
-      return <CheckCheck className="h-3 w-3 text-blue-500" />;
-    case 'FAILED':
-      return <AlertCircle className="h-3 w-3 text-destructive" />;
-    default:
-      return null;
-  }
-}
+import React, { useEffect, useRef, useState, Component } from "react";
+import {
+  Phone, Video, MoreVertical, Paperclip, Send, Smile, Bot,
+  Check, CheckCheck, AtSign, MessageSquare, CheckCircle,
+  Loader2, Clock, AlertCircle, X, FileIcon, Reply, Trash2, Heart,
+} from "lucide-react";
 ```
 
-### ChatInput
+Principais funcionalidades:
+- Renderizacao de mensagens (texto, imagem, audio, video, documento, sticker, localizacao)
+- Status de entrega (pendente, enviado, entregue, lido, falhou)
+- Upload de arquivos e midia
+- Notas internas (mensagens amarelas visiveis apenas para a equipe)
+- Mencoes de usuarios com `@`
+- Reacoes e resposta (reply/quote)
+- Preview de resposta da IA antes de enviar
+- Indicador de digitacao
+- Atalhos de template de mensagem
+- ErrorBoundary para recuperacao de erros
 
-Input de mensagem:
+### contact-info.tsx
+
+Painel lateral com informacoes do contato e historico de tickets.
 
 ```typescript
-// components/chat/ChatInput.tsx
-'use client';
+// components/chat/contact-info.tsx
+"use client";
 
-import { useState, useRef } from 'react';
-import { Button } from '@/components/ui/button';
-import { Textarea } from '@/components/ui/textarea';
-import { Send, Paperclip, Smile, Mic } from 'lucide-react';
-import { EmojiPicker } from './EmojiPicker';
-
-interface ChatInputProps {
-  onSend: (content: string, mediaUrl?: string) => void;
-  onTypingStart: () => void;
-  onTypingStop: () => void;
-  disabled?: boolean;
-}
-
-export function ChatInput({
-  onSend,
-  onTypingStart,
-  onTypingStop,
-  disabled,
-}: ChatInputProps) {
-  const [message, setMessage] = useState('');
-  const [showEmoji, setShowEmoji] = useState(false);
-  const typingTimeoutRef = useRef<NodeJS.Timeout>();
-  const fileInputRef = useRef<HTMLInputElement>(null);
-
-  const handleSubmit = () => {
-    if (!message.trim()) return;
-
-    onSend(message);
-    setMessage('');
-    onTypingStop();
-  };
-
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      handleSubmit();
-    }
-  };
-
-  const handleChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    setMessage(e.target.value);
-
-    // Typing indicator
-    onTypingStart();
-
-    if (typingTimeoutRef.current) {
-      clearTimeout(typingTimeoutRef.current);
-    }
-
-    typingTimeoutRef.current = setTimeout(() => {
-      onTypingStop();
-    }, 2000);
-  };
-
-  const handleEmojiSelect = (emoji: string) => {
-    setMessage((prev) => prev + emoji);
-    setShowEmoji(false);
-  };
-
-  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    // Upload file and send
-    const formData = new FormData();
-    formData.append('file', file);
-
-    const response = await fetch('/api/upload', {
-      method: 'POST',
-      body: formData,
-    });
-
-    const { url } = await response.json();
-    onSend('', url);
-  };
-
-  return (
-    <div className="border-t p-4">
-      {/* Emoji Picker */}
-      {showEmoji && (
-        <div className="absolute bottom-20 right-4">
-          <EmojiPicker onSelect={handleEmojiSelect} />
-        </div>
-      )}
-
-      <div className="flex items-end gap-2">
-        {/* File Upload */}
-        <Button
-          variant="ghost"
-          size="icon"
-          disabled={disabled}
-          onClick={() => fileInputRef.current?.click()}
-        >
-          <Paperclip className="h-5 w-5" />
-        </Button>
-        <input
-          ref={fileInputRef}
-          type="file"
-          className="hidden"
-          onChange={handleFileSelect}
-          accept="image/*,video/*,audio/*,.pdf,.doc,.docx"
-        />
-
-        {/* Message Input */}
-        <Textarea
-          value={message}
-          onChange={handleChange}
-          onKeyDown={handleKeyDown}
-          placeholder="Digite uma mensagem..."
-          disabled={disabled}
-          className="min-h-[44px] max-h-32 resize-none"
-          rows={1}
-        />
-
-        {/* Emoji */}
-        <Button
-          variant="ghost"
-          size="icon"
-          disabled={disabled}
-          onClick={() => setShowEmoji(!showEmoji)}
-        >
-          <Smile className="h-5 w-5" />
-        </Button>
-
-        {/* Send */}
-        <Button
-          size="icon"
-          disabled={disabled || !message.trim()}
-          onClick={handleSubmit}
-        >
-          <Send className="h-5 w-5" />
-        </Button>
-      </div>
-    </div>
-  );
-}
+import { useState, useEffect } from "react";
+import { X, Phone, Mail, Edit2, Check, Building, Calendar, Tag } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { formatPhone } from "@/lib/utils";
+import { api } from "@/lib/api";
 ```
+
+Principais funcionalidades:
+- Exibicao e edicao de dados do contato (nome, telefone, email, empresa)
+- Historico de tickets anteriores do mesmo contato
+- Navegacao para ticket anterior
+- Transferencia de ticket para outro atendente ou departamento
+
+### template-selector.tsx
+
+Seletor de templates de mensagem do WhatsApp.
+
+```typescript
+// components/chat/template-selector.tsx
+"use client";
+
+import { useState, useEffect } from "react";
+import { Search, FileText, Loader2, ChevronRight, X, Send, RefreshCw } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Badge } from "@/components/ui/badge";
+import { api } from "@/lib/api";
+```
+
+Principais funcionalidades:
+- Busca e listagem de templates aprovados no WhatsApp
+- Preenchimento de variaveis do template
+- Preview do template antes de enviar
+- Envio direto pelo seletor
+
+### email-viewer.tsx
+
+Visualizador de emails HTML em modal.
+
+```typescript
+// components/chat/email-viewer.tsx
+"use client";
+
+import { useEffect, useState } from "react";
+import { X, Mail, ExternalLink } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+
+export function EmailViewer() { ... }
+```
+
+Abre via evento customizado (`open-email-viewer`) e renderiza o HTML do email em um iframe seguro dentro de um Dialog.
+
+### ai-response-preview.tsx
+
+Preview e edicao da resposta sugerida pela IA antes do envio.
+
+```typescript
+// components/chat/ai-response-preview.tsx
+"use client";
+
+import { useState } from "react";
+import {
+  Bot, Send, Edit3, X, Star, ExternalLink, Loader2,
+  ThumbsUp, ThumbsDown, Copy, Check, AlertTriangle, FileText, Sparkles,
+} from "lucide-react";
+import { Button } from "@/components/ui/button";
+```
+
+Principais funcionalidades:
+- Exibicao da sugestao da IA
+- Edicao do texto antes de enviar
+- Feedback (positivo/negativo) para treinamento
+- Envio direto ou copia para area de transferencia
 
 ## Componentes de Layout
 
-### DashboardLayout
+Localizados em `components/layout/`.
+
+### sidebar.tsx
+
+Barra de navegacao lateral (desktop) e bottom navigation (mobile).
 
 ```typescript
-// components/layout/DashboardLayout.tsx
-'use client';
+// components/layout/sidebar.tsx
+"use client";
 
-import { useState } from 'react';
-import { Sidebar } from './Sidebar';
-import { Header } from './Header';
-import { cn } from '@/lib/utils';
+import Link from "next/link";
+import { usePathname } from "next/navigation";
+import {
+  MessageSquare, Users, BarChart3, Settings, LogOut, Wifi,
+  Bot, Shield, Book, Menu, X, Inbox, LayoutGrid,
+} from "lucide-react";
+import { cn } from "@/lib/utils";
+import { useAuthStore } from "@/stores/auth.store";
 
-export function DashboardLayout({ children }: { children: React.ReactNode }) {
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+const navigation = [
+  { name: "Chat", href: "/chat", icon: MessageSquare },
+  { name: "Caixa de Entrada", href: "/inbox", icon: Inbox },
+  { name: "Kanban", href: "/kanban", icon: LayoutGrid },
+  { name: "Contatos", href: "/contacts", icon: Users },
+  { name: "Metricas", href: "/metrics", icon: BarChart3 },
+  { name: "Usuarios", href: "/users", icon: Shield, adminOnly: true },
+  { name: "Conexoes", href: "/connections", icon: Wifi },
+  { name: "Atendente IA", href: "/ai-agent", icon: Bot },
+  { name: "Conhecimento", href: "/knowledge", icon: Book, adminOnly: true },
+  { name: "Configuracoes", href: "/settings", icon: Settings },
+];
 
-  return (
-    <div className="min-h-screen bg-background">
-      {/* Sidebar */}
-      <Sidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} />
-
-      {/* Main Content */}
-      <div
-        className={cn(
-          'transition-all duration-300',
-          sidebarOpen ? 'lg:pl-64' : 'lg:pl-20'
-        )}
-      >
-        {/* Header */}
-        <Header
-          onMenuClick={() => setSidebarOpen(!sidebarOpen)}
-          sidebarOpen={sidebarOpen}
-        />
-
-        {/* Page Content */}
-        <main className="p-6">{children}</main>
-      </div>
-    </div>
-  );
-}
+export function Sidebar() { ... }
 ```
 
-### ProtectedRoute
+Funcionalidades:
+- Sidebar fixa de 64px no desktop com icones e tooltips
+- Bottom navigation no mobile com 4 itens principais + menu "Mais"
+- Itens `adminOnly` filtrados por role do usuario
+- Logout e exibicao do avatar do usuario
+- Usa `Sheet` do shadcn para menu mobile expandido
+
+### header.tsx
+
+Header superior com troca de empresa, link para documentacao e notificacoes.
 
 ```typescript
-// components/layout/ProtectedRoute.tsx
-'use client';
+// components/layout/header.tsx
+"use client";
 
-import { useEffect } from 'react';
-import { useRouter } from 'next/navigation';
-import { useAuthStore } from '@/stores/auth.store';
-import { LoadingSpinner } from '@/components/shared/LoadingSpinner';
+import { useEffect, useState } from "react";
+import { Building2, Library } from "lucide-react";
+import { useAuthStore, type Company } from "@/stores/auth.store";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Badge } from "@/components/ui/badge";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { api } from "@/lib/api";
+import { Notifications } from "./notifications";
 
-export function ProtectedRoute({ children }: { children: React.ReactNode }) {
-  const router = useRouter();
-  const { isAuthenticated, token } = useAuthStore();
-
-  useEffect(() => {
-    if (!isAuthenticated || !token) {
-      router.push('/login');
-    }
-  }, [isAuthenticated, token, router]);
-
-  if (!isAuthenticated) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <LoadingSpinner size="lg" />
-      </div>
-    );
-  }
-
-  return <>{children}</>;
-}
+export function Header() { ... }
 ```
 
-## Componentes UI (Shadcn)
+Funcionalidades:
+- Troca rapida de empresa (multi-tenant) via abas
+- Badge de mensagens nao lidas por empresa
+- Link para documentacao
+- Componente `Notifications` integrado
 
-O ChatBlue usa componentes do Shadcn/UI. Principais componentes:
+### notifications.tsx
 
-- **Button**: Botoes com variantes
-- **Input/Textarea**: Campos de entrada
-- **Dialog/Sheet**: Modais e paineis
-- **Table**: Tabelas de dados
-- **Tabs**: Abas de navegacao
-- **Badge**: Indicadores de status
-- **Avatar**: Imagens de perfil
-- **Toast**: Notificacoes
-- **Form**: Formularios com validacao
+Popover de notificacoes em tempo real.
+
+```typescript
+// components/layout/notifications.tsx
+"use client";
+
+import { useState, useEffect, useRef } from "react";
+import { Bell, X } from "lucide-react";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { useSocket } from "@/components/providers/socket-provider";
+
+export function Notifications() { ... }
+```
+
+Funcionalidades:
+- Badge com contagem de notificacoes nao lidas
+- Listagem de notificacoes com scroll
+- Atualizacao em tempo real via Socket.IO
+- Marcar como lida ao clicar
+
+### company-switcher.tsx
+
+Dropdown para troca de empresa (multi-tenant).
+
+```typescript
+// components/layout/company-switcher.tsx
+"use client";
+
+import { useState } from "react";
+import { Check, ChevronDown, Building2, Loader2, Search } from "lucide-react";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu";
+import { useAuthStore } from "@/stores/auth.store";
+
+export function CompanySwitcher() { ... }
+```
+
+## Componentes Kanban
+
+Localizados em `components/kanban/`. Implementam o quadro Kanban de tickets com drag-and-drop.
+
+### kanban-board.tsx
+
+Board principal com colunas drag-and-drop usando `@hello-pangea/dnd`.
+
+```typescript
+// components/kanban/kanban-board.tsx
+"use client";
+
+import { DragDropContext, type DropResult } from "@hello-pangea/dnd";
+import { KanbanColumn, type ColumnId } from "./kanban-column";
+import type { KanbanTicket } from "./kanban-card";
+
+const columns = [
+  { id: "novos", title: "Novos", color: "#f59e0b" },
+  { id: "em_atendimento", title: "Em Atendimento", color: "#3b82f6" },
+  { id: "aguardando", title: "Aguardando", color: "#8b5cf6" },
+  { id: "resolvidos", title: "Resolvidos", color: "#22c55e" },
+];
+```
+
+### kanban-column.tsx
+
+Coluna individual do Kanban com paginacao (20 itens por pagina) e area droppable.
+
+### kanban-card.tsx
+
+Card de ticket no Kanban com avatar do contato, badges de status/prioridade, indicador de IA e `ConnectionTag`.
+
+## Componentes da Caixa de Entrada
+
+### inbox-card.tsx
+
+Card de ticket para a caixa de entrada. Similar ao `kanban-card.tsx` mas com layout em lista e checkbox para selecao em lote.
+
+```typescript
+// components/inbox/inbox-card.tsx
+"use client";
+
+import { Bot, Phone, Clock, MessageSquare, Loader2 } from "lucide-react";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
+import { ConnectionTag } from "@/components/shared/connection-tag";
+```
+
+## Mascote Blue
+
+Localizados em `components/blue/`. O Blue e o assistente IA que ajuda o operador durante o atendimento.
+
+### blue-mascot.tsx
+
+Componente principal do mascote. Gerencia os estados (minimizado, expandido, mostrando dica) e a posicao arrastavel na tela.
+
+```typescript
+// components/blue/blue-mascot.tsx
+"use client";
+
+import { useState, useEffect, useRef, useCallback } from "react";
+import { Bot, X, Minimize2, Maximize2 } from "lucide-react";
+import { BlueChat } from "./blue-chat";
+import { BlueTips } from "./blue-tips";
+import { usePageContext } from "./context-detector";
+
+type BlueState = "minimized" | "expanded" | "showing-tip";
+
+export function BlueMascot({ className }: BlueMascotProps) { ... }
+```
+
+### blue-chat.tsx
+
+Chat com o Blue. Interface de conversa onde o operador pode perguntar sobre o sistema, pedir ajuda com atendimento, etc.
+
+### blue-tips.tsx
+
+Dicas contextuais do Blue. Exibe dicas relevantes baseadas na pagina atual usando o `usePageContext`.
+
+## Assistente de Monitoramento (Admin)
+
+Localizados em `components/admin-assistant/`. Assistente IA para administradores com acesso a metricas e dados operacionais.
+
+### admin-assistant-fab.tsx
+
+Floating Action Button (FAB) fixo no canto inferior esquerdo que abre o chat do assistente admin.
+
+### admin-assistant-chat.tsx
+
+Chat do assistente de monitoramento. Permite ao admin fazer perguntas sobre metricas, performance da equipe, SLA, etc.
+
+```typescript
+// components/admin-assistant/admin-assistant-chat.tsx
+"use client";
+
+import { useState, useRef, useEffect } from "react";
+import { BarChart3, X, Send, Loader2 } from "lucide-react";
+import { api } from "@/lib/api";
+```
+
+## Agentes IA
+
+### ai-agents-by-category-panel.tsx
+
+Painel de gerenciamento de agentes IA organizados por categoria. Permite criar, editar e remover agentes com configuracoes de prompt, knowledge base e parametros.
+
+Localizado em `components/ai-agents/`.
+
+## Conexoes
+
+### email-connections.tsx
+
+Gerenciamento de conexoes de email (IMAP/SMTP). Permite adicionar, testar, ativar/desativar e remover contas de email.
+
+Localizado em `components/connections/`.
+
+## Providers
+
+### socket-provider.tsx
+
+Provider de Socket.IO que gerencia a conexao WebSocket em tempo real.
+
+```typescript
+// components/providers/socket-provider.tsx
+"use client";
+
+import { createContext, useContext, useEffect, useState, useCallback } from "react";
+import { Socket } from "socket.io-client";
+import { getSocket, disconnectSocket } from "@/lib/socket";
+import { useAuthStore } from "@/stores/auth.store";
+import { useChatStore, type Message } from "@/stores/chat.store";
+
+export function useSocket() { ... }
+export function SocketProvider({ children }: { children: React.ReactNode }) { ... }
+```
+
+Funcionalidades:
+- Conexao/desconexao automatica baseada no token de autenticacao
+- Listeners para eventos de mensagem, ticket, digitacao e notificacao
+- Debounce de refetch da lista de tickets
+- Normalizacao de URLs de midia
+- Exporta o hook `useSocket` para acesso ao socket em qualquer componente
+
+## Componentes Compartilhados
+
+### connection-tag.tsx
+
+Badge que mostra o tipo e status de conexao de um ticket (WhatsApp, Email), com countdown da janela de 24h do WhatsApp.
+
+```typescript
+// components/shared/connection-tag.tsx
+"use client";
+
+import { Wifi, Clock, AlertTriangle, Mail } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+
+interface ConnectionTagProps {
+  connectionName?: string;
+  connectionType?: string;
+  lastMessageAt?: string;
+  compact?: boolean;
+}
+
+export function ConnectionTag({ ... }: ConnectionTagProps) { ... }
+```
+
+Usado em `kanban-card.tsx`, `inbox-card.tsx` e na tela de chat.
+
+## Componentes da Landing Page
+
+Localizados em `components/landing/`. Sao componentes da pagina publica de apresentacao do produto:
+
+- `HeroSection.tsx` - Hero principal
+- `HowItWorksSection.tsx` - Como funciona
+- `HowDoesItWorkSection.tsx` - Detalhamento de funcionamento
+- `StepByStepSection.tsx` - Passo a passo
+- `ForWhomSection.tsx` - Para quem e
+- `WhyItWorksSection.tsx` - Por que funciona
+- `PricingSection.tsx` - Precos
+- `FAQSection.tsx` - Perguntas frequentes
+- `LandingNavbar.tsx` - Navbar da landing
+- `LandingFooter.tsx` - Footer da landing
+
+> Nota: os componentes de landing usam PascalCase nos nomes de arquivo, diferente do restante do projeto.
+
+## Componentes UI (shadcn/ui)
+
+O ChatBlue usa [shadcn/ui](https://ui.shadcn.com/) como base de componentes. Ficam em `components/ui/` e seguem o padrao de composicao do Radix UI. Principais componentes instalados:
+
+- **button** - Botoes com variantes (default, destructive, outline, secondary, ghost, link)
+- **input** / **textarea** - Campos de entrada
+- **select** - Selecao com dropdown
+- **dialog** / **sheet** - Modais e paineis laterais
+- **popover** - Popover flutuante (usado em filtros e notificacoes)
+- **dropdown-menu** - Menu dropdown (usado no logout, acoes)
+- **table** - Tabelas de dados
+- **tabs** - Abas de navegacao
+- **badge** - Indicadores de status e contagem
+- **avatar** - Imagens de perfil com fallback de iniciais
+- **toast** / **toaster** - Notificacoes toast (via `useToast`)
+- **scroll-area** - Area com scroll customizado
+- **checkbox** - Checkbox (usado na selecao em lote)
+- **switch** - Toggle on/off
+- **label** - Labels de formulario
+- **slider** - Slider de valores
+- **progress** - Barra de progresso
+- **alert** - Alertas informativos
+- **card** - Cards com header, content e footer
 
 ## Proximos Passos
 

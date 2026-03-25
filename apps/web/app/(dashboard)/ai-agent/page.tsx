@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   Bot,
   Plus,
@@ -59,6 +60,13 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useToast } from "@/components/ui/use-toast";
+import {
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+} from "@/components/ui/tabs";
+import { AIAgentsByCategoryPanel } from "@/components/ai-agents/ai-agents-by-category-panel";
 import { api } from "@/lib/api";
 import { useAuthStore } from "@/stores/auth.store";
 import { FileText, Upload, X } from "lucide-react";
@@ -205,9 +213,11 @@ interface Company {
   name: string;
 }
 
-export default function AIAgentPage() {
+function AIAgentPageContent() {
   const { toast } = useToast();
   const { user } = useAuthStore();
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const [isLoading, setIsLoading] = useState(true);
   const [agents, setAgents] = useState<AIAgent[]>([]);
   const [departments, setDepartments] = useState<Department[]>([]);
@@ -220,6 +230,8 @@ export default function AIAgentPage() {
   const [isProcessingPdf, setIsProcessingPdf] = useState(false);
   const [copiedKey, setCopiedKey] = useState(false);
   const isSuperAdmin = user?.role === "SUPER_ADMIN";
+  const isAdmin =
+    user?.role === "ADMIN" || user?.role === "SUPER_ADMIN";
 
   useEffect(() => {
     fetchData();
@@ -500,8 +512,19 @@ export default function AIAgentPage() {
     );
   }
 
-  return (
-    <div className="p-6 max-w-6xl mx-auto">
+  const activeTab =
+    searchParams.get("tab") === "categorias" ? "categorias" : "atendentes";
+
+  function handleTabChange(value: string) {
+    if (value === "categorias") {
+      router.replace("/ai-agent?tab=categorias", { scroll: false });
+    } else {
+      router.replace("/ai-agent", { scroll: false });
+    }
+  }
+
+  const atendentesSection = (
+    <>
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-2xl font-bold flex items-center gap-2">
@@ -1411,6 +1434,51 @@ export default function AIAgentPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+    </>
+  );
+
+  return (
+    <div className="p-6 max-w-6xl mx-auto">
+      {isAdmin ? (
+        <Tabs
+          value={activeTab}
+          onValueChange={handleTabChange}
+          className="w-full space-y-6"
+        >
+          <TabsList className="grid w-full max-w-lg grid-cols-2">
+            <TabsTrigger value="atendentes" className="gap-2">
+              <Bot className="h-4 w-4 shrink-0" />
+              Atendentes IA
+            </TabsTrigger>
+            <TabsTrigger value="categorias" className="gap-2">
+              <Sparkles className="h-4 w-4 shrink-0" />
+              Agentes por categoria
+            </TabsTrigger>
+          </TabsList>
+          <TabsContent value="atendentes" className="mt-0 space-y-0 outline-none">
+            {atendentesSection}
+          </TabsContent>
+          <TabsContent value="categorias" className="mt-0 outline-none">
+            <AIAgentsByCategoryPanel />
+          </TabsContent>
+        </Tabs>
+      ) : (
+        atendentesSection
+      )}
     </div>
+  );
+}
+
+export default function AIAgentPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex min-h-[240px] items-center justify-center">
+          <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+        </div>
+      }
+    >
+      <AIAgentPageContent />
+    </Suspense>
   );
 }

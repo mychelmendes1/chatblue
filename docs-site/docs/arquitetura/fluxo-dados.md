@@ -368,6 +368,275 @@ Quando um agente envia uma mensagem:
 └──────────────────────────────────────────────────────────────────┘
 ```
 
+## Fluxo de Mensagem Recebida via Email (IMAP)
+
+Quando um cliente envia um email para a empresa:
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                      MENSAGEM RECEBIDA VIA EMAIL                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌──────────────┐
+│   Cliente    │
+│  (Email)     │
+└──────┬───────┘
+       │ 1. Cliente envia email
+       ▼
+┌──────────────┐
+│   Servidor   │
+│   IMAP       │
+└──────┬───────┘
+       │ 2. Email fica na caixa de entrada
+       ▼
+┌──────────────────────────────────────────────────────────────────┐
+│                   JOB BULLMQ: IMAP POLLING                       │
+│                   (Executa a cada 30 segundos)                   │
+│                                                                   │
+│  3. Conectar ao servidor IMAP via credenciais da empresa         │
+│     - Host, porta, usuario, senha configurados por empresa       │
+│                                                                   │
+│  4. Buscar emails nao lidos (UNSEEN)                             │
+│     - Filtra por data desde ultimo check                         │
+│     - Marca como lido apos processar                             │
+│                                                                   │
+│  5. Para cada email novo:                                        │
+│     - Extrair remetente, assunto, corpo (text/html)              │
+│     - Extrair anexos se houver                                   │
+│     - Normalizar dados para formato interno                      │
+│                                                                   │
+└──────────────────────────────────────────────────────────────────┘
+                       │
+                       ▼
+┌──────────────────────────────────────────────────────────────────┐
+│                   MESSAGE PROCESSOR                               │
+│                                                                   │
+│  6. Busca/Cria Contato                                           │
+│     ┌─────────────────────────────────────────────────────────┐ │
+│     │ - Busca por endereco de email + companyId               │ │
+│     │ - Se nao existe, cria novo contato com channel EMAIL    │ │
+│     │ - Atualiza lastMessageAt                                │ │
+│     └─────────────────────────────────────────────────────────┘ │
+│                                                                   │
+│  7. Busca/Cria Ticket                                            │
+│     ┌─────────────────────────────────────────────────────────┐ │
+│     │ - Busca ticket aberto para o contato (canal EMAIL)      │ │
+│     │ - Se nao existe, cria novo com assunto do email         │ │
+│     │ - Canal: EMAIL                                          │ │
+│     └─────────────────────────────────────────────────────────┘ │
+│                                                                   │
+│  8. Persiste Mensagem                                            │
+│     ┌─────────────────────────────────────────────────────────┐ │
+│     │ - Cria registro com corpo do email                      │ │
+│     │ - Salva anexos como media                               │ │
+│     │ - Armazena headers originais para reply threading       │ │
+│     └─────────────────────────────────────────────────────────┘ │
+│                                                                   │
+└──────────────────────────────────────────────────────────────────┘
+                       │
+                       ▼
+┌──────────────────────────────────────────────────────────────────┐
+│                     SOCKET.IO                                     │
+│                                                                   │
+│  9. Notificar Frontend                                           │
+│     - Emitir 'message:received' com dados do email               │
+│     - Emitir 'ticket:updated' ou 'ticket:created'               │
+│                                                                   │
+└──────────────────────────────────────────────────────────────────┘
+```
+
+## Fluxo de Resposta via Email (SMTP)
+
+Quando um agente responde a um ticket de email:
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                      RESPOSTA ENVIADA VIA EMAIL                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌──────────────┐
+│   Agente     │
+│  (Browser)   │
+└──────┬───────┘
+       │ 1. Digita resposta e clica Enviar
+       ▼
+┌──────────────────────────────────────────────────────────────────┐
+│                      FRONTEND                                     │
+│                                                                   │
+│  2. Validar mensagem e enviar requisicao                         │
+│     POST /api/messages/ticket/:ticketId/send                     │
+│                                                                   │
+└──────────────────────────────────────────────────────────────────┘
+                       │
+                       ▼
+┌──────────────────────────────────────────────────────────────────┐
+│                      BACKEND                                      │
+│                                                                   │
+│  3. Persistir mensagem no banco                                  │
+│                                                                   │
+│  4. Detectar canal do ticket (EMAIL)                             │
+│     - Redirecionar para EmailService ao inves de WhatsApp        │
+│                                                                   │
+└──────────────────────────────────────────────────────────────────┘
+                       │
+                       ▼
+┌──────────────────────────────────────────────────────────────────┐
+│                   EMAIL SERVICE (SMTP)                            │
+│                                                                   │
+│  5. Montar email de resposta                                     │
+│     - Usar headers In-Reply-To e References para threading       │
+│     - Formatar corpo em HTML                                     │
+│     - Anexar arquivos se houver                                  │
+│                                                                   │
+│  6. Enviar via SMTP                                              │
+│     - Conectar ao servidor SMTP da empresa                       │
+│     - Enviar email formatado                                     │
+│     - Aguardar confirmacao                                       │
+│                                                                   │
+│  7. Atualizar status da mensagem                                 │
+│     - SENT se enviado com sucesso                                │
+│     - FAILED se erro no envio                                    │
+│                                                                   │
+└──────────────────────────────────────────────────────────────────┘
+                       │
+                       ▼
+┌──────────────────────────────────────────────────────────────────┐
+│                     SOCKET.IO                                     │
+│                                                                   │
+│  8. Notificar agentes sobre status do envio                      │
+│                                                                   │
+└──────────────────────────────────────────────────────────────────┘
+```
+
+## Fluxo de Mensagem Recebida via Instagram
+
+Quando um cliente envia mensagem direta no Instagram:
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    MENSAGEM RECEBIDA VIA INSTAGRAM                           │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌──────────────┐
+│   Cliente    │
+│ (Instagram)  │
+└──────┬───────┘
+       │ 1. Cliente envia DM no Instagram
+       ▼
+┌──────────────┐
+│   Meta       │
+│   Servers    │
+└──────┬───────┘
+       │ 2. Webhook POST para /webhooks/instagram
+       ▼
+┌──────────────────────────────────────────────────────────────────┐
+│                   WEBHOOK HANDLER                                 │
+│                                                                   │
+│  3. Validar assinatura do webhook                                │
+│     - Verificar X-Hub-Signature-256 com app secret               │
+│     - Rejeitar se assinatura invalida                            │
+│                                                                   │
+│  4. Parsear payload do webhook                                   │
+│     - Extrair messaging events                                   │
+│     - Identificar tipo: message, postback, reaction              │
+│     - Extrair sender ID, texto, midia                            │
+│                                                                   │
+└──────────────────────────────────────────────────────────────────┘
+                       │
+                       ▼
+┌──────────────────────────────────────────────────────────────────┐
+│                   MESSAGE PROCESSOR                               │
+│                                                                   │
+│  5. Busca/Cria Contato                                           │
+│     ┌─────────────────────────────────────────────────────────┐ │
+│     │ - Busca por Instagram sender ID + companyId             │ │
+│     │ - Se nao existe, busca perfil via Graph API             │ │
+│     │ - Cria contato com nome e foto do perfil                │ │
+│     └─────────────────────────────────────────────────────────┘ │
+│                                                                   │
+│  6. Busca/Cria Ticket                                            │
+│     ┌─────────────────────────────────────────────────────────┐ │
+│     │ - Busca ticket aberto para o contato (canal INSTAGRAM)  │ │
+│     │ - Se nao existe, cria novo ticket                       │ │
+│     │ - Canal: INSTAGRAM                                      │ │
+│     └─────────────────────────────────────────────────────────┘ │
+│                                                                   │
+│  7. Persiste Mensagem                                            │
+│     ┌─────────────────────────────────────────────────────────┐ │
+│     │ - Cria registro no banco                                │ │
+│     │ - Salva midia (imagem, video, audio) se houver          │ │
+│     │ - Atualiza status do ticket                             │ │
+│     └─────────────────────────────────────────────────────────┘ │
+│                                                                   │
+└──────────────────────────────────────────────────────────────────┘
+                       │
+                       ▼
+┌──────────────────────────────────────────────────────────────────┐
+│              DECISAO: AI ATIVO? (mesmo fluxo WhatsApp)           │
+└──────────────────────────────────────────────────────────────────┘
+                       │
+                       ▼
+┌──────────────────────────────────────────────────────────────────┐
+│                     SOCKET.IO                                     │
+│                                                                   │
+│  8. Notificar Frontend                                           │
+│     - Emitir 'message:received'                                  │
+│     - Emitir 'ticket:updated' ou 'ticket:created'               │
+│                                                                   │
+└──────────────────────────────────────────────────────────────────┘
+```
+
+## Fluxo de Resposta via Instagram
+
+Quando um agente responde a um ticket de Instagram:
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                     RESPOSTA ENVIADA VIA INSTAGRAM                           │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌──────────────┐
+│   Agente     │
+│  (Browser)   │
+└──────┬───────┘
+       │ 1. Responde no ticket
+       ▼
+┌──────────────────────────────────────────────────────────────────┐
+│                      BACKEND                                      │
+│                                                                   │
+│  2. Persistir mensagem no banco                                  │
+│                                                                   │
+│  3. Detectar canal do ticket (INSTAGRAM)                         │
+│     - Redirecionar para InstagramService                         │
+│                                                                   │
+└──────────────────────────────────────────────────────────────────┘
+                       │
+                       ▼
+┌──────────────────────────────────────────────────────────────────┐
+│                 INSTAGRAM SERVICE                                 │
+│                                                                   │
+│  4. Enviar via Meta Graph API                                    │
+│     POST https://graph.facebook.com/v18.0/me/messages            │
+│     {                                                             │
+│       recipient: { id: instagramSenderId },                      │
+│       message: { text: "resposta do agente" }                    │
+│     }                                                             │
+│                                                                   │
+│  5. Atualizar status da mensagem                                 │
+│     - SENT se API retornou sucesso                               │
+│     - FAILED se erro na API                                      │
+│                                                                   │
+└──────────────────────────────────────────────────────────────────┘
+                       │
+                       ▼
+┌──────────────────────────────────────────────────────────────────┐
+│                     SOCKET.IO                                     │
+│                                                                   │
+│  6. Notificar agentes sobre status do envio                      │
+│                                                                   │
+└──────────────────────────────────────────────────────────────────┘
+```
+
 ## Fluxo de Transferencia de Ticket
 
 ```

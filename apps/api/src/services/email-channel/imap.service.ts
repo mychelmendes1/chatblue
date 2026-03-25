@@ -5,6 +5,7 @@ import { decrypt } from './crypto.util.js';
 import { GoogleOAuthService } from './google-oauth.service.js';
 import { logger } from '../../config/logger.js';
 import { generateProtocol } from '../../utils/protocol.js';
+import { SLAService } from '../sla/sla.service.js';
 import sanitizeHtml from 'sanitize-html';
 
 interface ParsedEmail {
@@ -118,8 +119,13 @@ async function resolveTicket(
   });
   if (existingTicket) return existingTicket.id;
 
-  // 5. Create new ticket
   const newProtocol = generateProtocol();
+  const slaAnchorEmail = new Date();
+  const slaDeadlineEmail = await SLAService.calculateFirstResponseDeadline(
+    slaAnchorEmail,
+    companyId,
+    null
+  );
   const ticket = await prisma.ticket.create({
     data: {
       protocol: newProtocol,
@@ -128,6 +134,7 @@ async function resolveTicket(
       contactId,
       companyId,
       emailConnectionId,
+      slaDeadline: slaDeadlineEmail,
     },
   });
   logger.info(`New email ticket created: ${newProtocol}`, { ticketId: ticket.id });

@@ -6,595 +6,376 @@ description: Processamento em background com BullMQ
 
 # Jobs
 
-O ChatBlue usa BullMQ para processamento de tarefas em background, aproveitando o Redis como backend.
+O ChatBlue usa BullMQ para processamento de tarefas em background, aproveitando o Redis como backend. Todas as filas, workers e agendamentos sao definidos em um unico arquivo centralizado.
+
+## Estrutura de Pastas
+
+```
+apps/api/src/jobs/
+├── index.ts                              # Filas, workers e agendamentos
+└── processors/
+    ├── sla-check.processor.ts
+    ├── ticket-cleanup.processor.ts
+    ├── snooze-check.processor.ts
+    ├── email-alerts.processor.ts
+    ├── email-poll.processor.ts
+    ├── daily-report.processor.ts
+    ├── notification.processor.ts
+    ├── notion-sync.processor.ts
+    ├── ai-sync.processor.ts
+    ├── ml-training-collector.processor.ts
+    ├── ml-quality-scorer.processor.ts
+    ├── ml-pattern-detector.processor.ts
+    └── ml-metrics.processor.ts
+```
+
+Nao existe um subdiretorio `queues/`. Tudo e definido diretamente em `jobs/index.ts`: as filas (`Queue`), os workers (`Worker`), os agendamentos recorrentes e as funcoes helper para adicionar jobs.
 
 ## Configuracao
+
+O arquivo `jobs/index.ts` importa cada processador e cria as filas com opcoes especificas:
+
+```typescript
+// jobs/index.ts
+import { Queue, Worker, Job } from "bullmq";
+import { redis } from "../config/redis";
+import { logger } from "../config/logger";
+import { slaCheckProcessor } from "./processors/sla-check.processor";
+import { ticketCleanupProcessor } from "./processors/ticket-cleanup.processor";
+import { snoozeCheckProcessor } from "./processors/snooze-check.processor";
+import { emailAlertsProcessor } from "./processors/email-alerts.processor";
+import { emailPollProcessor } from "./processors/email-poll.processor";
+import { dailyReportProcessor } from "./processors/daily-report.processor";
+import { notificationProcessor } from "./processors/notification.processor";
+import { notionSyncProcessor } from "./processors/notion-sync.processor";
+import { mlTrainingCollectorProcessor } from "./processors/ml-training-collector.processor";
+import { mlQualityScorerProcessor } from "./processors/ml-quality-scorer.processor";
+import { mlPatternDetectorProcessor } from "./processors/ml-pattern-detector.processor";
+import { mlMetricsProcessor } from "./processors/ml-metrics.processor";
+```
+
+Cada fila recebe `connection: redis` e opcoes como `removeOnComplete`, `removeOnFail`, `attempts` e `backoff` conforme a necessidade.
+
+## Filas
+
+### Operacionais
+
+| Fila | Descricao | Agendamento | Concorrencia |
+|------|-----------|-------------|--------------|
+| `sla-check` | Verifica SLAs e dispara alertas | `every: 60000` (1 minuto) | 5 |
+| `ticket-cleanup` | Arquiva tickets antigos fechados | `cron: 0 3 * * *` (3h diario) | 1 |
+| `snooze-check` | Reativa tickets com snooze expirado | `every: 60000` (1 minuto) | 1 |
+| `email-alerts` | Alerta sobre conexoes caidas e tickets sem resposta | `every: 900000` (15 minutos) | 1 |
+| `email-poll` | Polling IMAP para canais de email | `every: 30000` (30 segundos) | 1 |
+| `daily-report` | Envia relatorio diario por empresa | `cron: 0 11 * * *` (11h UTC / 8h Brasil) | 1 |
+| `notifications` | Notificacoes push e in-app | Sob demanda | 10 |
+| `notion-sync` | Sincroniza contatos com Notion | Sob demanda | 3 |
+
+### Machine Learning
+
+| Fila | Descricao | Agendamento | Concorrencia |
+|------|-----------|-------------|--------------|
+| `ml-training-collector` | Coleta dados de treinamento | `cron: 0 * * * *` (a cada hora) + `cron: 0 */2 * * *` (a cada 2h para transfers) | 2 |
+| `ml-quality-scorer` | Avalia qualidade dos dados coletados | `cron: */30 * * * *` (a cada 30 min) | 2 |
+| `ml-pattern-detector` | Detecta padroes e treina intents | `cron: 0 2 * * *` (2h diario) + `cron: 0 3 * * 0` (3h domingos, full training) | 1 |
+| `ml-metrics` | Calcula metricas diarias de ML | `cron: 0 0 * * *` (meia-noite) | 1 |
+
+## Definicao das Filas
+
+Cada fila e criada com opcoes especificas. Exemplo da fila de SLA:
+
+```typescript
+export const slaCheckQueue = new Queue("sla-check", {
+  connection: redis,
+  defaultJobOptions: {
+    removeOnComplete: 100,
+    removeOnFail: 1000,
+    attempts: 3,
+    backoff: {
+      type: "exponential",
+      delay: 1000,
+    },
+  },
+});
+```
+
+Exemplo de fila com menos retentativas e backoff maior (email-alerts):
+
+```typescript
+export const emailAlertsQueue = new Queue("email-alerts", {
+  connection: redis,
+  defaultJobOptions: {
+    removeOnComplete: 100,
+    removeOnFail: 500,
+    attempts: 2,
+    backoff: {
+      type: "exponential",
+      delay: 5000,
+    },
+  },
+});
+```
+
+## Workers
+
+Os workers sao inicializados pela funcao `startWorkers()`, chamada ao subir a aplicacao. Cada worker recebe o nome da fila, o processador importado e opcoes de concorrencia:
+
+```typescript
+export async function startWorkers() {
+  logger.info("Starting background job workers...");
+
+  slaWorker = new Worker("sla-check", slaCheckProcessor, {
+    connection: redis,
+    concurrency: 5,
+  });
+
+  notificationWorker = new Worker("notifications", notificationProcessor, {
+    connection: redis,
+    concurrency: 10,
+  });
+
+  notionSyncWorker = new Worker("notion-sync", notionSyncProcessor, {
+    connection: redis,
+    concurrency: 3,
+  });
+
+  ticketCleanupWorker = new Worker("ticket-cleanup", ticketCleanupProcessor, {
+    connection: redis,
+    concurrency: 1,
+  });
+
+  snoozeCheckWorker = new Worker("snooze-check", snoozeCheckProcessor, {
+    connection: redis,
+    concurrency: 1,
+  });
+
+  emailAlertsWorker = new Worker("email-alerts", emailAlertsProcessor, {
+    connection: redis,
+    concurrency: 1,
+  });
+
+  // ML Workers
+  mlTrainingCollectorWorker = new Worker("ml-training-collector", mlTrainingCollectorProcessor, {
+    connection: redis,
+    concurrency: 2,
+  });
+
+  mlQualityScorerWorker = new Worker("ml-quality-scorer", mlQualityScorerProcessor, {
+    connection: redis,
+    concurrency: 2,
+  });
+
+  mlPatternDetectorWorker = new Worker("ml-pattern-detector", mlPatternDetectorProcessor, {
+    connection: redis,
+    concurrency: 1,
+  });
+
+  mlMetricsWorker = new Worker("ml-metrics", mlMetricsProcessor, {
+    connection: redis,
+    concurrency: 1,
+  });
+
+  dailyReportWorker = new Worker("daily-report", dailyReportProcessor, {
+    connection: redis,
+    concurrency: 1,
+  });
+
+  await scheduleRecurringJobs();
+  logger.info("All background job workers started");
+}
+```
+
+Todos os workers registram eventos `completed` e `failed` via `logger`.
+
+O worker de `email-poll` e criado dentro de `scheduleRecurringJobs()` junto com seu agendamento.
+
+## Agendamentos Recorrentes
+
+A funcao `scheduleRecurringJobs()` registra todos os jobs recorrentes. Existem dois tipos de agendamento:
+
+- **`every`** - intervalo fixo em milissegundos
+- **`pattern`** - expressao cron
+
+```typescript
+async function scheduleRecurringJobs() {
+  // SLA check a cada 1 minuto
+  await slaCheckQueue.add("check-all-sla", {}, {
+    repeat: { every: 60000 },
+  });
+
+  // Limpeza de tickets antigos - 3h diario
+  await ticketCleanupQueue.add("cleanup-old-tickets", {}, {
+    repeat: { pattern: "0 3 * * *" },
+  });
+
+  // Snooze check a cada 1 minuto
+  await snoozeCheckQueue.add("check-snoozed-tickets", {}, {
+    repeat: { every: 60000 },
+  });
+
+  // Email alerts a cada 15 minutos
+  await emailAlertsQueue.add("check-email-alerts", {}, {
+    repeat: { every: 15 * 60000 },
+  });
+
+  // ML: coleta recente a cada hora
+  await mlTrainingCollectorQueue.add("collect-recent",
+    { type: "collect-recent", hoursBack: 2 },
+    { repeat: { pattern: "0 * * * *" } }
+  );
+
+  // ML: coleta de transfers a cada 2 horas
+  await mlTrainingCollectorQueue.add("collect-transfers",
+    { type: "collect-transfers", hoursBack: 4 },
+    { repeat: { pattern: "0 */2 * * *" } }
+  );
+
+  // ML: scoring a cada 30 minutos
+  await mlQualityScorerQueue.add("score-pending",
+    { type: "score-pending", limit: 50 },
+    { repeat: { pattern: "*/30 * * * *" } }
+  );
+
+  // ML: deteccao de padroes - 2h diario
+  await mlPatternDetectorQueue.add("detect-patterns",
+    { type: "detect-patterns", minOccurrences: 3, minQualityScore: 60 },
+    { repeat: { pattern: "0 2 * * *" } }
+  );
+
+  // ML: full training - domingos 3h
+  await mlPatternDetectorQueue.add("full-training",
+    { type: "full-training", minOccurrences: 5, minQualityScore: 70, autoApprove: false },
+    { repeat: { pattern: "0 3 * * 0" } }
+  );
+
+  // ML: metricas diarias - meia-noite
+  await mlMetricsQueue.add("calculate-daily",
+    { type: "calculate-daily" },
+    { repeat: { pattern: "0 0 * * *" } }
+  );
+
+  // Daily report - 11h UTC (8h Brasil)
+  await dailyReportQueue.add("send-daily-report", {}, {
+    repeat: { pattern: "0 11 * * *" },
+  });
+
+  // Email poll - IMAP a cada 30 segundos
+  await emailPollQueue.add("poll-email-connections", {}, {
+    repeat: { every: 30000 },
+  });
+}
+```
+
+## Funcoes Helper
+
+O arquivo exporta funcoes helper para adicionar jobs sob demanda a partir de qualquer parte da aplicacao:
+
+```typescript
+// Notificacoes
+await addNotificationJob({
+  type: "sla_warning", // "sla_warning" | "sla_breach" | "new_ticket" | "ticket_assigned" | "mention"
+  userId: "user-123",
+  message: "Ticket #1234 proximo do prazo",
+  ticketId: "ticket-456",
+});
+
+// Sincronizacao com Notion
+await addNotionSyncJob({
+  companyId: "company-123",
+  contactPhone: "+5511999999999",
+  contactId: "contact-456",
+});
+
+// ML: coleta de dados
+await addMLTrainingCollectorJob({
+  type: "collect-single-ticket", // "collect-recent" | "collect-transfers" | "collect-single-ticket"
+  ticketId: "ticket-789",
+});
+
+// ML: scoring
+await addMLQualityScorerJob({
+  type: "score-pending", // "score-pending" | "score-batch"
+  limit: 50,
+});
+
+// ML: deteccao de padroes
+await addMLPatternDetectorJob({
+  type: "detect-patterns", // "detect-patterns" | "train-intents" | "full-training"
+  companyId: "company-123",
+  minOccurrences: 3,
+  minQualityScore: 60,
+});
+
+// ML: metricas
+await addMLMetricsJob({
+  type: "calculate-daily", // "calculate-daily" | "calculate-resolution-rate"
+  date: "2025-01-15",
+});
+```
+
+## Lifecycle
 
 ### Inicializacao
 
 ```typescript
-// jobs/queues/index.ts
-import { Queue, Worker, QueueEvents } from 'bullmq';
-import { redis } from '../../config/redis';
+import { startWorkers } from "./jobs";
 
-// Opcoes padrao
-const defaultOptions = {
-  connection: redis,
-  defaultJobOptions: {
-    attempts: 3,
-    backoff: {
-      type: 'exponential',
-      delay: 1000,
-    },
-    removeOnComplete: 100, // Manter ultimos 100
-    removeOnFail: 50,
-  },
-};
-
-// Filas
-export const notificationQueue = new Queue('notifications', defaultOptions);
-export const notionSyncQueue = new Queue('notion-sync', defaultOptions);
-export const slaCheckQueue = new Queue('sla-check', defaultOptions);
-export const ticketCleanupQueue = new Queue('ticket-cleanup', defaultOptions);
-export const emailQueue = new Queue('email', defaultOptions);
-
-// Eventos
-export const notificationEvents = new QueueEvents('notifications', { connection: redis });
-export const notionSyncEvents = new QueueEvents('notion-sync', { connection: redis });
+await startWorkers();
 ```
 
-### Estrutura de Pastas
+### Encerramento
 
-```
-apps/api/src/jobs/
-├── queues/
-│   └── index.ts          # Definicao das filas
-│
-├── processors/
-│   ├── notification.processor.ts
-│   ├── notion-sync.processor.ts
-│   ├── sla-check.processor.ts
-│   ├── ticket-cleanup.processor.ts
-│   └── email.processor.ts
-│
-└── index.ts              # Inicializacao dos workers
-```
-
-## Filas
-
-### Notification Queue
-
-Processa notificacoes push e in-app:
+A funcao `stopWorkers()` fecha todos os workers de forma graceful:
 
 ```typescript
-// jobs/processors/notification.processor.ts
-import { Job, Worker } from 'bullmq';
-import { redis } from '../../config/redis';
-import webpush from 'web-push';
-import { prisma } from '../../config/database';
+import { stopWorkers } from "./jobs";
 
-interface NotificationJob {
-  type: 'push' | 'in-app';
-  userId: string;
-  title: string;
-  body: string;
-  data?: Record<string, any>;
-}
-
-const processNotification = async (job: Job<NotificationJob>) => {
-  const { type, userId, title, body, data } = job.data;
-
-  if (type === 'push') {
-    // Buscar subscriptions do usuario
-    const subscriptions = await prisma.pushSubscription.findMany({
-      where: { userId },
-    });
-
-    for (const sub of subscriptions) {
-      try {
-        await webpush.sendNotification(
-          JSON.parse(sub.subscription),
-          JSON.stringify({ title, body, data })
-        );
-      } catch (error) {
-        // Se subscription invalida, remover
-        if (error.statusCode === 410) {
-          await prisma.pushSubscription.delete({
-            where: { id: sub.id },
-          });
-        }
-      }
-    }
-  }
-
-  if (type === 'in-app') {
-    // Salvar notificacao no banco
-    await prisma.notification.create({
-      data: {
-        userId,
-        title,
-        body,
-        data,
-        read: false,
-      },
-    });
-  }
-
-  return { sent: true };
-};
-
-export const notificationWorker = new Worker(
-  'notifications',
-  processNotification,
-  {
-    connection: redis,
-    concurrency: 10,
-  }
-);
-
-// Handlers de eventos
-notificationWorker.on('completed', (job) => {
-  console.log(`Notification ${job.id} completed`);
-});
-
-notificationWorker.on('failed', (job, error) => {
-  console.error(`Notification ${job?.id} failed:`, error);
-});
+await stopWorkers();
 ```
 
-### Notion Sync Queue
+Internamente, ela coleta todos os workers ativos e chama `worker.close()` em paralelo.
 
-Sincroniza contatos com Notion:
+## Opcoes dos Jobs
 
-```typescript
-// jobs/processors/notion-sync.processor.ts
-import { Job, Worker } from 'bullmq';
-import { redis } from '../../config/redis';
-import { Client } from '@notionhq/client';
-import { prisma } from '../../config/database';
-
-interface NotionSyncJob {
-  contactId: string;
-  companyId: string;
-}
-
-const processNotionSync = async (job: Job<NotionSyncJob>) => {
-  const { contactId, companyId } = job.data;
-
-  // Buscar configuracoes
-  const settings = await prisma.companySettings.findUnique({
-    where: { companyId },
-  });
-
-  if (!settings?.notionEnabled || !settings?.notionApiKey) {
-    return { skipped: true, reason: 'Notion nao configurado' };
-  }
-
-  // Buscar contato
-  const contact = await prisma.contact.findUnique({
-    where: { id: contactId },
-  });
-
-  if (!contact) {
-    return { skipped: true, reason: 'Contato nao encontrado' };
-  }
-
-  // Conectar ao Notion
-  const notion = new Client({ auth: settings.notionApiKey });
-
-  // Buscar na base
-  const response = await notion.databases.query({
-    database_id: settings.notionDatabaseId!,
-    filter: {
-      or: [
-        { property: 'Telefone', phone_number: { equals: contact.phone } },
-        ...(contact.email
-          ? [{ property: 'Email', email: { equals: contact.email } }]
-          : []),
-      ],
-    },
-  });
-
-  if (response.results.length > 0) {
-    const page = response.results[0] as any;
-
-    // Extrair propriedades
-    const clientStatus = extractProperty(page, 'Status');
-    const clientSince = extractProperty(page, 'Cliente Desde');
-
-    // Atualizar contato
-    await prisma.contact.update({
-      where: { id: contactId },
-      data: {
-        notionPageId: page.id,
-        notionClientStatus: clientStatus,
-        notionClientSince: clientSince ? new Date(clientSince) : null,
-      },
-    });
-
-    return { synced: true, notionId: page.id };
-  }
-
-  return { synced: false, reason: 'Contato nao encontrado no Notion' };
-};
-
-export const notionSyncWorker = new Worker(
-  'notion-sync',
-  processNotionSync,
-  {
-    connection: redis,
-    concurrency: 5,
-    limiter: {
-      max: 10,
-      duration: 1000, // 10 requests por segundo (limite Notion)
-    },
-  }
-);
-```
-
-### SLA Check Queue
-
-Verifica SLAs e dispara alertas:
-
-```typescript
-// jobs/processors/sla-check.processor.ts
-import { Job, Worker } from 'bullmq';
-import { redis } from '../../config/redis';
-import { prisma } from '../../config/database';
-import { notificationQueue } from '../queues';
-
-const processSLACheck = async (job: Job) => {
-  const now = new Date();
-
-  // Buscar tickets com SLA proximo de expirar (15 min)
-  const warningThreshold = new Date(now.getTime() + 15 * 60 * 1000);
-
-  const ticketsNearBreach = await prisma.ticket.findMany({
-    where: {
-      status: { in: ['PENDING', 'IN_PROGRESS'] },
-      firstResponseAt: null,
-      slaDeadline: {
-        gt: now,
-        lte: warningThreshold,
-      },
-    },
-    include: {
-      user: true,
-      company: true,
-    },
-  });
-
-  // Enviar alertas
-  for (const ticket of ticketsNearBreach) {
-    if (ticket.user) {
-      await notificationQueue.add('sla-warning', {
-        type: 'push',
-        userId: ticket.user.id,
-        title: 'SLA Proximo de Expirar',
-        body: `Ticket #${ticket.protocol} expira em 15 minutos`,
-        data: { ticketId: ticket.id },
-      });
-    }
-  }
-
-  // Buscar tickets com SLA expirado
-  const breachedTickets = await prisma.ticket.findMany({
-    where: {
-      status: { in: ['PENDING', 'IN_PROGRESS'] },
-      firstResponseAt: null,
-      slaDeadline: { lt: now },
-    },
-    include: {
-      user: true,
-      company: true,
-    },
-  });
-
-  // Criar atividades de breach
-  for (const ticket of breachedTickets) {
-    await prisma.activity.create({
-      data: {
-        companyId: ticket.companyId,
-        ticketId: ticket.id,
-        type: 'SLA_BREACH',
-        metadata: {
-          deadline: ticket.slaDeadline,
-          breachedAt: now,
-        },
-      },
-    });
-
-    // Notificar supervisores
-    const supervisors = await prisma.user.findMany({
-      where: {
-        companies: {
-          some: {
-            companyId: ticket.companyId,
-            status: 'APPROVED',
-          },
-        },
-        role: { in: ['ADMIN', 'SUPERVISOR'] },
-      },
-    });
-
-    for (const supervisor of supervisors) {
-      await notificationQueue.add('sla-breach', {
-        type: 'push',
-        userId: supervisor.id,
-        title: 'SLA Violado',
-        body: `Ticket #${ticket.protocol} excedeu o prazo de resposta`,
-        data: { ticketId: ticket.id },
-      });
-    }
-  }
-
-  return {
-    warnings: ticketsNearBreach.length,
-    breaches: breachedTickets.length,
-  };
-};
-
-export const slaCheckWorker = new Worker(
-  'sla-check',
-  processSLACheck,
-  { connection: redis }
-);
-
-// Agendar verificacao a cada 5 minutos
-slaCheckQueue.add(
-  'check',
-  {},
-  {
-    repeat: {
-      pattern: '*/5 * * * *', // A cada 5 minutos
-    },
-  }
-);
-```
-
-### Ticket Cleanup Queue
-
-Limpa tickets antigos:
-
-```typescript
-// jobs/processors/ticket-cleanup.processor.ts
-import { Job, Worker } from 'bullmq';
-import { redis } from '../../config/redis';
-import { prisma } from '../../config/database';
-import { subDays } from 'date-fns';
-
-interface CleanupJob {
-  companyId?: string;
-  daysOld?: number;
-}
-
-const processTicketCleanup = async (job: Job<CleanupJob>) => {
-  const { companyId, daysOld = 90 } = job.data;
-
-  const cutoffDate = subDays(new Date(), daysOld);
-
-  // Arquivar tickets antigos resolvidos
-  const result = await prisma.ticket.updateMany({
-    where: {
-      ...(companyId && { companyId }),
-      status: { in: ['RESOLVED', 'CLOSED'] },
-      updatedAt: { lt: cutoffDate },
-    },
-    data: {
-      status: 'CLOSED',
-    },
-  });
-
-  return { archived: result.count };
-};
-
-export const ticketCleanupWorker = new Worker(
-  'ticket-cleanup',
-  processTicketCleanup,
-  { connection: redis }
-);
-
-// Agendar limpeza diaria
-ticketCleanupQueue.add(
-  'daily-cleanup',
-  { daysOld: 90 },
-  {
-    repeat: {
-      pattern: '0 3 * * *', // 3am todos os dias
-    },
-  }
-);
-```
-
-### Email Queue
-
-Envia emails:
-
-```typescript
-// jobs/processors/email.processor.ts
-import { Job, Worker } from 'bullmq';
-import { redis } from '../../config/redis';
-import nodemailer from 'nodemailer';
-
-interface EmailJob {
-  to: string;
-  subject: string;
-  html: string;
-  text?: string;
-}
-
-const transporter = nodemailer.createTransport({
-  host: process.env.SMTP_HOST,
-  port: parseInt(process.env.SMTP_PORT || '587'),
-  secure: process.env.SMTP_SECURE === 'true',
-  auth: {
-    user: process.env.SMTP_USER,
-    pass: process.env.SMTP_PASS,
-  },
-});
-
-const processEmail = async (job: Job<EmailJob>) => {
-  const { to, subject, html, text } = job.data;
-
-  const result = await transporter.sendMail({
-    from: process.env.EMAIL_FROM,
-    to,
-    subject,
-    html,
-    text: text || html.replace(/<[^>]*>/g, ''),
-  });
-
-  return { messageId: result.messageId };
-};
-
-export const emailWorker = new Worker(
-  'email',
-  processEmail,
-  {
-    connection: redis,
-    concurrency: 5,
-    limiter: {
-      max: 100,
-      duration: 60000, // 100 emails por minuto
-    },
-  }
-);
-```
-
-## Adicionando Jobs
-
-### Adicao Simples
-
-```typescript
-import { notificationQueue, emailQueue } from './jobs/queues';
-
-// Adicionar job imediato
-await notificationQueue.add('new-message', {
-  type: 'push',
-  userId: 'user-123',
-  title: 'Nova mensagem',
-  body: 'Voce recebeu uma nova mensagem',
-});
-
-// Adicionar email
-await emailQueue.add('welcome', {
-  to: 'user@email.com',
-  subject: 'Bem-vindo ao ChatBlue',
-  html: '<h1>Bem-vindo!</h1>',
-});
-```
-
-### Opcoes Avancadas
+Cada fila define opcoes padrao, mas jobs individuais podem sobrescrever:
 
 ```typescript
 // Job com delay
-await notificationQueue.add(
-  'reminder',
-  { userId, message },
-  { delay: 5 * 60 * 1000 } // 5 minutos
-);
+await slaCheckQueue.add("delayed-check", {}, {
+  delay: 5 * 60 * 1000, // 5 minutos
+});
 
 // Job com prioridade
-await notificationQueue.add(
-  'urgent',
-  data,
-  { priority: 1 } // 1 = mais alta
-);
-
-// Job agendado
-await slaCheckQueue.add(
-  'scheduled-check',
-  {},
-  {
-    repeat: {
-      pattern: '0 9 * * 1-5', // 9am dias uteis
-    },
-  }
-);
+await notificationQueue.add("urgent", data, {
+  priority: 1, // 1 = mais alta
+});
 
 // Job com retry customizado
-await emailQueue.add(
-  'important-email',
-  data,
-  {
-    attempts: 5,
-    backoff: {
-      type: 'fixed',
-      delay: 5000,
-    },
-  }
-);
-```
-
-## Monitoramento
-
-### Bull Board
-
-```typescript
-// Adicionar dashboard de monitoramento
-import { createBullBoard } from '@bull-board/api';
-import { BullMQAdapter } from '@bull-board/api/bullMQAdapter';
-import { ExpressAdapter } from '@bull-board/express';
-
-const serverAdapter = new ExpressAdapter();
-
-createBullBoard({
-  queues: [
-    new BullMQAdapter(notificationQueue),
-    new BullMQAdapter(notionSyncQueue),
-    new BullMQAdapter(slaCheckQueue),
-    new BullMQAdapter(emailQueue),
-  ],
-  serverAdapter,
-});
-
-// Montar no Express
-app.use('/admin/queues', serverAdapter.getRouter());
-```
-
-### Eventos
-
-```typescript
-// Monitorar eventos
-notificationWorker.on('completed', (job, result) => {
-  console.log(`Job ${job.id} completed:`, result);
-});
-
-notificationWorker.on('failed', (job, error) => {
-  console.error(`Job ${job?.id} failed:`, error);
-});
-
-notificationWorker.on('progress', (job, progress) => {
-  console.log(`Job ${job.id} progress:`, progress);
-});
-
-// Eventos da fila
-notificationEvents.on('waiting', ({ jobId }) => {
-  console.log(`Job ${jobId} waiting`);
-});
-
-notificationEvents.on('active', ({ jobId }) => {
-  console.log(`Job ${jobId} active`);
+await emailAlertsQueue.add("custom-retry", data, {
+  attempts: 5,
+  backoff: {
+    type: "fixed",
+    delay: 5000,
+  },
 });
 ```
 
-### Metricas
+## Resumo das Opcoes por Fila
 
-```typescript
-// Obter estatisticas da fila
-const counts = await notificationQueue.getJobCounts();
-console.log(counts);
-// { waiting: 5, active: 2, completed: 100, failed: 3 }
-
-// Jobs ativos
-const active = await notificationQueue.getActive();
-
-// Jobs falhos
-const failed = await notificationQueue.getFailed();
-
-// Limpar jobs completos
-await notificationQueue.clean(1000, 100, 'completed');
-```
+| Fila | removeOnComplete | removeOnFail | attempts | backoff |
+|------|-----------------|-------------|----------|---------|
+| `sla-check` | 100 | 1000 | 3 | exponential 1s |
+| `notifications` | 100 | 500 | 3 | -- |
+| `notion-sync` | 50 | 100 | 2 | -- |
+| `ticket-cleanup` | 10 | 50 | -- | -- |
+| `snooze-check` | 100 | 500 | 3 | exponential 1s |
+| `email-alerts` | 100 | 500 | 2 | exponential 5s |
+| `email-poll` | 50 | 100 | 1 | -- |
+| `daily-report` | 30 | 30 | 3 | exponential 5s |
+| `ml-training-collector` | 100 | 50 | 2 | exponential 2s |
+| `ml-quality-scorer` | 50 | 50 | 2 | exponential 1s |
+| `ml-pattern-detector` | 20 | 50 | 2 | -- |
+| `ml-metrics` | 50 | 50 | 3 | -- |
 
 ## Proximos Passos
 

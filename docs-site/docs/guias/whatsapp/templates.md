@@ -41,9 +41,9 @@ Templates aprovados pelo WhatsApp, necessarios para:
 | Nome | Identificador unico | saudacao_inicial |
 | Categoria | Agrupamento | Saudacoes |
 | Titulo | Nome amigavel | Saudacao Inicial |
-| Conteudo | Texto do template | Ola {nome}! Como posso... |
+| Conteudo | Texto do template | Ola &#123;nome&#125;! Como posso... |
 
-![Placeholder: Formulario de criacao de template](/img/guias/template-criar.png)
+*Imagem: Formulario de criacao de template*
 
 ### Variaveis Disponiveis
 
@@ -61,7 +61,7 @@ Use variaveis para personalizar as mensagens:
 
 ### Exemplo de Template com Variaveis
 
-```markdown
+```text
 Ola {nome}!
 
 Obrigado por entrar em contato com a {empresa}.
@@ -280,7 +280,7 @@ Botoes:
 3. Preencha as variaveis se necessario
 4. Clique em **Enviar**
 
-![Placeholder: Selecao de template no chat](/img/guias/template-selecao.png)
+*Imagem: Selecao de template no chat*
 
 ### Via Atalho de Teclado
 
@@ -343,7 +343,7 @@ Ruim: template1
 
 ### 2. Variaveis Uteis
 
-```
+```text
 Bom: Ola {nome}, seu pedido #{protocolo} foi enviado!
 Ruim: Ola cliente, seu pedido foi enviado!
 ```
@@ -383,7 +383,7 @@ Mantenha templates agrupados por funcao para facilitar a busca.
 **Causa**: Nome da variavel incorreto
 
 **Solucao**:
-```
+```text
 Errado: Ola {Nome}!     (maiuscula)
 Certo:  Ola {nome}!     (minuscula)
 

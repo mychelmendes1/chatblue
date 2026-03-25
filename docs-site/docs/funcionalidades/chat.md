@@ -6,20 +6,23 @@ description: Interface de chat em tempo real do ChatBlue
 
 # Chat
 
-O Chat e o coracao do ChatBlue, oferecendo uma interface de comunicacao em tempo real similar ao WhatsApp Web, permitindo que agentes se comuniquem eficientemente com os clientes.
+O Chat e o coracao do ChatBlue, oferecendo uma interface de comunicacao em tempo real similar ao WhatsApp Web, permitindo que agentes se comuniquem eficientemente com os clientes atraves de multiplos canais.
 
 ## Visao Geral
 
 A funcionalidade de Chat permite:
 
 - **Comunicacao em tempo real** via WebSocket (Socket.io)
+- **Suporte multicanal** - WhatsApp, Email e Instagram na mesma interface
 - **Suporte a multiplos tipos de midia** (texto, imagens, audio, video, documentos)
 - **Indicadores de digitacao** em tempo real
 - **Status de mensagens** (enviado, entregue, lido)
 - **Reacoes com emoji** nas mensagens
 - **Citacao de mensagens** anteriores
-- **Mensagens internas** visiveis apenas para a equipe
+- **Mensagens internas** visiveis apenas para a equipe, com mencoes a usuarios
 - **Transcricao automatica** de audios
+- **Visualizacao de emails HTML** integrada
+- **Sugestoes de respostas por IA** com preview antes do envio
 
 ## Interface do Usuario
 
@@ -69,6 +72,35 @@ A funcionalidade de Chat permite:
 | **Indicador de Digitacao** | Mostra quando o contato esta digitando |
 | **Status de Mensagem** | Icones indicando enviado/entregue/lido |
 
+### Componentes Especializados
+
+| Componente (arquivo) | Descricao |
+|----------------------|-----------|
+| **template-selector.tsx** | Seletor de templates do WhatsApp aprovados pela Meta. Permite escolher e preencher variaveis do template antes do envio. |
+| **email-viewer.tsx** | Renderizacao segura de emails HTML recebidos (EmailViewer). Exibe o conteudo HTML formatado dentro da area de mensagens. |
+| **ai-response-preview.tsx** | Preview das sugestoes geradas pela IA antes de enviar ao cliente. O agente pode editar, aceitar ou recusar a sugestao. |
+
+### Navegacao por URL
+
+O chat suporta abertura direta de tickets via query string:
+
+```
+/chat?ticket=TICKET_ID
+```
+
+Ao acessar essa URL, o sistema abre automaticamente o ticket especificado na area de conversa. Isso e utilizado por links em notificacoes e redirecionamentos internos.
+
+### Layout Mobile
+
+Em dispositivos moveis, a interface adota um layout adaptativo com duas visualizacoes:
+
+| Visualizacao | Descricao |
+|-------------|-----------|
+| **Lista** | Exibe a lista de tickets/conversas, similar a tela inicial do WhatsApp mobile |
+| **Conversa** | Exibe a conversa do ticket selecionado em tela cheia, com botao de voltar para a lista |
+
+O usuario alterna entre as duas visualizacoes. Apenas uma e exibida por vez em telas pequenas.
+
 ## Tipos de Mensagens
 
 ### Mensagens de Texto
@@ -107,7 +139,7 @@ Os audios recebidos podem ser transcritos automaticamente:
 
 ### Mensagens Internas
 
-Mensagens visiveis apenas para a equipe interna:
+Mensagens visiveis apenas para a equipe interna, controladas pela flag `isInternal`:
 
 ```
 ┌─────────────────────────────────────────┐
@@ -118,14 +150,32 @@ Mensagens visiveis apenas para a equipe interna:
 └─────────────────────────────────────────┘
 ```
 
+Mensagens internas suportam mencoes a outros usuarios da equipe atraves do campo `mentionedUserIds`. Ao mencionar um usuario, ele recebe uma notificacao do tipo `notification_mention`.
+
+### Mensagens de Email (htmlContent)
+
+Quando o canal e email, as mensagens podem conter conteudo HTML completo no campo `htmlContent`. O componente `EmailViewer` renderiza esse HTML de forma segura na area de mensagens, preservando a formatacao original do email.
+
+## Suporte Multicanal
+
+O chat opera com tres canais integrados na mesma interface:
+
+| Canal | Descricao | Particularidades |
+|-------|-----------|-----------------|
+| **WhatsApp** | Canal principal via API oficial da Meta | Suporte a templates, midia, reacoes, localizacao, stickers |
+| **Email** | Integrado via IMAP/SMTP | Mensagens com `htmlContent` renderizado pelo EmailViewer |
+| **Instagram** | Mensagens diretas do Instagram | Integrado via API do Instagram/Meta |
+
+O agente nao precisa alternar entre ferramentas -- todas as conversas aparecem na mesma lista, identificadas pelo icone do canal.
+
 ## Fluxo de Mensagens
 
 ### Recebimento de Mensagem
 
 ```
 ┌─────────────┐     ┌─────────────┐     ┌─────────────┐     ┌─────────────┐
-│  WhatsApp   │────►│   Webhook   │────►│  Message    │────►│  Database   │
-│   Cliente   │     │   Handler   │     │  Processor  │     │  (Prisma)   │
+│  WhatsApp/  │────►│   Webhook   │────►│  Message    │────►│  Database   │
+│  Email/IG   │     │   Handler   │     │  Processor  │     │  (Prisma)   │
 └─────────────┘     └─────────────┘     └──────┬──────┘     └─────────────┘
                                                │
                                                ▼
@@ -149,6 +199,39 @@ Mensagens visiveis apenas para a equipe interna:
                     │  Broadcast  │     │  Status     │
                     └─────────────┘     └─────────────┘
 ```
+
+## Endpoints REST
+
+### Envio de Mensagens
+
+| Metodo | Endpoint | Descricao |
+|--------|----------|-----------|
+| `POST` | `/messages/template` | Envia mensagem usando template do WhatsApp. Requer selecao do template e preenchimento de variaveis. |
+
+### Leitura e Status
+
+| Metodo | Endpoint | Descricao |
+|--------|----------|-----------|
+| `POST` | `/messages/ticket/:ticketId/read` | Marca todas as mensagens do ticket como lidas |
+| `POST` | `/messages/ticket/:ticketId/unread` | Marca o ticket como nao lido |
+
+### Paginacao e Historico
+
+O carregamento de mensagens de um ticket usa paginacao. O parametro `includeHistory` controla se mensagens de tickets anteriores do mesmo contato sao incluidas na resposta:
+
+```typescript
+GET /messages/ticket/:ticketId?page=1&limit=50&includeHistory=true
+```
+
+Quando `includeHistory=true`, o sistema carrega tambem mensagens de tickets anteriores do mesmo contato, permitindo que o agente veja o historico completo de interacoes. Isso e util para dar contexto ao atendimento sem precisar navegar entre tickets.
+
+### Campos Importantes da Mensagem
+
+| Campo | Tipo | Descricao |
+|-------|------|-----------|
+| `isInternal` | Boolean | Quando `true`, a mensagem e uma nota interna visivel apenas para a equipe |
+| `mentionedUserIds` | String[] | IDs dos usuarios mencionados em mensagens internas |
+| `htmlContent` | String | Conteudo HTML completo para mensagens de email |
 
 ## Reacoes
 

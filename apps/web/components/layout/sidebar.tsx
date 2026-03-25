@@ -15,7 +15,6 @@ import {
   Book,
   Menu,
   X,
-  Sparkles,
   Inbox,
   LayoutGrid,
 } from "lucide-react";
@@ -47,7 +46,6 @@ const navigation = [
   { name: "Conexões", href: "/connections", icon: Wifi },
   { name: "Atendente IA", href: "/ai-agent", icon: Bot },
   { name: "Conhecimento", href: "/knowledge", icon: Book, adminOnly: true },
-  { name: "Agentes IA", href: "/ai-agents", icon: Sparkles, adminOnly: true },
   { name: "Configurações", href: "/settings", icon: Settings },
 ];
 

@@ -90,6 +90,12 @@ UPLOADS_DIR="./uploads"
 ENCRYPTION_KEY="your-32-character-encryption-key"
 
 # ============================================
+# GOOGLE OAUTH2 (CANAL DE EMAIL)
+# ============================================
+GOOGLE_CLIENT_ID=""
+GOOGLE_CLIENT_SECRET=""
+
+# ============================================
 # DOCKER (PRODUCAO)
 # ============================================
 DB_USER="chatblue"
@@ -248,16 +254,50 @@ npx web-push generate-vapid-keys
 openssl rand -hex 16
 ```
 
+### Google OAuth2 (Canal de Email)
+
+| Variavel | Tipo | Padrao | Descricao |
+|----------|------|--------|-----------|
+| `GOOGLE_CLIENT_ID` | string | - | Client ID do Google Cloud para OAuth2 (canal de email) |
+| `GOOGLE_CLIENT_SECRET` | string | - | Client Secret do Google Cloud para OAuth2 (canal de email) |
+
+Essas variaveis sao necessarias para conectar contas Gmail via OAuth2 no canal de email. Sem elas, o servico `google-oauth.service.ts` lanca erro na inicializacao.
+
+**Como obter:**
+1. Acesse https://console.cloud.google.com
+2. Crie um projeto ou selecione um existente
+3. Ative a Gmail API
+4. Em Credenciais, crie um OAuth 2.0 Client ID
+5. Configure as URIs de redirecionamento conforme o ambiente
+
+:::tip Script de configuracao
+O projeto inclui o script `scripts/add-google-oauth-env.sh` para adicionar essas variaveis ao `.env` de forma interativa.
+:::
+
+### Instagram
+
+O canal de Instagram **nao utiliza variaveis de ambiente**. As credenciais (access token, Instagram Account ID, webhook token) sao armazenadas no banco de dados na tabela `whatsapp_connections` com `type = 'INSTAGRAM'`. A configuracao e feita pela interface administrativa em Conexoes.
+
+### Inteligencia Artificial e ML Learning
+
+:::info aiApiKey por empresa
+Alem das variaveis de ambiente globais (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`), o sistema de ML Learning e o AI Assistant utilizam o campo `aiApiKey` salvo em `CompanySettings` no banco de dados. Isso permite que cada empresa tenha sua propria chave de API configurada via painel administrativo, sem depender das variaveis de ambiente do servidor.
+:::
+
 ## Variaveis do Frontend
 
 Arquivo: `apps/web/.env.local`
 
-| Variavel | Tipo | Descricao |
-|----------|------|-----------|
-| `NEXT_PUBLIC_API_URL` | string | URL da API backend |
+| Variavel | Tipo | Padrao | Descricao |
+|----------|------|--------|-----------|
+| `NEXT_PUBLIC_API_URL` | string | - | URL da API backend |
+| `DOCS_DEV_URL` | string | `http://localhost:3002` | URL do servidor Docusaurus em desenvolvimento |
+| `SKIP_DOCS_PROXY` | string | - | Se `"true"` ou `"1"`, desabilita o proxy de `/docs` no Next.js em desenvolvimento |
+
+`DOCS_DEV_URL` e `SKIP_DOCS_PROXY` sao usadas no `next.config.js` para configurar o proxy reverso que serve a documentacao Docusaurus atraves do Next.js. Em producao, o proxy aponta para o build estatico; em desenvolvimento, redireciona para o servidor Docusaurus local.
 
 :::info Prefixo NEXT_PUBLIC_
-Variaveis que precisam estar disponiveis no cliente devem comecar com `NEXT_PUBLIC_`.
+Variaveis que precisam estar disponiveis no cliente devem comecar com `NEXT_PUBLIC_`. As variaveis `DOCS_DEV_URL` e `SKIP_DOCS_PROXY` sao usadas apenas no server-side (next.config.js), por isso nao precisam do prefixo.
 :::
 
 ## Configuracao por Ambiente

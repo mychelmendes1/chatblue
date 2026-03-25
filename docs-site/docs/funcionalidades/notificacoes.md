@@ -34,34 +34,17 @@ O modulo de notificacoes oferece:
 
 ### Eventos de Notificacao
 
-```typescript
-enum NotificationEvent {
-  // Tickets
-  TICKET_CREATED = 'ticket:created',
-  TICKET_ASSIGNED = 'ticket:assigned',
-  TICKET_TRANSFERRED = 'ticket:transferred',
-  TICKET_RESOLVED = 'ticket:resolved',
-  TICKET_REOPENED = 'ticket:reopened',
+### Tipos Reais de Notificacao
 
-  // Mensagens
-  MESSAGE_RECEIVED = 'message:received',
-  MESSAGE_INTERNAL = 'message:internal',
+O sistema utiliza os seguintes tipos armazenados no campo `type` da notificacao:
 
-  // SLA
-  SLA_WARNING = 'sla:warning',      // 50% do tempo
-  SLA_URGENT = 'sla:urgent',        // 20% do tempo
-  SLA_CRITICAL = 'sla:critical',    // 5% do tempo
-  SLA_BREACHED = 'sla:breached',    // Violado
-
-  // Avaliacoes
-  RATING_RECEIVED = 'rating:received',
-  RATING_NEGATIVE = 'rating:negative',  // < 3 estrelas
-
-  // Sistema
-  CONNECTION_STATUS = 'connection:status',
-  SYSTEM_UPDATE = 'system:update'
-}
-```
+| Tipo | Descricao |
+|------|-----------|
+| `notification_mention` | Usuario foi mencionado em uma mensagem interna |
+| `notification_ticket_assigned` | Ticket foi atribuido ao usuario |
+| `notification_sla_warning` | SLA em risco -- aproximadamente 10% do tempo restante |
+| `notification_sla_breach` | SLA violado -- o prazo expirou |
+| `notification_new_ticket` | Novo ticket criado no departamento do usuario |
 
 ## Interface do Usuario
 
@@ -357,7 +340,7 @@ async function registerPushNotifications() {
   });
 
   // Salvar subscription no backend
-  await api.post('/users/me/push-subscription', subscription);
+  await api.post('/api/push/subscribe', subscription);
 }
 
 // Service Worker - sw.js
@@ -424,6 +407,13 @@ class EmailNotificationService {
 
 ## Alertas de SLA
 
+O sistema de SLA utiliza dois niveis de alerta reais:
+
+| Nivel | Tipo de Notificacao | Condicao | Descricao |
+|-------|---------------------|----------|-----------|
+| **WARNING** | `notification_sla_warning` | ~10% do tempo restante | Aviso preventivo de que o prazo esta proximo de expirar |
+| **BREACH** | `notification_sla_breach` | Prazo expirado | O SLA foi violado, o deadline ja passou |
+
 ### Fluxo de Alertas
 
 ```
@@ -433,32 +423,29 @@ class EmailNotificationService {
 │   SLA: 15 minutos                                                           │
 │        │                                                                    │
 │        │                                                                    │
-│    ────┼───────────────────────────────────────────────────────────────►   │
-│        │     │          │         │        │                     Tempo      │
-│    0 min   7.5min     12min     14min    15min                             │
-│             │          │         │        │                                 │
-│             │          │         │        └── 🔴 SLA VIOLADO               │
-│             │          │         │            Notifica: Todos + Email      │
-│             │          │         │                                          │
-│             │          │         └── ⚠️ SLA CRITICO (5%)                   │
-│             │          │             Notifica: Agente + Supervisor          │
-│             │          │             Som: Alarme                            │
-│             │          │                                                    │
-│             │          └── ⚠️ SLA URGENTE (20%)                            │
-│             │              Notifica: Agente + Supervisor                    │
-│             │                                                               │
-│             └── ℹ️ SLA WARNING (50%)                                       │
-│                 Notifica: Agente                                            │
+│    ────┼──────────────────────────────────────────────────────────────►    │
+│        │                       │                    │              Tempo    │
+│    0 min                   ~13.5min              15min                     │
+│                               │                    │                       │
+│                               │                    └── SLA BREACH          │
+│                               │                        notification_sla_   │
+│                               │                        breach              │
+│                               │                        Notifica: Agente +  │
+│                               │                        Supervisor          │
+│                               │                                            │
+│                               └── SLA WARNING (~10% restante)              │
+│                                   notification_sla_warning                 │
+│                                   Notifica: Agente                         │
 │                                                                             │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
-### Notificacao de SLA
+### Notificacao de SLA Warning
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                                                                 │
-│  🔴 ALERTA: SLA Critico                                         │
+│  ALERTA: SLA Warning                                            │
 │  ───────────────────────────────────────────────────────────    │
 │                                                                 │
 │  Ticket #2024-001234 esta proximo de violar o SLA!             │
@@ -467,12 +454,47 @@ class EmailNotificationService {
 │  Departamento: Suporte                                          │
 │  Prioridade: Alta                                               │
 │                                                                 │
-│  Tempo restante: 3 minutos                                      │
+│  Tempo restante: ~1.5 minutos                                   │
 │  SLA: Primeira Resposta (15 min)                                │
 │                                                                 │
 │  [Ver Ticket]    [Assumir]    [Transferir]                      │
 │                                                                 │
 └─────────────────────────────────────────────────────────────────┘
+```
+
+## Endpoints REST
+
+### Notificacoes
+
+| Metodo | Endpoint | Descricao |
+|--------|----------|-----------|
+| `GET` | `/api/notifications` | Lista notificacoes do usuario autenticado. Suporta paginacao (`page`, `limit`) e filtros (`type`, `isRead`). |
+| `GET` | `/api/notifications/unread-count` | Retorna a quantidade de notificacoes nao lidas do usuario. Usado para atualizar o badge no header. |
+| `PATCH` | `/api/notifications/:id/read` | Marca uma notificacao especifica como lida. |
+| `PATCH` | `/api/notifications/read-all` | Marca todas as notificacoes do usuario como lidas de uma vez. |
+
+Exemplo de chamada com filtros:
+
+```
+GET /api/notifications?page=1&limit=20&type=notification_sla_warning&isRead=false
+```
+
+### Push Notifications
+
+| Metodo | Endpoint | Descricao |
+|--------|----------|-----------|
+| `GET` | `/api/push/vapid-key` | Retorna a chave publica VAPID necessaria para registrar o Service Worker de push. |
+| `POST` | `/api/push/subscribe` | Registra a subscription de push do navegador do usuario no backend. |
+| `POST` | `/api/push/unsubscribe` | Remove a subscription de push do usuario (desativa push para aquele dispositivo). |
+| `POST` | `/api/push/test` | Envia uma notificacao push de teste para o usuario, para verificar se a configuracao esta funcionando. |
+
+Fluxo de registro de push:
+
+```
+1. Frontend chama GET /api/push/vapid-key para obter a chave publica
+2. Service Worker registra subscription com a chave VAPID
+3. Frontend envia subscription via POST /api/push/subscribe
+4. Backend armazena subscription e passa a enviar push ao usuario
 ```
 
 ## Sons de Notificacao
@@ -522,16 +544,16 @@ class SoundService {
     }
   }
 
-  getSoundForEvent(event: NotificationEvent): string {
-    const soundMap = {
-      [NotificationEvent.MESSAGE_RECEIVED]: 'message',
-      [NotificationEvent.SLA_CRITICAL]: 'alarm',
-      [NotificationEvent.SLA_BREACHED]: 'alarm',
-      [NotificationEvent.RATING_RECEIVED]: 'success',
-      [NotificationEvent.TICKET_TRANSFERRED]: 'attention'
+  getSoundForEvent(type: string): string {
+    const soundMap: Record<string, string> = {
+      'notification_mention': 'message',
+      'notification_sla_warning': 'attention',
+      'notification_sla_breach': 'alarm',
+      'notification_ticket_assigned': 'default',
+      'notification_new_ticket': 'default'
     };
 
-    return soundMap[event] || 'default';
+    return soundMap[type] || 'default';
   }
 }
 ```
@@ -626,20 +648,21 @@ model UserNotificationPreferences {
 5. Maria ve notificacao e assume
 ```
 
-### 2. Alerta de SLA Escalonado
+### 2. Alerta de SLA
 
 **Cenario**: Ticket perto de violar SLA.
 
 ```
-1. Job verifica SLAs a cada minuto
-2. Ticket #1234 com 3 min restantes (< 5%)
-3. Classificado como CRITICO
+1. Job verifica SLAs periodicamente
+2. Ticket #1234 com ~10% do tempo restante
+3. Sistema emite notification_sla_warning
 4. NotificationService:
    - Notifica agente atribuido
-   - Notifica supervisor
+   - Som de atencao
+5. Se prazo expira sem resposta:
+   - Sistema emite notification_sla_breach
+   - Notifica agente + supervisor
    - Som de alarme
-   - Email para supervisor
-5. Supervisor intervem
 ```
 
 ### 3. Usuario em Horario de Silencio
@@ -678,9 +701,9 @@ model UserNotificationPreferences {
 
 ### SLA
 
-- Alertas automaticos em niveis
-- Escalacao progressiva
-- Notificacao de violacao
+- Alerta WARNING quando ~10% do tempo resta
+- Alerta BREACH quando o prazo expira
+- Notificacao automatica ao agente e supervisor
 
 ### Chat
 

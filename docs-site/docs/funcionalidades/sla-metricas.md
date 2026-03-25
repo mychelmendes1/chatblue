@@ -6,18 +6,18 @@ description: Configuracao de SLA e dashboard de metricas do ChatBlue
 
 # SLA e Metricas
 
-O sistema de SLA (Service Level Agreement) e metricas do ChatBlue permite monitorar e garantir a qualidade do atendimento atraves de acordos de nivel de servico configuraveise dashboards detalhados.
+O sistema de SLA (Service Level Agreement) e metricas do ChatBlue permite monitorar e garantir a qualidade do atendimento atraves de acordos de nivel de servico configuraveis e dashboards detalhados.
 
 ## Visao Geral
 
 O modulo de SLA oferece:
 
-- **Configuracao flexivel** de tempos de resposta
+- **Configuracao flexivel** de tempos de resposta e resolucao
 - **SLA por departamento** independente
 - **Horario comercial** configuravel
-- **Alertas automaticos** de violacao
+- **Alertas automaticos** de warning e breach
 - **Dashboard em tempo real**
-- **Relatorios historicos**
+- **Exportacao** em JSON e CSV
 
 ## Conceitos Fundamentais
 
@@ -67,132 +67,23 @@ Tempo total desde a criacao ate a resolucao do ticket.
 
 ### Horario Comercial
 
-SLA considera apenas horario comercial configurado:
+O SLA pode considerar apenas horario comercial. O formato real do campo `businessHours` e:
+
+```json
+{
+  "start": "09:00",
+  "end": "18:00",
+  "days": [1, 2, 3, 4, 5]
+}
+```
+
+Os dias sao representados como numeros (1 = segunda, 7 = domingo). Nao ha suporte a configuracao por dia individual nem a feriados.
+
+Exemplo de calculo:
 
 ```
-Segunda a Sexta: 08:00 - 18:00
-Sabado: 08:00 - 12:00
-Domingo: Fechado
-
 Ticket criado sexta 17:00 com SLA de 2h:
 - Deadline real: segunda 10:00 (apenas horas uteis contam)
-```
-
-## Interface do Usuario
-
-### Dashboard de Metricas
-
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│  Dashboard de Metricas                        Periodo: [Ultimos 30 dias ▼]  │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                              │
-│  Resumo Geral                                                                │
-│  ─────────────────────────────────────────────────────────────────────────   │
-│                                                                              │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐    │
-│  │ Total        │  │ SLA          │  │ Tempo Medio  │  │ Avaliacao    │    │
-│  │ Tickets      │  │ Cumprido     │  │ Resposta     │  │ Media        │    │
-│  │    456       │  │   94.5%      │  │   8 min      │  │   4.6/5      │    │
-│  │  ▲ +12%      │  │  ▲ +2.3%     │  │  ▼ -15%      │  │  ▲ +0.2      │    │
-│  └──────────────┘  └──────────────┘  └──────────────┘  └──────────────┘    │
-│                                                                              │
-│  ─────────────────────────────────────────────────────────────────────────   │
-│                                                                              │
-│  ┌────────────────────────────────────┬─────────────────────────────────┐   │
-│  │  Tickets por Status               │  SLA por Departamento           │   │
-│  │  ───────────────────               │  ─────────────────────           │   │
-│  │                                   │                                  │   │
-│  │  Pendentes    ████ 45             │  Comercial    ████████████ 98%  │   │
-│  │  Em Progresso ██████ 78           │  Suporte      █████████░░░ 92%  │   │
-│  │  Aguardando   ███ 34              │  Financeiro   ██████████░░ 95%  │   │
-│  │  Resolvidos   ████████████ 289    │  TI           █████████████ 99%  │   │
-│  │  Fechados     █ 10                │                                  │   │
-│  │                                   │                                  │   │
-│  └────────────────────────────────────┴─────────────────────────────────┘   │
-│                                                                              │
-│  ┌──────────────────────────────────────────────────────────────────────┐   │
-│  │  Evolucao do SLA (30 dias)                                           │   │
-│  │  ─────────────────────────                                           │   │
-│  │                                                                      │   │
-│  │  100%  ─  ─  ─  ─  ─  ─  ─  ─  ─  ─  ─  ─  ─  ─  ─  ─  ─  ─  ─     │   │
-│  │   95%  ─ ─  ─ ─ ─ ─  ─  ─ ─ ─ ─ ─ ┌───┐  ─ ─ ─  ─  ─  ─  ─  ─     │   │
-│  │   90%         ┌───────┐           │   │     ┌───────────────────     │   │
-│  │   85%  ───────┤       └───────────┘   └─────┤                        │   │
-│  │   80%                                                                │   │
-│  │        01/01  05/01  10/01  15/01  20/01  25/01  30/01              │   │
-│  │                                                                      │   │
-│  └──────────────────────────────────────────────────────────────────────┘   │
-│                                                                              │
-│  ┌────────────────────────────────────┬─────────────────────────────────┐   │
-│  │  Ranking de Agentes               │  Tickets em Risco               │   │
-│  │  ────────────────────              │  ─────────────────               │   │
-│  │                                   │                                  │   │
-│  │  1. Maria Santos  98% | 45 tkts  │  #2024-1234 | 5 min  | Urgente  │   │
-│  │  2. Pedro Costa   95% | 38 tkts  │  #2024-1230 | 12 min | Alta     │   │
-│  │  3. Ana Lima      93% | 42 tkts  │  #2024-1228 | 18 min | Media    │   │
-│  │  4. Carlos Souza  91% | 35 tkts  │                                  │   │
-│  │  5. Julia Pereira 89% | 40 tkts  │                                  │   │
-│  │                                   │                                  │   │
-│  └────────────────────────────────────┴─────────────────────────────────┘   │
-│                                                                              │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
-
-### Configuracao de SLA
-
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│  Configuracao de SLA                                                        │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                              │
-│  SLA Padrao da Empresa                                                       │
-│  ────────────────────────────────────────────────────────────────────────    │
-│                                                                              │
-│  Tempo de Primeira Resposta:                                                 │
-│  ┌───────────────────────────────────────┐                                  │
-│  │  15  minutos                          │                                  │
-│  └───────────────────────────────────────┘                                  │
-│                                                                              │
-│  Tempo de Resolucao:                                                         │
-│  ┌───────────────────────────────────────┐                                  │
-│  │  4  horas                             │                                  │
-│  └───────────────────────────────────────┘                                  │
-│                                                                              │
-│  ────────────────────────────────────────────────────────────────────────    │
-│                                                                              │
-│  Horario Comercial                                                           │
-│  ────────────────────────────────────────────────────────────────────────    │
-│                                                                              │
-│  ┌───────────────────────────────────────────────────────────────────────┐  │
-│  │  Dia          Inicio    Fim       Ativo                               │  │
-│  │  ─────────────────────────────────────────────                        │  │
-│  │  Segunda      08:00     18:00     [x]                                 │  │
-│  │  Terca        08:00     18:00     [x]                                 │  │
-│  │  Quarta       08:00     18:00     [x]                                 │  │
-│  │  Quinta       08:00     18:00     [x]                                 │  │
-│  │  Sexta        08:00     18:00     [x]                                 │  │
-│  │  Sabado       08:00     12:00     [x]                                 │  │
-│  │  Domingo      -         -         [ ]                                 │  │
-│  └───────────────────────────────────────────────────────────────────────┘  │
-│                                                                              │
-│  ────────────────────────────────────────────────────────────────────────    │
-│                                                                              │
-│  SLA por Prioridade                                                          │
-│  ────────────────────────────────────────────────────────────────────────    │
-│                                                                              │
-│  ┌───────────────────────────────────────────────────────────────────────┐  │
-│  │  Prioridade   Primeira Resposta   Resolucao                           │  │
-│  │  ─────────────────────────────────────────────                        │  │
-│  │  Urgente      5 min               1 hora                              │  │
-│  │  Alta         15 min              2 horas                             │  │
-│  │  Media        30 min              4 horas                             │  │
-│  │  Baixa        60 min              8 horas                             │  │
-│  └───────────────────────────────────────────────────────────────────────┘  │
-│                                                                              │
-│  [Salvar Configuracoes]                                                      │
-│                                                                              │
-└─────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ## Modelo de Dados
@@ -203,11 +94,13 @@ Ticket criado sexta 17:00 com SLA de 2h:
 model SLAConfig {
   id                String   @id @default(uuid())
   companyId         String
-  departmentId      String?  @unique        // Se null, e o padrao da empresa
+  name              String
+  departmentId      String?  @unique
   firstResponseTime Int      @default(15)   // minutos
   resolutionTime    Int      @default(240)  // minutos (4 horas)
-  businessHours     Json?                   // Horario comercial
+  businessHours     Json?                   // { start, end, days }
   isDefault         Boolean  @default(false)
+  isActive          Boolean  @default(true)
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 
@@ -219,21 +112,15 @@ model SLAConfig {
 ### Estrutura do Horario Comercial
 
 ```typescript
-// Formato do businessHours
+// Formato do campo businessHours (JSON)
 {
-  "monday": { "start": "08:00", "end": "18:00", "active": true },
-  "tuesday": { "start": "08:00", "end": "18:00", "active": true },
-  "wednesday": { "start": "08:00", "end": "18:00", "active": true },
-  "thursday": { "start": "08:00", "end": "18:00", "active": true },
-  "friday": { "start": "08:00", "end": "18:00", "active": true },
-  "saturday": { "start": "08:00", "end": "12:00", "active": true },
-  "sunday": { "start": null, "end": null, "active": false },
-  "holidays": [
-    "2024-01-01",  // Ano Novo
-    "2024-12-25"   // Natal
-  ]
+  "start": "09:00",
+  "end": "18:00",
+  "days": [1, 2, 3, 4, 5]  // 1=segunda ... 7=domingo
 }
 ```
+
+Nao existe configuracao por dia individual (horarios diferentes por dia da semana) nem lista de feriados.
 
 ### Metricas do Ticket
 
@@ -242,13 +129,16 @@ model Ticket {
   // ... outros campos
 
   slaDeadline     DateTime?  // Deadline do SLA
-  firstResponseAt DateTime?  // Quando houve primeira resposta
+  slaBreached     Boolean    @default(false)
+  firstResponse   DateTime?  // Quando houve primeira resposta
   resolvedAt      DateTime?  // Quando foi resolvido
-  resolutionTime  Int?       // Tempo total de resolucao (minutos)
-  waitingTime     Int?       // Tempo aguardando cliente (minutos)
-  responseTime    Int?       // Tempo de primeira resposta (minutos)
+  responseTime    Int?       // Tempo de primeira resposta (segundos)
+  resolutionTime  Int?       // Tempo total de resolucao (segundos)
+  waitingTime     Int?       // Tempo aguardando cliente (segundos)
 }
 ```
+
+Os campos `responseTime`, `resolutionTime` e `waitingTime` sao armazenados em **segundos** no banco de dados.
 
 ## Calculo do SLA
 
@@ -280,7 +170,7 @@ model Ticket {
 │          ▼                                                                  │
 │   ┌─────────────┐                                                          │
 │   │  Calcular   │                                                          │
-│   │  Deadline   │────► Considera horario comercial                         │
+│   │  Deadline   │────► Considera horario comercial (se configurado)        │
 │   └──────┬──────┘                                                          │
 │          │                                                                  │
 │          ▼                                                                  │
@@ -292,65 +182,26 @@ model Ticket {
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
+O SLA nao diferencia por prioridade do ticket. A configuracao e feita por departamento ou como padrao da empresa.
+
 ### Logica de Calculo
 
 ```typescript
 class SLAService {
   async calculateDeadline(ticket: Ticket): Promise<Date> {
-    // 1. Buscar configuracao de SLA
+    // 1. Buscar configuracao de SLA (departamento ou padrao)
     const config = await this.getConfig(ticket.companyId, ticket.departmentId);
 
-    // 2. Pegar tempo baseado na prioridade
-    const responseTime = this.getResponseTime(config, ticket.priority);
+    // 2. Pegar tempo de primeira resposta da config
+    const responseMinutes = config.firstResponseTime;
 
-    // 3. Calcular deadline considerando horario comercial
+    // 3. Calcular deadline considerando horario comercial (se configurado)
     const now = new Date();
-    const deadline = this.addBusinessMinutes(
-      now,
-      responseTime,
-      config.businessHours
-    );
+    const deadline = config.businessHours
+      ? this.addBusinessMinutes(now, responseMinutes, config.businessHours)
+      : addMinutes(now, responseMinutes);
 
     return deadline;
-  }
-
-  private addBusinessMinutes(
-    startDate: Date,
-    minutes: number,
-    businessHours: BusinessHours
-  ): Date {
-    let remainingMinutes = minutes;
-    let currentDate = new Date(startDate);
-
-    while (remainingMinutes > 0) {
-      // Verificar se e dia util
-      if (this.isBusinessDay(currentDate, businessHours)) {
-        const dayConfig = this.getDayConfig(currentDate, businessHours);
-
-        // Se estamos no horario comercial
-        if (this.isBusinessHour(currentDate, dayConfig)) {
-          const endOfDay = this.getEndOfBusinessDay(currentDate, dayConfig);
-          const minutesToEndOfDay = this.diffMinutes(currentDate, endOfDay);
-
-          if (remainingMinutes <= minutesToEndOfDay) {
-            // Termina hoje
-            return addMinutes(currentDate, remainingMinutes);
-          } else {
-            // Continua no proximo dia
-            remainingMinutes -= minutesToEndOfDay;
-            currentDate = this.getNextBusinessDayStart(currentDate, businessHours);
-          }
-        } else {
-          // Fora do horario, pular para proximo inicio
-          currentDate = this.getNextBusinessDayStart(currentDate, businessHours);
-        }
-      } else {
-        // Dia nao util, pular para proximo
-        currentDate = this.getNextBusinessDayStart(currentDate, businessHours);
-      }
-    }
-
-    return currentDate;
   }
 }
 ```
@@ -359,87 +210,69 @@ class SLAService {
 
 ### Tipos de Alerta
 
-| Alerta | Condicao | Destinatarios |
-|--------|----------|---------------|
-| **Aviso** | 50% do tempo restante | Agente atribuido |
-| **Urgente** | 20% do tempo restante | Agente + Supervisor |
-| **Critico** | 5% do tempo restante | Todos + Admin |
-| **Violado** | SLA expirado | Todos + Notificacao externa |
+O sistema possui dois niveis de alerta:
 
-### Fluxo de Alertas
+| Alerta | Condicao | Destinatario |
+|--------|----------|--------------|
+| **WARNING** | Tempo restante inferior a ~10% do SLA (minimo 5min para FRT, 10min para resolucao) | Agente atribuido (assignedToId) |
+| **BREACH** | Deadline ultrapassado | Agente atribuido (assignedToId) |
 
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                                                                             │
-│   Job de Verificacao (a cada 1 minuto)                                      │
-│                                                                             │
-│   ┌─────────────┐                                                          │
-│   │  Buscar     │                                                          │
-│   │  Tickets    │                                                          │
-│   │  Abertos    │                                                          │
-│   └──────┬──────┘                                                          │
-│          │                                                                  │
-│          ▼                                                                  │
-│   Para cada ticket:                                                         │
-│   ┌─────────────────────────────────────────────────────────────────────┐  │
-│   │                                                                     │  │
-│   │  Calcular tempo restante = slaDeadline - now                       │  │
-│   │                                                                     │  │
-│   │  ┌───────────────────────────────────────────────────────────────┐ │  │
-│   │  │                                                               │ │  │
-│   │  │  tempo > 50%    →  OK (sem acao)                             │ │  │
-│   │  │                                                               │ │  │
-│   │  │  50% >= tempo > 20%  →  Enviar AVISO                         │ │  │
-│   │  │                                                               │ │  │
-│   │  │  20% >= tempo > 5%   →  Enviar URGENTE                       │ │  │
-│   │  │                                                               │ │  │
-│   │  │  5% >= tempo > 0%    →  Enviar CRITICO                       │ │  │
-│   │  │                                                               │ │  │
-│   │  │  tempo <= 0%         →  Registrar VIOLACAO + Notificar       │ │  │
-│   │  │                                                               │ │  │
-│   │  └───────────────────────────────────────────────────────────────┘ │  │
-│   │                                                                     │  │
-│   └─────────────────────────────────────────────────────────────────────┘  │
-│                                                                             │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
+### Job de Verificacao
 
-### Notificacao de Violacao
+O job `sla-check.processor` roda a cada **60 segundos** (`every: 60000`) e verifica:
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│  🚨 ALERTA: SLA Violado                                         │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                 │
-│  Ticket: #2024-001234                                           │
-│  Cliente: Joao Silva                                            │
-│  Departamento: Suporte                                          │
-│  Agente: Maria Santos                                           │
-│                                                                 │
-│  ─────────────────────────────────────────────────────────────  │
-│                                                                 │
-│  SLA: Primeira Resposta                                         │
-│  Prazo: 15 minutos                                              │
-│  Tempo decorrido: 18 minutos                                    │
-│  Violacao: 3 minutos                                            │
-│                                                                 │
-│  ─────────────────────────────────────────────────────────────  │
-│                                                                 │
-│  [Ver Ticket]    [Assumir Ticket]    [Notificar Supervisor]    │
-│                                                                 │
-└─────────────────────────────────────────────────────────────────┘
-```
+1. Tickets abertos que possuem `slaDeadline` definido
+2. Calcula tempo restante para primeira resposta e resolucao
+3. Envia WARNING via socket quando o tempo restante esta proximo do limite
+4. Envia BREACH quando o deadline passou, marca `ticket.slaBreached = true` e cria uma Activity do tipo `SLA_BREACH`
 
-## Metricas Disponíveis
+### Notificacoes
+
+As notificacoes sao enviadas via WebSocket para o agente atribuido:
+
+| Evento Socket | Quando |
+|---------------|--------|
+| `sla:warning` | Tempo restante proximo do limite |
+| `sla:breach` | Deadline ultrapassado |
+
+## Metricas Disponiveis
+
+### Endpoints de Metricas
+
+| Endpoint | Descricao |
+|----------|-----------|
+| `GET /api/metrics/sla` | Metricas de SLA (compliance, tempos, violacoes) |
+| `GET /api/metrics/dashboard` | Dashboard geral de metricas |
+| `GET /api/metrics/agents` | Metricas por agente |
+| `GET /api/metrics/departments` | Metricas por departamento |
+| `GET /api/metrics/nps` | Metricas de NPS |
+| `GET /api/metrics/quality` | Metricas de qualidade |
+| `GET /api/metrics/ai` | Metricas da IA |
+| `GET /api/metrics/executive` | Resumo executivo |
+| `GET /api/metrics/comparison` | Comparacoes entre periodos |
+| `GET /api/metrics/history` | Historico de metricas |
+| `GET /api/metrics/export` | Exportacao de dados (JSON/CSV) |
+
+### Metas e Alertas
+
+| Endpoint | Descricao |
+|----------|-----------|
+| `GET /api/metrics/goals` | Listar metas |
+| `POST /api/metrics/goals` | Criar meta |
+| `PUT /api/metrics/goals/:id` | Atualizar meta |
+| `DELETE /api/metrics/goals/:id` | Remover meta |
+| `GET /api/metrics/alerts` | Listar alertas de metricas |
+| `POST /api/metrics/alerts` | Criar alerta de metrica |
+| `PUT /api/metrics/alerts/:id` | Atualizar alerta de metrica |
+| `DELETE /api/metrics/alerts/:id` | Remover alerta de metrica |
 
 ### Metricas de Tempo
 
-| Metrica | Descricao | Calculo |
-|---------|-----------|---------|
-| **FRT** (First Response Time) | Tempo ate primeira resposta | firstResponseAt - createdAt |
-| **RT** (Resolution Time) | Tempo total de resolucao | resolvedAt - createdAt |
-| **WT** (Waiting Time) | Tempo aguardando cliente | Soma dos periodos WAITING |
-| **HT** (Handle Time) | Tempo de tratamento efetivo | RT - WT |
+| Metrica | Descricao | Campo no Ticket |
+|---------|-----------|-----------------|
+| **FRT** (First Response Time) | Tempo ate primeira resposta | `firstResponse` - `createdAt` (armazenado em `responseTime` em segundos) |
+| **RT** (Resolution Time) | Tempo total de resolucao | `resolvedAt` - `createdAt` (armazenado em `resolutionTime` em segundos) |
+| **WT** (Waiting Time) | Tempo aguardando cliente | Soma dos periodos WAITING (armazenado em `waitingTime` em segundos) |
 
 ### Metricas de Volume
 
@@ -448,105 +281,85 @@ class SLAService {
 | **Tickets Criados** | Total de tickets novos no periodo |
 | **Tickets Resolvidos** | Total de tickets finalizados |
 | **Tickets Pendentes** | Total de tickets em aberto |
-| **Backlog** | Tickets antigos ainda abertos |
+| **Tickets em Risco** | Tickets proximos de violar SLA |
 
 ### Metricas de Qualidade
 
-| Metrica | Descricao | Meta Sugerida |
-|---------|-----------|---------------|
-| **SLA Compliance** | % tickets dentro do SLA | > 95% |
-| **CSAT** (Customer Satisfaction) | Avaliacao do cliente | > 4.5/5 |
-| **FCR** (First Contact Resolution) | % resolvidos no primeiro contato | > 70% |
-| **Escalation Rate** | % tickets escalados | < 10% |
+| Metrica | Descricao |
+|---------|-----------|
+| **SLA Compliance** | % tickets dentro do SLA |
+| **Breach Count** | Quantidade de violacoes no periodo |
+| **Tempo Medio de Resposta** | Media do responseTime |
+| **Tempo Medio de Resolucao** | Media do resolutionTime |
 
-## Relatorios
+## Exportacao de Dados
 
-### Relatorio Diario
+### Formatos Disponiveis
 
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│  Relatorio Diario - 15/01/2024                              [Exportar PDF]  │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                              │
-│  Resumo do Dia                                                               │
-│  ─────────────────────────────────────────────────────────────────────────   │
-│                                                                              │
-│  Tickets Criados: 45          Tickets Resolvidos: 42                        │
-│  SLA Cumprido: 93.3% (42/45)  Tempo Medio Resposta: 8 min                  │
-│  Avaliacao Media: 4.7/5       Tickets Escalados: 3 (6.7%)                  │
-│                                                                              │
-│  ─────────────────────────────────────────────────────────────────────────   │
-│                                                                              │
-│  Por Departamento                                                            │
-│  ┌────────────────────────────────────────────────────────────────────────┐ │
-│  │ Departamento    Criados  Resolvidos  SLA%   TMR    Aval  │             │ │
-│  │ ──────────────────────────────────────────────────────── │             │ │
-│  │ Comercial       15       14          100%   5min   4.8   │             │ │
-│  │ Suporte         20       18          90%    12min  4.5   │             │ │
-│  │ Financeiro      10       10          100%   6min   4.9   │             │ │
-│  └────────────────────────────────────────────────────────────────────────┘ │
-│                                                                              │
-│  ─────────────────────────────────────────────────────────────────────────   │
-│                                                                              │
-│  Por Agente                                                                  │
-│  ┌────────────────────────────────────────────────────────────────────────┐ │
-│  │ Agente          Atendidos  SLA%   TMR    Avaliacao                    │ │
-│  │ ──────────────────────────────────────────────────────────            │ │
-│  │ Maria Santos    12         100%   4min   4.9                          │ │
-│  │ Pedro Costa     10         90%    10min  4.6                          │ │
-│  │ Ana Lima        8          87.5%  15min  4.5                          │ │
-│  │ Carlos Souza    7          100%   6min   4.8                          │ │
-│  │ ChatBlue IA     8          100%   1min   4.2                          │ │
-│  └────────────────────────────────────────────────────────────────────────┘ │
-│                                                                              │
-│  ─────────────────────────────────────────────────────────────────────────   │
-│                                                                              │
-│  Violacoes de SLA (3)                                                        │
-│  ┌────────────────────────────────────────────────────────────────────────┐ │
-│  │ Ticket      Agente         Tempo      Motivo                          │ │
-│  │ ──────────────────────────────────────────────────────────            │ │
-│  │ #2024-1234  Ana Lima       +5min      Alta demanda                    │ │
-│  │ #2024-1235  Pedro Costa    +3min      Problema tecnico               │ │
-│  │ #2024-1236  (nao atrib.)   +10min     Fora do horario                │ │
-│  └────────────────────────────────────────────────────────────────────────┘ │
-│                                                                              │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
+O endpoint `GET /api/metrics/export` suporta dois formatos:
 
-### Exportacao de Dados
-
-Formatos disponiveis:
-- **PDF**: Relatorio formatado para impressao
-- **Excel**: Dados completos para analise
-- **CSV**: Dados brutos para integracao
 - **JSON**: Para APIs e automacoes
+- **CSV**: Dados brutos para analise e importacao
+
+Nao ha suporte a exportacao em PDF ou Excel.
+
+## Configuracao de SLA
+
+### API
+
+A configuracao de SLA e feita via endpoints REST:
+
+| Metodo | Endpoint | Descricao |
+|--------|----------|-----------|
+| `GET` | `/api/settings/sla` | Listar configuracoes |
+| `POST` | `/api/settings/sla` | Criar configuracao |
+| `PUT` | `/api/settings/sla/:id` | Atualizar configuracao |
+| `DELETE` | `/api/settings/sla/:id` | Remover configuracao |
+
+### Exemplo de Criacao
+
+```typescript
+POST /api/settings/sla
+{
+  "name": "SLA Suporte",
+  "firstResponseTime": 15,      // minutos
+  "resolutionTime": 240,         // minutos (4 horas)
+  "businessHours": {             // opcional
+    "start": "09:00",
+    "end": "18:00",
+    "days": [1, 2, 3, 4, 5]
+  },
+  "isDefault": false,
+  "departmentId": "dept_123",
+  "isActive": true
+}
+```
 
 ## SLA por Departamento
 
 ### Configuracao Hierarquica
 
 ```
-Empresa (SLA Padrao)
+Empresa (SLA Padrao - isDefault: true)
 ├── FRT: 30 min
 └── RT: 4 horas
 
-    ├── Comercial (Herda padrao)
+    ├── Comercial (Herda padrao, sem config propria)
     │   ├── FRT: 30 min
     │   └── RT: 4 horas
     │
-    ├── Suporte (Customizado)
-    │   ├── FRT: 15 min  ← Mais rapido
-    │   └── RT: 2 horas  ← Mais rapido
+    ├── Suporte (Config propria)
+    │   ├── FRT: 15 min
+    │   └── RT: 2 horas
     │
-    └── Financeiro (Customizado)
-        ├── FRT: 60 min  ← Mais lento
-        └── RT: 8 horas  ← Mais lento
+    └── Financeiro (Config propria)
+        ├── FRT: 60 min
+        └── RT: 8 horas
 ```
 
 ### Heranca de Configuracao
 
 ```typescript
-// Buscar configuracao de SLA para um ticket
 async function getSLAConfig(companyId: string, departmentId: string | null) {
   // 1. Tentar buscar config do departamento
   if (departmentId) {
@@ -565,6 +378,40 @@ async function getSLAConfig(companyId: string, departmentId: string | null) {
 }
 ```
 
+## Interface do Usuario
+
+### Dashboard de Metricas
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  Dashboard de Metricas                        Periodo: [Ultimos 30 dias v]  │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│  Resumo Geral                                                                │
+│  ─────────────────────────────────────────────────────────────────────────   │
+│                                                                              │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐    │
+│  │ Total        │  │ SLA          │  │ Tempo Medio  │  │ Violacoes    │    │
+│  │ Tickets      │  │ Cumprido     │  │ Resposta     │  │              │    │
+│  │    456       │  │   94.5%      │  │   8 min      │  │     12       │    │
+│  └──────────────┘  └──────────────┘  └──────────────┘  └──────────────┘    │
+│                                                                              │
+│  ─────────────────────────────────────────────────────────────────────────   │
+│                                                                              │
+│  ┌────────────────────────────────────┬─────────────────────────────────┐   │
+│  │  Tickets por Status               │  SLA por Departamento           │   │
+│  │  ───────────────────               │  ─────────────────────           │   │
+│  │                                   │                                  │   │
+│  │  Pendentes    ████ 45             │  Comercial    ████████████ 98%  │   │
+│  │  Em Progresso ██████ 78           │  Suporte      █████████░░░ 92%  │   │
+│  │  Aguardando   ███ 34              │  Financeiro   ██████████░░ 95%  │   │
+│  │  Resolvidos   ████████████ 289    │  TI           █████████████ 99%  │   │
+│  │                                   │                                  │   │
+│  └────────────────────────────────────┴─────────────────────────────────┘   │
+│                                                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
 ## Casos de Uso
 
 ### 1. Monitoramento em Tempo Real
@@ -573,10 +420,10 @@ async function getSLAConfig(companyId: string, departmentId: string | null) {
 
 ```
 1. Acessa dashboard de metricas
-2. Visualiza tickets em risco
+2. Visualiza tickets em risco (warning)
 3. Identifica agente sobrecarregado
 4. Redistribui tickets
-5. Evita violacoes de SLA
+5. Evita violacoes de SLA (breach)
 ```
 
 ### 2. Analise de Tendencias
@@ -584,96 +431,73 @@ async function getSLAConfig(companyId: string, departmentId: string | null) {
 **Cenario**: Gestor analisa performance mensal.
 
 ```
-1. Gera relatorio do periodo
-2. Compara com mes anterior
+1. Consulta GET /api/metrics/history
+2. Compara com periodo anterior via GET /api/metrics/comparison
 3. Identifica padroes (picos, quedas)
 4. Ajusta configuracoes de SLA
-5. Define metas para proximo periodo
+5. Define metas via POST /api/metrics/goals
 ```
 
-### 3. Ajuste de Capacidade
+### 3. Exportacao de Dados
 
-**Cenario**: SLA sendo violado frequentemente.
-
-```
-1. Analisa relatorios de violacao
-2. Identifica horarios criticos
-3. Opcoes:
-   - Aumentar equipe nos horarios
-   - Ajustar metas de SLA
-   - Ativar IA para picos
-4. Monitora resultados
-```
-
-### 4. SLA Diferenciado por Cliente
-
-**Cenario**: Clientes VIP precisam de atendimento prioritario.
+**Cenario**: Equipe de BI precisa dos dados.
 
 ```
-1. Cria departamento "VIP"
-2. Configura SLA agressivo (FRT: 5min)
-3. Aloca agentes dedicados
-4. Tickets VIP vao para esse departamento
-5. SLA monitorado separadamente
+1. Chama GET /api/metrics/export?format=csv&startDate=...&endDate=...
+2. Recebe arquivo CSV com metricas do periodo
+3. Importa em ferramenta de BI
+4. Alternativa: GET /api/metrics/export?format=json para integracao via API
+```
+
+### 4. SLA Diferenciado por Departamento
+
+**Cenario**: Suporte precisa de SLA mais agressivo que Financeiro.
+
+```
+1. Cria config SLA para Suporte: POST /api/settings/sla (FRT: 15min)
+2. Cria config SLA para Financeiro: POST /api/settings/sla (FRT: 60min)
+3. Tickets de cada departamento usam o SLA correspondente
+4. SLA monitorado separadamente por departamento
 ```
 
 ## Integracao com Outras Funcionalidades
 
 ### Tickets
 
-- SLA calculado na criacao
+- SLA calculado na criacao do ticket
 - Deadline atualizado em transferencias
-- Metricas registradas no ticket
+- Metricas registradas no ticket (responseTime, resolutionTime, waitingTime em segundos)
+- Campo slaBreached marcado em caso de violacao
 
 ### Departamentos
 
-- SLA configurado por departamento
-- Heranca de configuracao
-- Metricas agregadas
-
-### Usuarios
-
-- Performance individual
-- Rankings de agentes
-- Metas pessoais
+- SLA configurado por departamento via departmentId
+- Heranca da configuracao padrao
+- Metricas agregadas via GET /api/metrics/departments
 
 ### Notificacoes
 
-- Alertas de SLA
-- Resumos periodicos
-- Escalacao automatica
-
-### IA
-
-- IA ajuda a cumprir SLA
-- Metricas separadas
-- Analise de impacto
+- Alertas WARNING e BREACH via WebSocket
+- Eventos sla:warning e sla:breach enviados ao agente atribuido
 
 ## Boas Praticas
 
 ### Configuracao
 
-1. **Defina metas realistas** - Base na capacidade atual
-2. **Considere horarios** - Configure horario comercial corretamente
-3. **Diferencie prioridades** - SLA por urgencia
-4. **Revise periodicamente** - Ajuste conforme demanda
+1. **Defina metas realistas** - Base na capacidade atual da equipe
+2. **Considere horarios** - Configure businessHours corretamente
+3. **Use departamentos** - Crie SLAs diferentes para necessidades diferentes
+4. **Revise periodicamente** - Ajuste conforme demanda muda
 
 ### Monitoramento
 
-1. **Acompanhe diariamente** - Identifique problemas cedo
-2. **Use alertas** - Configure notificacoes
-3. **Analise tendencias** - Preveja problemas
-4. **Compartilhe metricas** - Transparencia com equipe
-
-### Melhoria Continua
-
-1. **Investigue violacoes** - Entenda causas
-2. **Documente aprendizados** - Crie base de conhecimento
-3. **Automatize** - Use IA para casos simples
-4. **Treine equipe** - Capacite para eficiencia
+1. **Acompanhe diariamente** - Use GET /api/metrics/dashboard
+2. **Configure alertas** - Os warnings previnem violacoes
+3. **Analise tendencias** - Use GET /api/metrics/history
+4. **Exporte dados** - Use GET /api/metrics/export para analises detalhadas
 
 ## Proximos Passos
 
-- [Base de Conhecimento](/funcionalidades/base-conhecimento) - Artigos de suporte
-- [FAQ](/funcionalidades/faq) - Perguntas frequentes
-- [Notificacoes](/funcionalidades/notificacoes) - Alertas e lembretes
+- [Configuracao de SLA](/guias/sla/configuracao) - Como criar e editar politicas
+- [Alertas de SLA](/guias/sla/alertas) - Configurar notificacoes
+- [Relatorios de SLA](/guias/sla/relatorios) - Gerar e analisar relatorios

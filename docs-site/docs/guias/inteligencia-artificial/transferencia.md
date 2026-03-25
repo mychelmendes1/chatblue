@@ -74,7 +74,7 @@ Uma boa experiencia de atendimento requer saber quando a IA deve transferir para
 2. Clique na aba **Transferencia**
 3. Configure os gatilhos
 
-![Placeholder: Tela de configuracao de transferencia](/img/guias/transferencia-config.png)
+*Imagem: Tela de configuracao de transferencia*
 
 ### Passo 2: Configurar Gatilhos por Palavras-chave
 

@@ -95,7 +95,7 @@ export const mediaConfig = {
 4. Adicione uma legenda (opcional)
 5. Clique em **Enviar**
 
-![Placeholder: Interface de envio de midia](/img/guias/midia-enviar.png)
+*Imagem: Interface de envio de midia*
 
 ### Via Arrastar e Soltar
 
@@ -205,7 +205,7 @@ Por padrao, o ChatBlue baixa automaticamente a midia recebida:
 - **Audios**: Player com controles
 - **Documentos**: Icone com opcao de download
 
-![Placeholder: Visualizacao de midia recebida](/img/guias/midia-receber.png)
+*Imagem: Visualizacao de midia recebida*
 
 ### Webhook de Midia Recebida
 

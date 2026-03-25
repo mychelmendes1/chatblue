@@ -72,7 +72,7 @@ Multi-tenancy permite que varias empresas (tenants) usem a mesma instalacao do C
 | CNPJ | Documento da empresa | Nao |
 | Telefone | Telefone de contato | Nao |
 
-![Placeholder: Formulario de criacao de empresa](/img/guias/empresa-criar.png)
+*Imagem: Formulario de criacao de empresa*
 
 ### Via API
 

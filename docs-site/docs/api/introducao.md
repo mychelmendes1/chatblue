@@ -308,7 +308,7 @@ users = api.get_users()
 
 ## Webhooks
 
-O ChatBlue pode enviar webhooks para URLs configuradas quando eventos ocorrem. Consulte a documentacao de [Webhooks](/docs/api/webhooks) para mais detalhes.
+O ChatBlue pode enviar webhooks para URLs configuradas quando eventos ocorrem. Consulte a documentacao de [WebSocket](/docs/api/websocket/eventos) para mais detalhes sobre eventos em tempo real.
 
 ## Suporte
 

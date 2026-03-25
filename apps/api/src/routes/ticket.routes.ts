@@ -14,6 +14,7 @@ import {
   buildTicketListWhere,
   getVisibleDepartmentIdsForUser,
 } from '../utils/ticket-list-where.js';
+import { SLAService } from '../services/sla/sla.service.js';
 
 const router = Router();
 
@@ -452,8 +453,13 @@ router.post('/open-by-phone', authenticate, ensureTenant, async (req, res, next)
       throw new NotFoundError('Nenhuma conexão WhatsApp disponível.');
     }
 
-    // Generate protocol and create ticket
     const protocol = await generateProtocol();
+    const slaAnchor = new Date();
+    const slaDeadline = await SLAService.calculateFirstResponseDeadline(
+      slaAnchor,
+      req.user!.companyId,
+      null
+    );
 
     const ticket = await prisma.ticket.create({
       data: {
@@ -464,6 +470,7 @@ router.post('/open-by-phone', authenticate, ensureTenant, async (req, res, next)
         connectionId: connectionToUse.id,
         assignedToId: req.user!.userId,
         companyId: req.user!.companyId,
+        slaDeadline,
       },
       include: {
         contact: {
@@ -617,10 +624,14 @@ router.post('/start-conversation', authenticate, ensureTenant, async (req, res, 
       throw new NotFoundError('Nenhuma conexão WhatsApp disponível.');
     }
 
-    // Generate protocol
     const protocol = await generateProtocol();
+    const slaAnchorSc = new Date();
+    const slaDeadlineSc = await SLAService.calculateFirstResponseDeadline(
+      slaAnchorSc,
+      req.user!.companyId,
+      null
+    );
 
-    // Create new ticket
     const ticket = await prisma.ticket.create({
       data: {
         protocol,
@@ -630,6 +641,7 @@ router.post('/start-conversation', authenticate, ensureTenant, async (req, res, 
         connectionId: connectionToUse.id,
         assignedToId: req.user!.userId,
         companyId: req.user!.companyId,
+        slaDeadline: slaDeadlineSc,
       },
       include: {
         contact: {
@@ -2301,10 +2313,14 @@ router.post('/', authenticate, ensureTenant, async (req, res, next) => {
       return res.json({ ticket: existingTicket, isExisting: true });
     }
 
-    // Generate protocol
     const protocol = await generateProtocol();
+    const slaAnchorNew = new Date();
+    const slaDeadlineNew = await SLAService.calculateFirstResponseDeadline(
+      slaAnchorNew,
+      req.user!.companyId,
+      data.departmentId ?? null
+    );
 
-    // Create new ticket
     const ticket = await prisma.ticket.create({
       data: {
         protocol,
@@ -2316,6 +2332,7 @@ router.post('/', authenticate, ensureTenant, async (req, res, next) => {
         departmentId: data.departmentId,
         assignedToId: req.user!.userId,
         companyId: req.user!.companyId,
+        slaDeadline: slaDeadlineNew,
       },
       include: {
         contact: {

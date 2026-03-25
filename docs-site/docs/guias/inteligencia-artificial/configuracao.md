@@ -87,7 +87,7 @@ Antes de configurar a IA, voce precisa:
 2. Acesse **Configuracoes > Inteligencia Artificial**
 3. Clique em **Configurar IA**
 
-![Placeholder: Menu de configuracoes de IA](/img/guias/ia-menu.png)
+*Imagem: Menu de configuracoes de IA*
 
 ### Passo 2: Escolher Provedor
 

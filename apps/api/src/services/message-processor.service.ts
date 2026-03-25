@@ -624,8 +624,9 @@ export class MessageProcessor {
           orderBy: { order: 'asc' },
         });
 
-        // Calculate SLA deadline
-        const slaDeadline = await SLAService.calculateDeadline(
+        const slaAnchor = new Date();
+        const slaDeadline = await SLAService.calculateFirstResponseDeadline(
+          slaAnchor,
           companyId,
           defaultDept?.id
         );

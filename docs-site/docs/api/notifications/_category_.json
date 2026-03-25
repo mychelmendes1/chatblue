@@ -1,0 +1,8 @@
+{
+  "label": "Notificacoes",
+  "position": 13,
+  "link": {
+    "type": "generated-index",
+    "description": "Endpoints para gerenciar notificacoes no ChatBlue"
+  }
+}

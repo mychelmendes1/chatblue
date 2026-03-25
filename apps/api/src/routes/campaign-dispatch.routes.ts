@@ -7,6 +7,7 @@ import { generateProtocol } from '../utils/protocol.js';
 import { toCanonicalPhone } from '../utils/canonical-phone.js';
 import { authenticate } from '../middlewares/auth.middleware.js';
 import { ensureTenant } from '../middlewares/tenant.middleware.js';
+import { SLAService } from '../services/sla/sla.service.js';
 
 const router = Router();
 
@@ -260,6 +261,12 @@ async function processCampaignContacts(
       }
 
       const protocol = generateProtocol();
+      const slaAnchorCamp = new Date();
+      const slaDeadlineCamp = await SLAService.calculateFirstResponseDeadline(
+        slaAnchorCamp,
+        companyId,
+        commercialDept.id
+      );
       let ticket: { id: string };
       try {
         ticket = await prisma.ticket.create({
@@ -274,6 +281,7 @@ async function processCampaignContacts(
             assignedToId: null,
             campaignId,
             campaignDispatchedAt: dispatchedAt,
+            slaDeadline: slaDeadlineCamp,
           },
         });
       } catch (err: any) {

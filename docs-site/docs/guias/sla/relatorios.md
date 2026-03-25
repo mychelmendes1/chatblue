@@ -1,64 +1,99 @@
 ---
 sidebar_position: 3
 title: Relatorios de SLA
-description: Guia para gerar e analisar relatorios de SLA no ChatBlue
+description: Guia para consultar e exportar metricas de SLA no ChatBlue
 ---
 
 # Relatorios de SLA
 
-Os relatorios de SLA permitem analisar o desempenho do atendimento e identificar oportunidades de melhoria. Este guia explica como gerar e interpretar esses relatorios.
+Os relatorios de SLA permitem analisar o desempenho do atendimento e identificar oportunidades de melhoria. Este guia explica como consultar e exportar esses dados.
 
 ## Nivel de Dificuldade
 
-**Basico** - Tempo estimado: 15-20 minutos
+**Basico** - Tempo estimado: 10-15 minutos
 
-## Tipos de Relatorios
+## Endpoints Reais
 
-| Relatorio | Descricao | Frequencia Recomendada |
-|-----------|-----------|------------------------|
-| Visao Geral | Resumo de compliance | Diario |
-| Detalhado | Analise por ticket | Semanal |
-| Tendencias | Evolucao ao longo do tempo | Mensal |
-| Por Equipe | Desempenho por agente/departamento | Semanal |
-| Violacoes | Foco em tickets que violaram SLA | Diario |
+### Consultar Metricas de SLA
 
-## Acessar Relatorios
+O endpoint principal para metricas de SLA e:
 
-### Via Interface
-
-1. Acesse **Relatorios > SLA**
-2. Selecione o tipo de relatorio
-3. Configure filtros e periodo
-4. Clique em **Gerar Relatorio**
-
-![Placeholder: Tela de relatorios SLA](/img/guias/sla-relatorios.png)
-
-### Via API
-
-```typescript
-// Gerar relatorio
-POST /api/reports/sla
-{
-  "type": "overview",
-  "period": {
-    "start": "2024-01-01",
-    "end": "2024-01-31"
-  },
-  "filters": {
-    "department": "suporte",
-    "priority": ["high", "urgent"]
-  },
-  "format": "json" // json, csv, pdf
-}
+```
+GET /api/metrics/sla
 ```
 
-## Relatorio de Visao Geral
+**Query Parameters:**
 
-### Metricas Principais
+| Parametro | Tipo | Descricao |
+|-----------|------|-----------|
+| `startDate` | string | Data de inicio do periodo (ISO 8601) |
+| `endDate` | string | Data de fim do periodo (ISO 8601) |
+| `departmentId` | string | Filtrar por departamento (opcional) |
+
+**Exemplo de requisicao:**
+
+```
+GET /api/metrics/sla?startDate=2024-01-01&endDate=2024-01-31&departmentId=dept_123
+```
+
+### Exportar Dados
+
+Para exportar metricas em arquivo:
+
+```
+GET /api/metrics/export
+```
+
+Formatos suportados: **JSON** e **CSV**.
+
+Nao existe endpoint `POST /api/reports/sla`. Todas as consultas sao feitas via GET nos endpoints de metricas.
+
+## Metricas Disponiveis
+
+O endpoint `GET /api/metrics/sla` retorna as seguintes metricas:
+
+### Taxa de Compliance
+
+Percentual de tickets que cumpriram o SLA dentro do periodo.
+
+### Tempos Medios
+
+| Metrica | Descricao | Unidade no Banco |
+|---------|-----------|------------------|
+| Tempo medio de primeira resposta | Media do campo `responseTime` | Segundos |
+| Tempo medio de resolucao | Media do campo `resolutionTime` | Segundos |
+
+### Contagem de Violacoes
+
+Quantidade de tickets com `slaBreached = true` no periodo.
+
+### Tickets em Risco
+
+Tickets abertos que estao proximos de violar o SLA (em estado de warning).
+
+## Outros Endpoints de Metricas
+
+Alem do endpoint de SLA, o sistema oferece metricas complementares:
+
+| Endpoint | Descricao |
+|----------|-----------|
+| `GET /api/metrics/dashboard` | Dashboard geral com resumo de metricas |
+| `GET /api/metrics/agents` | Desempenho por agente |
+| `GET /api/metrics/departments` | Desempenho por departamento |
+| `GET /api/metrics/nps` | Metricas de NPS |
+| `GET /api/metrics/quality` | Metricas de qualidade |
+| `GET /api/metrics/ai` | Metricas da IA |
+| `GET /api/metrics/executive` | Resumo executivo |
+| `GET /api/metrics/comparison` | Comparacao entre periodos |
+| `GET /api/metrics/history` | Historico de metricas |
+
+## Visualizacao de Dados
+
+### Visao Geral de SLA
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│              Relatorio de SLA - Janeiro 2024                │
+│              Metricas de SLA - Janeiro 2024                  │
 │                    Departamento: Todos                       │
 ├─────────────────────────────────────────────────────────────┤
 │                                                              │
@@ -67,9 +102,8 @@ POST /api/reports/sla
 │  ┌──────────────────────────────────────────────────────┐   │
 │  │ COMPLIANCE GERAL                                      │   │
 │  │                                                        │   │
-│  │  ████████████████████████░░░░░░░░ 85%                │   │
-│  │                                                        │   │
 │  │  Dentro do SLA: 1,049 | Violados: 185                 │   │
+│  │  Taxa: 85%                                             │   │
 │  └──────────────────────────────────────────────────────┘   │
 │                                                              │
 │  ┌──────────────────────────────────────────────────────┐   │
@@ -80,134 +114,15 @@ POST /api/reports/sla
 │  │  Compliance: 92%             │  Compliance: 78%       │   │
 │  └──────────────────────────────────────────────────────┘   │
 │                                                              │
-└─────────────────────────────────────────────────────────────┘
-```
-
-### Configuracao
-
-```typescript
-{
-  report: {
-    type: "overview",
-    metrics: [
-      "total_tickets",
-      "compliance_rate",
-      "first_response_time",
-      "resolution_time",
-      "tickets_by_status",
-      "violations_count"
-    ],
-    comparison: {
-      enabled: true,
-      period: "previous_month"
-    }
-  }
-}
-```
-
-## Relatorio Detalhado
-
-### Por Ticket
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    Relatorio Detalhado                       │
-├─────────────────────────────────────────────────────────────┤
-│ Ticket  │ Cliente      │ 1a Resp │ Resolucao │ Status │ SLA │
-├─────────────────────────────────────────────────────────────┤
-│ #1234   │ Joao Silva   │ 5 min   │ 1h 30min  │ Fechado│ ✅  │
-│ #1235   │ Maria Santos │ 12 min  │ 3h 45min  │ Fechado│ ✅  │
-│ #1236   │ Pedro Costa  │ 18 min* │ 5h 20min* │ Fechado│ ❌  │
-│ #1237   │ Ana Lima     │ 8 min   │ Em aberto │ Aberto │ ⏳  │
-│ #1238   │ Carlos Souza │ 3 min   │ 45 min    │ Fechado│ ✅  │
-└─────────────────────────────────────────────────────────────┘
-* = Violacao de SLA
-```
-
-### Exportar Detalhado
-
-```typescript
-// Exportar para CSV
-GET /api/reports/sla/detailed?format=csv&period=2024-01
-
-// Campos incluidos
-{
-  fields: [
-    "ticket_id",
-    "customer_name",
-    "customer_phone",
-    "agent_name",
-    "department",
-    "priority",
-    "created_at",
-    "first_response_at",
-    "first_response_time",
-    "first_response_sla",
-    "closed_at",
-    "resolution_time",
-    "resolution_sla",
-    "sla_status",
-    "sla_policy"
-  ]
-}
-```
-
-## Relatorio de Tendencias
-
-### Evolucao Mensal
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│              Tendencia de SLA - Ultimos 6 Meses             │
-├─────────────────────────────────────────────────────────────┤
-│                                                              │
-│  Compliance (%)                                             │
-│  100│                                                        │
-│   90│          ●────●────●                                  │
-│   80│    ●────●                    ●                        │
-│   70│                         ●────                         │
-│   60│                                                        │
-│   50│                                                        │
-│     └────┬────┬────┬────┬────┬────┬                        │
-│         Ago  Set  Out  Nov  Dez  Jan                        │
-│                                                              │
-│  Tempo Medio de Primeira Resposta (min)                     │
-│   20│                                                        │
-│   15│────────────────────────────────── Meta                │
-│   10│    ●    ●                   ●                         │
-│    5│              ●    ●────●                              │
-│     └────┬────┬────┬────┬────┬────┬                        │
-│         Ago  Set  Out  Nov  Dez  Jan                        │
+│  Violacoes (Breaches): 185                                  │
+│  Tickets em Risco (Warning): 12                             │
 │                                                              │
 └─────────────────────────────────────────────────────────────┘
 ```
-
-### Configuracao de Tendencias
-
-```typescript
-{
-  report: {
-    type: "trends",
-    period: {
-      start: "2023-07-01",
-      end: "2024-01-31"
-    },
-    granularity: "month", // day, week, month
-    metrics: [
-      "compliance_rate",
-      "avg_first_response",
-      "avg_resolution",
-      "ticket_volume",
-      "violation_rate"
-    ],
-    showTarget: true
-  }
-}
-```
-
-## Relatorio por Equipe
 
 ### Por Departamento
+
+Usando `GET /api/metrics/departments`:
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -228,379 +143,104 @@ GET /api/reports/sla/detailed?format=csv&period=2024-01
 
 ### Por Agente
 
+Usando `GET /api/metrics/agents`:
+
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│              Desempenho por Agente - Suporte                 │
+│              Desempenho por Agente                           │
 ├─────────────────────────────────────────────────────────────┤
 │                                                              │
-│  Agente          │ Tickets │ Compliance │ 1a Resp │ Satisfacao│
+│  Agente          │ Tickets │ Compliance │ 1a Resp │ Resolucao│
 │  ─────────────────────────────────────────────────────────  │
-│  Maria Silva     │    85   │    94%     │  5 min  │   4.8    │
-│  Joao Santos     │    78   │    89%     │  8 min  │   4.5    │
-│  Ana Costa       │    92   │    85%     │ 12 min  │   4.2    │
-│  Pedro Lima      │    68   │    82%     │ 14 min  │   4.0    │
-│  Carlos Souza    │    75   │    76%     │ 18 min  │   3.8    │
+│  Maria Silva     │    85   │    94%     │  5 min  │  1h 40m │
+│  Joao Santos     │    78   │    89%     │  8 min  │  2h 30m │
+│  Ana Costa       │    92   │    85%     │ 12 min  │  3h 10m │
+│  Pedro Lima      │    68   │    82%     │ 14 min  │  3h 50m │
 │  ─────────────────────────────────────────────────────────  │
-│  Media Equipe    │  79.6   │    85%     │ 11 min  │   4.3    │
+│  Media Equipe    │  80.8   │    87%     │ 10 min  │  2h 47m │
 │                                                              │
 └─────────────────────────────────────────────────────────────┘
 ```
 
-## Relatorio de Violacoes
+## Exportacao
 
-### Analise de Violacoes
+### Formato CSV
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│              Analise de Violacoes de SLA                     │
-├─────────────────────────────────────────────────────────────┤
-│                                                              │
-│  Total de Violacoes: 185 (15% dos tickets)                  │
-│                                                              │
-│  POR TIPO DE SLA:                                           │
-│  ├─ Primeira Resposta: 45 (24%)                             │
-│  └─ Resolucao: 140 (76%)                                    │
-│                                                              │
-│  POR DEPARTAMENTO:                                          │
-│  ├─ Atendimento: 78 (42%)                                   │
-│  ├─ Suporte: 65 (35%)                                       │
-│  ├─ Financeiro: 28 (15%)                                    │
-│  └─ Vendas: 14 (8%)                                         │
-│                                                              │
-│  POR HORARIO:                                               │
-│  ├─ 09:00-12:00: 35% das violacoes                         │
-│  ├─ 12:00-14:00: 45% das violacoes (pico)                  │
-│  └─ 14:00-18:00: 20% das violacoes                         │
-│                                                              │
-│  PRINCIPAIS CAUSAS:                                         │
-│  1. Falta de agentes no horario de almoco (45%)            │
-│  2. Tickets de alta complexidade (30%)                      │
-│  3. Transferencias entre departamentos (15%)                │
-│  4. Outros (10%)                                            │
-│                                                              │
-└─────────────────────────────────────────────────────────────┘
+GET /api/metrics/export?format=csv&startDate=2024-01-01&endDate=2024-01-31
 ```
 
-### Configuracao
+Retorna um arquivo CSV com as metricas do periodo.
 
-```typescript
-{
-  report: {
-    type: "violations",
-    period: {
-      start: "2024-01-01",
-      end: "2024-01-31"
-    },
-    analysis: {
-      byType: true,
-      byDepartment: true,
-      byAgent: true,
-      byHour: true,
-      byCause: true,
-      byPriority: true
-    },
-    includeTicketList: true,
-    limit: 100
-  }
-}
+### Formato JSON
+
+```
+GET /api/metrics/export?format=json&startDate=2024-01-01&endDate=2024-01-31
 ```
 
-## Agendamento de Relatorios
+Retorna os dados estruturados em JSON para integracao com outros sistemas.
 
-### Configurar Envio Automatico
+Nao ha suporte a exportacao em PDF ou Excel.
 
-```typescript
-{
-  scheduledReports: [
-    {
-      name: "Resumo Diario SLA",
-      type: "overview",
-      schedule: {
-        frequency: "daily",
-        time: "08:00",
-        timezone: "America/Sao_Paulo"
-      },
-      recipients: ["supervisor@empresa.com", "gerente@empresa.com"],
-      format: "pdf"
-    },
-    {
-      name: "Analise Semanal",
-      type: "detailed",
-      schedule: {
-        frequency: "weekly",
-        day: "monday",
-        time: "09:00"
-      },
-      recipients: ["diretor@empresa.com"],
-      format: "pdf"
-    },
-    {
-      name: "Exportacao Mensal",
-      type: "detailed",
-      schedule: {
-        frequency: "monthly",
-        day: 1,
-        time: "06:00"
-      },
-      recipients: ["bi@empresa.com"],
-      format: "csv"
-    }
-  ]
-}
-```
+## Metas
 
-### Gerenciar Agendamentos
+O sistema permite definir metas para as metricas de SLA:
 
-```typescript
-// Listar agendamentos
-GET /api/reports/sla/scheduled
-
-// Criar agendamento
-POST /api/reports/sla/scheduled
-{
-  "name": "Relatorio Semanal",
-  "type": "overview",
-  "schedule": { ... },
-  "recipients": [ ... ]
-}
-
-// Atualizar agendamento
-PUT /api/reports/sla/scheduled/{id}
-
-// Excluir agendamento
-DELETE /api/reports/sla/scheduled/{id}
-
-// Executar manualmente
-POST /api/reports/sla/scheduled/{id}/run
-```
-
-## Formatos de Exportacao
-
-### PDF
-
-```typescript
-{
-  export: {
-    format: "pdf",
-    options: {
-      pageSize: "A4",
-      orientation: "landscape",
-      includeCharts: true,
-      includeHeader: true,
-      header: {
-        logo: "https://empresa.com/logo.png",
-        title: "Relatorio de SLA"
-      },
-      includeFooter: true,
-      footer: {
-        text: "ChatBlue - Confidencial",
-        pageNumbers: true
-      }
-    }
-  }
-}
-```
-
-### CSV
-
-```typescript
-{
-  export: {
-    format: "csv",
-    options: {
-      delimiter: ",",
-      encoding: "utf-8",
-      includeHeaders: true,
-      dateFormat: "DD/MM/YYYY HH:mm"
-    }
-  }
-}
-```
-
-### Excel
-
-```typescript
-{
-  export: {
-    format: "xlsx",
-    options: {
-      sheetName: "SLA Report",
-      includeCharts: true,
-      autoFilter: true,
-      freezeHeader: true
-    }
-  }
-}
-```
-
-## Filtros Avancados
-
-```typescript
-{
-  filters: {
-    // Periodo
-    period: {
-      start: "2024-01-01",
-      end: "2024-01-31"
-    },
-
-    // Departamentos
-    departments: ["suporte", "vendas"],
-
-    // Agentes
-    agents: ["agent_123", "agent_456"],
-
-    // Prioridades
-    priorities: ["high", "urgent"],
-
-    // Status do SLA
-    slaStatus: ["breached"], // ok, warning, breached
-
-    // Tags
-    tags: ["vip", "reclamacao"],
-
-    // Status do ticket
-    ticketStatus: ["closed", "resolved"],
-
-    // Politica de SLA
-    slaPolicy: "SLA Padrao",
-
-    // Conexao WhatsApp
-    connection: "conn_principal"
-  }
-}
-```
-
-## Integracao com BI
-
-### Webhook para BI
-
-```typescript
-{
-  integration: {
-    bi: {
-      enabled: true,
-
-      // Enviar dados automaticamente
-      webhook: {
-        url: "https://bi.empresa.com/api/sla-data",
-        headers: {
-          "Authorization": "Bearer token"
-        },
-        frequency: "daily"
-      },
-
-      // Campos a enviar
-      fields: [
-        "date",
-        "department",
-        "total_tickets",
-        "compliance_rate",
-        "avg_first_response",
-        "avg_resolution",
-        "violations"
-      ]
-    }
-  }
-}
-```
-
-### API para Consulta
-
-```typescript
-// Endpoint para dashboards externos
-GET /api/reports/sla/metrics
-{
-  "period": "last_30_days",
-  "metrics": ["compliance", "volume", "avg_times"]
-}
-
-// Resposta
-{
-  "compliance": {
-    "overall": 85,
-    "firstResponse": 92,
-    "resolution": 78
-  },
-  "volume": {
-    "total": 1234,
-    "byDay": [...]
-  },
-  "avgTimes": {
-    "firstResponse": 480, // segundos
-    "resolution": 9900
-  }
-}
-```
+| Metodo | Endpoint | Descricao |
+|--------|----------|-----------|
+| `GET` | `/api/metrics/goals` | Listar metas |
+| `POST` | `/api/metrics/goals` | Criar meta |
+| `PUT` | `/api/metrics/goals/:id` | Atualizar meta |
+| `DELETE` | `/api/metrics/goals/:id` | Remover meta |
 
 ## Solucao de Problemas
 
-### Relatorio em branco
+### Dados em branco
 
-**Causas**:
-- Filtros muito restritivos
-- Periodo sem dados
+**Causas possiveis**:
+- Periodo sem dados (startDate/endDate muito restritivos)
+- departmentId invalido
 - Permissao insuficiente
 
 **Solucao**:
-1. Verifique os filtros aplicados
+1. Verifique os parametros da query
 2. Amplie o periodo
-3. Verifique permissoes do usuario
+3. Remova o filtro de departamento para testar
 
-### Dados inconsistentes
+### Tempos parecem incorretos
 
-**Causas**:
-- Tickets sem SLA aplicado
-- Mudanca de politica de SLA
-- Dados em processamento
+**Nota importante**: os campos `responseTime`, `resolutionTime` e `waitingTime` sao armazenados em **segundos** no banco de dados. Certifique-se de converter para minutos ou horas na exibicao.
 
-**Solucao**:
-1. Verifique se todos tickets tem SLA
-2. Considere apenas periodo apos mudanca
-3. Aguarde processamento completar
+### Exportacao nao funciona
 
-### Exportacao falha
-
-**Causas**:
-- Muitos dados
-- Timeout
-- Formato invalido
-
-**Solucao**:
-1. Reduza periodo ou adicione filtros
-2. Exporte em partes
-3. Use formato mais leve (CSV)
+**Verificacoes**:
+1. O formato e `json` ou `csv`? (unicos suportados)
+2. O periodo esta definido corretamente?
+3. Ha dados no periodo selecionado?
 
 ## Boas Praticas
 
 ### 1. Revisao Regular
 
-- Analise relatorios diariamente
-- Faca analise profunda semanalmente
-- Apresente tendencias mensalmente
+- Consulte metricas de SLA diariamente
+- Faca analise por departamento semanalmente
+- Compare periodos usando `GET /api/metrics/comparison`
 
 ### 2. Acoes Baseadas em Dados
 
-- Identifique padroes de violacao
-- Ajuste escalas com base nos horarios de pico
-- Capacite agentes com baixo desempenho
+- Identifique departamentos com alta taxa de breach
+- Ajuste SLAs se a taxa de compliance for muito baixa
+- Use `GET /api/metrics/agents` para identificar necessidade de treinamento
 
-### 3. Metas Realistas
+### 3. Exportacao Periodica
 
-- Compare com benchmarks do setor
-- Ajuste metas gradualmente
-- Considere sazonalidade
-
-### 4. Compartilhe Resultados
-
-- Compartilhe metricas com a equipe
-- Celebre melhorias
-- Discuta desafios abertamente
+- Exporte dados em CSV para analise em planilhas
+- Use formato JSON para integracoes automatizadas
+- Mantenha historico de exportacoes para auditorias
 
 ## Proximos Passos
 
-Apos configurar relatorios:
+Apos consultar relatorios:
 
-- [Configurar Departamentos](/guias/administracao/departamentos)
-- [Configurar Usuarios](/guias/administracao/usuarios)
-- [Configurar Permissoes](/guias/administracao/permissoes)
+- [Configurar SLA](/guias/sla/configuracao) - Ajustar politicas com base nos dados
+- [Alertas de SLA](/guias/sla/alertas) - Entender as notificacoes

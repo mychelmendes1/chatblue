@@ -137,7 +137,7 @@ router.get('/dashboard', authenticate, ensureTenant, async (req, res, next) => {
   }
 });
 
-// SLA metrics
+// SLA metrics. Ticket.responseTime / resolutionTime are stored in seconds; averages here use those raw values.
 router.get('/sla', authenticate, ensureTenant, async (req, res, next) => {
   try {
     const { period = '7' } = req.query;
@@ -187,12 +187,13 @@ router.get('/sla', authenticate, ensureTenant, async (req, res, next) => {
       };
     });
 
-    // Critical tickets (SLA about to breach)
+    // First-response window: due within 15m, still no agent reply, same open statuses as sla-check job
     const criticalTickets = await prisma.ticket.findMany({
       where: {
         companyId,
-        status: { in: ['PENDING', 'IN_PROGRESS'] },
-        slaDeadline: { lte: new Date(Date.now() + 15 * 60 * 1000) }, // 15 min
+        status: { in: ['PENDING', 'IN_PROGRESS', 'WAITING', 'SNOOZED'] },
+        firstResponse: null,
+        slaDeadline: { lte: new Date(Date.now() + 15 * 60 * 1000) },
         slaBreached: false,
       },
       include: {
@@ -443,9 +444,16 @@ router.get('/users/:userId', authenticate, ensureTenant, async (req, res, next) 
       return res.status(404).json({ error: 'User not found' });
     }
 
+    const isSelf = req.params.userId === req.user!.userId;
+    const isAdmin = ['ADMIN', 'SUPER_ADMIN'].includes(req.user!.role);
+    if (!isSelf && !isAdmin) {
+      return res.status(403).json({ error: 'Sem permissão para ver métricas deste usuário' });
+    }
+
     // Get tickets with detailed info
     const tickets = await prisma.ticket.findMany({
       where: {
+        companyId: req.user!.companyId,
         assignedToId: user.id,
         createdAt: { gte: startDate },
       },

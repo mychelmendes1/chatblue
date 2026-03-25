@@ -73,14 +73,14 @@ Antes de configurar qualquer opcao, certifique-se de ter:
 2. Clique no icone de **Configuracoes** no menu lateral
 3. Selecione **Conexoes** ou **WhatsApp**
 
-![Placeholder: Menu de configuracoes mostrando opcao WhatsApp](/img/guias/whatsapp-menu.png)
+*Imagem: Menu de configuracoes mostrando opcao WhatsApp*
 
 ### Passo 2: Adicionar Nova Conexao
 
 1. Clique no botao **+ Nova Conexao**
 2. Escolha o tipo de conexao desejada
 
-![Placeholder: Modal de selecao de tipo de conexao](/img/guias/whatsapp-nova-conexao.png)
+*Imagem: Modal de selecao de tipo de conexao*
 
 ## Status da Conexao
 

@@ -74,7 +74,7 @@ O ChatBlue integra-se com o Notion para sincronizar dados de contatos e enriquec
 4. Clique em **Enviar**
 5. Copie o **Internal Integration Token** (comeca com `secret_`)
 
-![Placeholder: Tela de criacao de integracao Notion](/img/guias/notion-integracao.png)
+*Imagem: Tela de criacao de integracao Notion*
 
 :::danger Atencao
 Guarde o token em local seguro. Ele da acesso aos seus dados do Notion.
@@ -98,7 +98,7 @@ Na pagina da integracao, configure:
 3. Selecione **Conexoes**
 4. Encontre **ChatBlue Integration** e clique para conectar
 
-![Placeholder: Conectar integracao a database](/img/guias/notion-conectar.png)
+*Imagem: Conectar integracao a database*
 
 :::warning Aviso
 Voce precisa conectar a integracao a cada database que deseja usar.
@@ -172,7 +172,7 @@ POST /api/notion/test
 }
 ```
 
-![Placeholder: Teste de conexao Notion](/img/guias/notion-teste.png)
+*Imagem: Teste de conexao Notion*
 
 ### Fase 3: Mapear Campos
 
