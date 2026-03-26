@@ -32,7 +32,8 @@ interface IncomingMessage {
   content: string;
   mediaUrl?: string;
   timestamp: Date;
-  quotedMessageId?: string; // WhatsApp message ID of the quoted/replied message
+  /** Quoted message: platform wamid/mid (Cloud webhook) or internal Message.id cuid (Baileys) */
+  quotedMessageId?: string;
   metadata?: {
     platform?: 'whatsapp' | 'instagram';
     latitude?: number;
@@ -838,6 +839,29 @@ export class MessageProcessor {
         }
       }
 
+      // quotedMessageId: Baileys passes internal Message.id; Cloud API / Instagram pass platform wamid/mid (stored in wamid column)
+      let quotedDbId: string | null = null;
+      if (data.quotedMessageId) {
+        const byId = await prisma.message.findFirst({
+          where: { ticketId: ticket.id, id: data.quotedMessageId },
+          select: { id: true },
+        });
+        if (byId) {
+          quotedDbId = byId.id;
+        } else {
+          const byWamid = await prisma.message.findFirst({
+            where: { ticketId: ticket.id, wamid: data.quotedMessageId },
+            select: { id: true },
+          });
+          quotedDbId = byWamid?.id ?? null;
+        }
+        if (!quotedDbId) {
+          logger.warn(
+            `Quoted message not found for ticket ${ticket.id} (id or wamid: ${data.quotedMessageId})`
+          );
+        }
+      }
+
       // Save message
       const message = await prisma.message.create({
         data: {
@@ -851,7 +875,7 @@ export class MessageProcessor {
           status: 'RECEIVED',
           ticketId: ticket.id,
           connectionId,
-          quotedId: data.quotedMessageId || null, // Link to the quoted/replied message
+          quotedId: quotedDbId,
           metadata: data.metadata || {}, // Extra metadata (location, contacts, interactive responses)
           createdAt: timestamp,
         },

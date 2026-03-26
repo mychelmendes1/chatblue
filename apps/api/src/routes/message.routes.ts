@@ -306,6 +306,21 @@ router.post('/ticket/:ticketId', authenticate, ensureTenant, async (req, res, ne
         ? (ticket.contact.instagramId || ticket.contact.phone)
         : ticket.contact.phone;
 
+      // Meta Cloud API expects context.message_id = platform wamid, not our Prisma cuid
+      let metaQuotedWamid: string | undefined;
+      if (quotedId && connectionToUse.type !== 'INSTAGRAM') {
+        const quotedRow = await prisma.message.findFirst({
+          where: { id: quotedId, ticketId: ticket.id },
+          select: { wamid: true },
+        });
+        metaQuotedWamid = quotedRow?.wamid ?? undefined;
+        if (!metaQuotedWamid) {
+          logger.warn(
+            `Send with quote: no wamid on quoted message (ticket ${ticket.id}, quotedId ${quotedId})`
+          );
+        }
+      }
+
       try {
         let result: { messageId: string };
         if (connectionToUse.type === 'INSTAGRAM') {
@@ -314,7 +329,7 @@ router.post('/ticket/:ticketId', authenticate, ensureTenant, async (req, res, ne
         } else {
           const whatsappService = new WhatsAppService(connectionToUse);
           result = await whatsappService.sendMessage(recipientId, formattedContent, {
-            quotedMessageId: quotedId || undefined,
+            quotedMessageId: metaQuotedWamid,
           });
         }
 
