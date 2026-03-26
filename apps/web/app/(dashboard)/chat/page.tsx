@@ -108,6 +108,7 @@ function ChatPageContent() {
       {/* Contact Info Panel */}
       {showContactInfo && selectedTicket && (
         <ContactInfo
+          key={selectedTicket.contact?.id ?? selectedTicket.id}
           ticket={selectedTicket}
           onClose={() => setShowContactInfo(false)}
           onTicketUpdate={(updatedTicket) => {

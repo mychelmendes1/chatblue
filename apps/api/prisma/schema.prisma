@@ -502,6 +502,8 @@ model Ticket {
   npsComment    String? @map("nps_comment")
   npsRatedAt    DateTime? @map("nps_rated_at")
   npsToken      String? @unique @map("nps_token") // Token único para link de pesquisa NPS
+  /// Primeiro envio de pesquisa (NPS/CSAT); inicia janela sem reabertura automática
+  surveySentAt  DateTime? @map("survey_sent_at")
 
   // Métricas de qualidade
   isFirstContactResolution Boolean @default(false) @map("is_first_contact_resolution") // FCR

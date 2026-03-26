@@ -1,0 +1,96 @@
+# =============================================================================
+# ChatBlue - Publicar documentacao (Docusaurus) em producao
+# =============================================================================
+# Gera o site em GitHub Actions (Node fixo, reproduzivel) e envia apenas a
+# pasta build/ para o servidor via rsync + SSH.
+#
+# Disparo:
+#   - Push em main alterando docs-site/ ou este workflow
+#   - Manual: Actions > "Deploy Documentacao" > Run workflow
+#
+# Secrets (reutiliza os do deploy principal):
+#   - SERVER_HOST, SERVER_USER, SERVER_SSH_KEY, SERVER_SSH_PORT (opcional)
+#
+# Secret opcional:
+#   - DOCS_DEPLOY_PATH: caminho absoluto no servidor (padrao: /var/www/chatblue/docs)
+#
+# O usuario SSH precisa ter permissao de escrita em DOCS_DEPLOY_PATH (ou ajuste
+# dono/grupo no servidor: chown -R deploy:www-data /var/www/chatblue/docs).
+# =============================================================================
+
+name: Deploy Documentacao
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'docs-site/**'
+      - '.github/workflows/deploy-docs.yml'
+  workflow_dispatch: {}
+
+concurrency:
+  group: deploy-docs-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-deploy:
+    name: Build Docusaurus e publicar
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: docs-site/package-lock.json
+
+      - name: Instalar dependencias e build
+        working-directory: docs-site
+        run: |
+          npm ci
+          npm run build
+
+      - name: Configurar SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SERVER_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          PORT="${{ secrets.SERVER_SSH_PORT }}"
+          PORT="${PORT:-22}"
+          ssh-keyscan -p "$PORT" -H ${{ secrets.SERVER_HOST }} >> ~/.ssh/known_hosts 2>/dev/null || true
+
+      - name: Rsync build para o servidor
+        env:
+          HOST: ${{ secrets.SERVER_HOST }}
+          USER: ${{ secrets.SERVER_USER }}
+          PORT: ${{ secrets.SERVER_SSH_PORT }}
+        run: |
+          set -e
+          REMOTE_PATH="${{ secrets.DOCS_DEPLOY_PATH }}"
+          REMOTE_PATH="${REMOTE_PATH:-/var/www/chatblue/docs}"
+          SSH_PORT="${PORT:-22}"
+          RSYNC_SSH="ssh -i $HOME/.ssh/deploy_key -p $SSH_PORT -o StrictHostKeyChecking=no"
+
+          echo "Publicando em ${USER}@${HOST}:${REMOTE_PATH}"
+
+          rsync -avz --delete \
+            -e "$RSYNC_SSH" \
+            docs-site/build/ \
+            "${USER}@${HOST}:${REMOTE_PATH}/"
+
+      - name: Limpar chave SSH
+        if: always()
+        run: rm -f ~/.ssh/deploy_key
+
+      - name: Resumo
+        if: success()
+        run: |
+          echo "## Documentacao publicada" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **URL:** https://chat.grupoblue.com.br/docs/" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Commit:** \`${{ github.sha }}\`" >> "$GITHUB_STEP_SUMMARY"

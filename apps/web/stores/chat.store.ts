@@ -5,6 +5,7 @@ interface Contact {
   id: string;
   name?: string;
   phone: string;
+  email?: string | null;
   avatar?: string;
   isClient?: boolean;
   lastMessageAt?: string;
@@ -63,6 +64,9 @@ export interface Ticket {
   snoozeReason?: string | null;
   createdAt: string;
   updatedAt: string;
+  /** Início da janela pós-pesquisa (primeiro envio NPS/CSAT) */
+  surveySentAt?: string | null;
+  closedAt?: string | null;
   contact: Contact;
   assignedTo?: {
     id: string;
@@ -84,6 +88,20 @@ export interface Ticket {
   lastMessage?: Message;
   _count?: {
     messages: number;
+  };
+}
+
+/** Evita que ticket:updated com contact parcial apague email e outros campos no cliente. */
+function mergeTicketPatch(prev: Ticket, updates: Partial<Ticket>): Partial<Ticket> {
+  if (!updates.contact || typeof updates.contact !== "object") {
+    return updates;
+  }
+  return {
+    ...updates,
+    contact: {
+      ...(prev.contact ?? ({} as Ticket["contact"])),
+      ...updates.contact,
+    },
   };
 }
 
@@ -166,8 +184,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
   updateSelectedTicket: (updates) => {
     set((state) => {
       if (!state.selectedTicket) return state;
+      const merged = mergeTicketPatch(state.selectedTicket, updates);
       return {
-        selectedTicket: { ...state.selectedTicket, ...updates },
+        selectedTicket: { ...state.selectedTicket, ...merged },
       };
     });
   },
@@ -244,9 +263,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
       // Update the ticket (preserve _count if not explicitly updated)
       const updatedTickets = state.tickets.map((t) => {
         if (t.id !== ticketId) return t;
+        const patch = mergeTicketPatch(t, updates);
         // Preserve _count unless explicitly provided in updates
         const newCount = updates._count !== undefined ? updates._count : t._count;
-        return { ...t, ...updates, _count: newCount };
+        return { ...t, ...patch, _count: newCount };
       });
 
       // Sort tickets:
@@ -322,11 +342,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
         return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
       });
 
+      const selectedPatch =
+        state.selectedTicket?.id === ticketId
+          ? mergeTicketPatch(state.selectedTicket, updates)
+          : null;
+
       return {
         tickets: sortedTickets,
         selectedTicket:
-          state.selectedTicket?.id === ticketId
-            ? { ...state.selectedTicket, ...updates }
+          state.selectedTicket?.id === ticketId && selectedPatch
+            ? { ...state.selectedTicket, ...selectedPatch }
             : state.selectedTicket,
       };
     }),

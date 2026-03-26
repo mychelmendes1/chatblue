@@ -15,6 +15,7 @@ import { SLAService } from './sla/sla.service.js';
 import { ExternalAIWebhookService, BlueChatResponse, ExternalAIConfig } from './external-ai/external-ai-webhook.service.js';
 import { WhatsAppService } from './whatsapp/whatsapp.service.js';
 import { sendOutboundEvent } from './outbound-webhook.service.js';
+import { isWithinPostSurveyQuietWindow } from '../utils/post-survey-quiet-window.js';
 import * as path from 'path';
 
 // Cooldown de 4 horas para mensagens de fora do horário (em segundos)
@@ -380,6 +381,7 @@ export class MessageProcessor {
 
       // If no open ticket, check if there's a resolved/closed ticket to reopen
       let wasReopened = false;
+      let skipAutoReopenPostSurvey = false;
       if (!ticket) {
         const closedTicket = await prisma.ticket.findFirst({
           where: {
@@ -389,7 +391,35 @@ export class MessageProcessor {
           orderBy: { updatedAt: 'desc' },
         });
 
-        if (closedTicket) {
+        if (closedTicket && isWithinPostSurveyQuietWindow(closedTicket.surveySentAt)) {
+          logger.info(
+            `Post-survey quiet window: appending to ticket ${closedTicket.protocol} without reopen (contact ${from})`
+          );
+          ticket = await prisma.ticket.update({
+            where: { id: closedTicket.id },
+            data: { connectionId, updatedAt: new Date() },
+            include: {
+              assignedTo: true,
+              contact: {
+                select: {
+                  id: true,
+                  name: true,
+                  phone: true,
+                  avatar: true,
+                  isClient: true,
+                },
+              },
+              department: {
+                select: {
+                  id: true,
+                  name: true,
+                  color: true,
+                },
+              },
+            },
+          });
+          skipAutoReopenPostSurvey = true;
+        } else if (closedTicket) {
           // Reopen the closed ticket - check if AI is enabled for this connection
           logger.info(`Reopening closed ticket ${closedTicket.protocol} for contact ${from}`);
           
@@ -466,6 +496,7 @@ export class MessageProcessor {
                   id: true,
                   name: true,
                   phone: true,
+                  email: true,
                   avatar: true,
                   isClient: true,
                 },
@@ -544,6 +575,7 @@ export class MessageProcessor {
                 id: (ticket as any).contact.id,
                 name: (ticket as any).contact.name,
                 phone: (ticket as any).contact.phone,
+                email: (ticket as any).contact.email ?? null,
                 avatar: (ticket as any).contact.avatar,
               } : null,
               assignedTo: ticket.assignedTo ? {
@@ -702,7 +734,7 @@ export class MessageProcessor {
               where: { id: ticket.id },
               include: {
                 contact: {
-                  select: { id: true, name: true, phone: true, avatar: true, isClient: true },
+                  select: { id: true, name: true, phone: true, email: true, avatar: true, isClient: true },
                 },
                 assignedTo: {
                   select: { id: true, name: true, avatar: true, isAI: true },
@@ -738,6 +770,7 @@ export class MessageProcessor {
                   id: contact.id,
                   name: contact.name,
                   phone: contact.phone,
+                  email: contact.email ?? null,
                 },
                 assignedTo: ticket.assignedTo,
               });
@@ -758,6 +791,7 @@ export class MessageProcessor {
                 id: contact.id,
                 name: contact.name,
                 phone: contact.phone,
+                email: contact.email ?? null,
               },
               assignedTo: ticket.assignedTo,
             });
@@ -1055,7 +1089,7 @@ export class MessageProcessor {
       }
 
       // If AI is handling, process with AI (but only if AI is enabled for this connection)
-      if (ticket.isAIHandled && ticket.assignedTo?.isAI) {
+      if (!skipAutoReopenPostSurvey && ticket.isAIHandled && ticket.assignedTo?.isAI) {
         // Check if this is an external AI user
         const aiConfig = ticket.assignedTo?.aiConfig as any;
         if (ExternalAIWebhookService.isExternalAI(aiConfig)) {

@@ -43,6 +43,7 @@ vi.mock("../config/database", () => ({
       findMany: vi.fn(),
       create: vi.fn(),
       update: vi.fn(),
+      updateMany: vi.fn(),
       delete: vi.fn(),
       count: vi.fn(),
     },
@@ -88,6 +89,9 @@ vi.mock("../config/database", () => ({
     activity: {
       create: vi.fn(),
       findMany: vi.fn(),
+    },
+    ticketTransfer: {
+      create: vi.fn(),
     },
     $transaction: vi.fn((fn) => fn({
       user: { findUnique: vi.fn(), update: vi.fn() },

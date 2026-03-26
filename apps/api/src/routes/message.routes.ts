@@ -701,9 +701,39 @@ router.post('/ticket/:ticketId/media', authenticate, ensureTenant, async (req, r
   }
 });
 
-// Mark messages as read
+// Mark messages as read (apenas o atendente humano atribuído pode marcar; fila/IA mantém comportamento aberto)
 router.post('/ticket/:ticketId/read', authenticate, ensureTenant, async (req, res, next) => {
   try {
+    const ticket = await prisma.ticket.findFirst({
+      where: {
+        id: req.params.ticketId,
+        companyId: req.user!.companyId,
+      },
+      select: {
+        id: true,
+        assignedToId: true,
+        assignedTo: {
+          select: { id: true, isAI: true },
+        },
+      },
+    });
+
+    if (!ticket) {
+      throw new NotFoundError('Ticket not found');
+    }
+
+    const assigneeHuman =
+      ticket.assignedToId != null &&
+      ticket.assignedTo != null &&
+      ticket.assignedTo.isAI === false;
+
+    if (assigneeHuman && req.user!.userId !== ticket.assignedToId) {
+      return res.json({
+        message: 'Not assignee',
+        applied: false,
+      });
+    }
+
     await prisma.message.updateMany({
       where: {
         ticketId: req.params.ticketId,
@@ -716,7 +746,7 @@ router.post('/ticket/:ticketId/read', authenticate, ensureTenant, async (req, re
       },
     });
 
-    res.json({ message: 'Messages marked as read' });
+    res.json({ message: 'Messages marked as read', applied: true });
   } catch (error) {
     next(error);
   }

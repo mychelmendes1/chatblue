@@ -114,6 +114,12 @@ Sua opinião é muito importante para nós! 😊`;
         });
 
         logger.info(`NPS survey sent to ticket ${ticket.protocol} (${ticket.contact.phone})`);
+
+        // Primeiro envio de pesquisa inicia a janela pós-CSAT (não sobrescrever se já existir)
+        await prisma.ticket.updateMany({
+          where: { id: ticket.id, surveySentAt: null },
+          data: { surveySentAt: new Date() },
+        });
       } catch (error: any) {
         logger.error(`Failed to send NPS survey for ticket ${ticket.protocol}:`, error);
         // Don't throw - we don't want to break the resolve/close flow
