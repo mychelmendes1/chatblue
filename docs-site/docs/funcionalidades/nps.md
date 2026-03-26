@@ -329,6 +329,22 @@ O calculo utilizado internamente:
 | 0 a 49 | Razoavel - ha espaco para melhorar |
 | -100 a -1 | Critico - requer acao imediata |
 
+## Apos o envio da pesquisa (janela sem reabertura automatica)
+
+Depois que o **NPS** e enviado ao cliente (mensagem com link), o sistema regista `surveySentAt` no ticket. Durante **12 horas** (configuravel pela variavel de ambiente `POST_SURVEY_QUIET_HOURS` na API):
+
+- Mensagens simples do cliente (ex.: "obrigado") **nao** reabrem o ticket automaticamente para `PENDING`; a mensagem fica registada no mesmo protocolo **RESOLVED** ou **CLOSED**.
+- Apos esse periodo, o comportamento volta a ser o de reabertura automatica habitual.
+
+### Encerramento pelo atendente
+
+Enquanto o ticket estiver **RESOLVED** ou **CLOSED** e dentro da janela, o painel de chat pode mostrar a acao **Ignorar respostas e encerrar**, que chama `POST /api/tickets/:id/dismiss-post-survey` e passa o ticket a **CLOSED** com registo de atividade (ciclo pos-pesquisa fechado de forma explicita).
+
+### Notas
+
+- O envio do NPS tem de **concluir com sucesso** para `surveySentAt` ser preenchido (falha no envio pela API do WhatsApp nao inicia a janela).
+- No frontend, a duracao exibida pode alinhar-se com `NEXT_PUBLIC_POST_SURVEY_QUIET_HOURS` (opcional; padrao 12 horas).
+
 ## Integracao com Outras Funcionalidades
 
 ### Tickets

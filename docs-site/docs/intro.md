@@ -11,14 +11,16 @@ Bem-vindo a documentacao oficial do **ChatBlue** - uma plataforma multi-tenant c
 
 ## O que e o ChatBlue?
 
-O ChatBlue e uma solucao empresarial de atendimento ao cliente que integra o WhatsApp com recursos avancados de:
+O ChatBlue e uma solucao empresarial de atendimento ao cliente que integra o WhatsApp (e outros canais) com recursos avancados de:
 
 - **Multi-tenancy**: Suporte a multiplas empresas com isolamento completo de dados
 - **Inteligencia Artificial**: Atendimento automatizado com OpenAI e Anthropic
 - **Gestao de Tickets**: Sistema completo de gerenciamento de conversas
+- **Canais**: WhatsApp (Baileys e Meta Cloud API), **e-mail**, **Instagram Direct**
 - **SLA e Metricas**: Monitoramento de performance e acordos de nivel de servico
 - **Departamentos**: Hierarquia organizacional com transferencias inteligentes
 - **Integracao Notion**: Sincronizacao de dados de clientes
+- **Pesquisas**: NPS e avaliacao por estrelas; janela pos-envio para evitar reaberturas triviais do ticket
 
 ## Stack Tecnologico
 
@@ -166,7 +168,14 @@ Senha: 123456
 - **[API](/api/introducao)**: Referencia completa da API REST
 - **[Guias](/guias/introducao)**: Tutoriais passo a passo
 - **[Deploy](/deploy/producao)**: Implantacao em producao
+- **[Publicar documentacao](/deploy/documentacao-site)**: Como atualizar o site em `/docs/` no servidor (workflow separado)
 - **[Troubleshooting](/troubleshooting/problemas-comuns)**: Resolucao de problemas
+
+:::info Documentacao online
+
+Se o conteudo em **https://chat.grupoblue.com.br/docs/** parecer antigo, execute o workflow **Deploy Documentacao** no GitHub Actions ou veja o guia [Publicar o site de documentacao](/deploy/documentacao-site).
+
+:::
 
 ## Suporte
 
