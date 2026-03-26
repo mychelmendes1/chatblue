@@ -1,6 +1,10 @@
 #!/bin/bash
 # =============================================================================
 # ChatBlue - Rotina de backup no servidor
+#
+# Sessoes SSH nao-interativas (ex.: GitHub Actions) costumam ter PATH minimo;
+# docker/pg_dump precisam estar encontraveis.
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${PATH:-}"
 # Aumenta a segurança: permite recuperar após falhas, exclusões ou migrações.
 #
 # Uso: executar manualmente ou via cron.
@@ -10,6 +14,13 @@
 # =============================================================================
 
 set -e
+
+QUIET=false
+for arg in "$@"; do
+  case "$arg" in
+    --quiet) QUIET=true ;;
+  esac
+done
 
 BACKUP_DIR="${BACKUP_DIR:-/opt/chatblue/backups}"
 RETENTION_DAYS="${RETENTION_DAYS:-7}"
@@ -26,7 +37,9 @@ mkdir -p "$BACKUP_DIR"
 
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"; }
 
-log "Iniciando rotina de backup (destino: $BACKUP_DIR)"
+if [ "$QUIET" != true ]; then
+  log "Iniciando rotina de backup (destino: $BACKUP_DIR)"
+fi
 
 # --- Backup do PostgreSQL ---
 if docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^${PG_CONTAINER}$"; then
@@ -69,8 +82,10 @@ fi
 log "Removendo backups com mais de $RETENTION_DAYS dias..."
 find "$BACKUP_DIR" -type f -mtime +$RETENTION_DAYS -delete
 
-log "Backup finalizado. Arquivos em $BACKUP_DIR:"
-ls -lh "$BACKUP_DIR" 2>/dev/null || true
+if [ "$QUIET" != true ]; then
+  log "Backup finalizado. Arquivos em $BACKUP_DIR:"
+  ls -lh "$BACKUP_DIR" 2>/dev/null || true
+fi
 
 
 
