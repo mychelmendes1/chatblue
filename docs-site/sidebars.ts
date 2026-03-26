@@ -85,6 +85,7 @@ const sidebars: SidebarsConfig = {
       collapsed: true,
       items: [
         'deploy/producao',
+        'deploy/documentacao-site',
         'deploy/nginx',
         'deploy/ssl',
         'deploy/pm2',
