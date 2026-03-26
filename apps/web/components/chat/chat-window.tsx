@@ -60,10 +60,26 @@ import {
 import { Label } from "@/components/ui/label";
 import { cn, formatPhone, getStatusLabel } from "@/lib/utils";
 import { useChatStore } from "@/stores/chat.store";
+import { useAuthStore } from "@/stores/auth.store";
 import { useSocket } from "@/components/providers/socket-provider";
 import { api } from "@/lib/api";
 import { TemplateSelector } from "@/components/chat/template-selector";
 import { useToast } from "@/components/ui/use-toast";
+
+/** Alinhado a POST_SURVEY_QUIET_HOURS na API (padrão 12h). NEXT_PUBLIC opcional no web. */
+function getClientPostSurveyQuietWindowMs(): number {
+  const raw =
+    typeof process !== "undefined" ? process.env.NEXT_PUBLIC_POST_SURVEY_QUIET_HOURS : undefined;
+  const h = raw ? Number(raw) : NaN;
+  const hours = Number.isFinite(h) && h > 0 ? h : 12;
+  return hours * 60 * 60 * 1000;
+}
+
+function isPostSurveyWindowActive(ticket: { surveySentAt?: string | null }): boolean {
+  const sent = ticket?.surveySentAt;
+  if (!sent) return false;
+  return Date.now() - new Date(sent).getTime() < getClientPostSurveyQuietWindowMs();
+}
 
 /** Retorna chave YYYY-MM-DD para comparar se duas datas são do mesmo dia */
 function getDayKey(createdAt: string): string {
@@ -103,6 +119,19 @@ interface ChatWindowProps {
   ticket: any;
   onShowContactInfo: () => void;
   onMobileBack?: () => void;
+}
+
+/**
+ * Só o atendente humano atribuído dispara leitura ao abrir; sem assignee ou com IA qualquer um pode marcar.
+ * Alinhado a POST /messages/ticket/:id/read na API.
+ */
+function shouldMarkTicketReadOnOpen(ticket: any, currentUserId: string | undefined): boolean {
+  if (!currentUserId) return false;
+  const assigneeId = ticket?.assignedToId ?? ticket?.assignedTo?.id;
+  const assigneeIsAI = ticket?.assignedTo?.isAI === true;
+  if (assigneeId == null || assigneeId === "") return true;
+  if (assigneeIsAI) return true;
+  return currentUserId === assigneeId;
 }
 
 // Error boundary for message rendering
@@ -146,6 +175,7 @@ class MessageErrorBoundary extends Component<
 }
 
 export function ChatWindow({ ticket, onShowContactInfo, onMobileBack }: ChatWindowProps) {
+  const user = useAuthStore((s) => s.user);
   // historyTicketIds must be declared before the message filter that uses it
   const [historyTicketIds, setHistoryTicketIds] = useState<string[]>([]);
 
@@ -156,7 +186,15 @@ export function ChatWindow({ ticket, onShowContactInfo, onMobileBack }: ChatWind
     if (historyTicketIds.length > 0) return historyTicketIds.includes(m.ticketId);
     return m.ticketId === ticket.id;
   });
-  const { setMessages, addMessage, setLoadingMessages, markTicketAsRead, markTicketAsUnread } = useChatStore();
+  const {
+    setMessages,
+    addMessage,
+    setLoadingMessages,
+    markTicketAsRead,
+    markTicketAsUnread,
+    updateTicket,
+    updateSelectedTicket,
+  } = useChatStore();
   const store = useChatStore.getState();
   const { socket } = useSocket();
   
@@ -404,11 +442,16 @@ export function ChatWindow({ ticket, onShowContactInfo, onMobileBack }: ChatWind
     }
     
     try {
-      const [response] = await Promise.all([
+      const readPromise =
+        resetPage && shouldMarkTicketReadOnOpen(ticket, user?.id)
+          ? api.post<{ message?: string; applied?: boolean }>(`/messages/ticket/${ticket.id}/read`)
+          : Promise.resolve({ data: { applied: false as boolean | undefined } });
+
+      const [response, readResult] = await Promise.all([
         api.get<{ messages: any[]; pagination: any; ticketIds?: string[] }>(
           `/messages/ticket/${ticket.id}?page=${pageToFetch}&limit=200&includeHistory=contact`
         ),
-        resetPage ? api.post(`/messages/ticket/${ticket.id}/read`) : Promise.resolve(),
+        readPromise,
       ]);
       
       console.log("[ChatWindow] fetchMessages got", response.data.messages.length, "messages, page:", pageToFetch);
@@ -435,8 +478,8 @@ export function ChatWindow({ ticket, onShowContactInfo, onMobileBack }: ChatWind
         setHasMoreMessages(response.data.pagination?.hasMore || false);
       }
       
-      // Update the unread counter in the sidebar (only on first load)
-      if (resetPage) {
+      // Só zera não lidas localmente se a API marcou leitura (atendente responsável ou fila/IA)
+      if (resetPage && readResult.data?.applied === true) {
         markTicketAsRead(ticket.id);
       }
     } catch (error) {
@@ -995,6 +1038,7 @@ export function ChatWindow({ ticket, onShowContactInfo, onMobileBack }: ChatWind
 
   // Modal states for resolve and snooze
   const [showResolveModal, setShowResolveModal] = useState(false);
+  const [showDismissPostSurveyModal, setShowDismissPostSurveyModal] = useState(false);
   const [showSnoozeModal, setShowSnoozeModal] = useState(false);
   const [resolutionNote, setResolutionNote] = useState("");
   const [snoozeReason, setSnoozeReason] = useState("");
@@ -1060,6 +1104,41 @@ export function ChatWindow({ ticket, onShowContactInfo, onMobileBack }: ChatWind
       setIsClosing(false);
     }
   }
+
+  async function handleConfirmDismissPostSurvey() {
+    if (isClosing) return;
+    setIsClosing(true);
+    try {
+      const { data } = await api.post<{
+        ticket: Record<string, unknown>;
+        alreadyClosed: boolean;
+      }>(`/tickets/${ticket.id}/dismiss-post-survey`);
+      if (data?.ticket) {
+        updateTicket(ticket.id, data.ticket as any);
+        updateSelectedTicket(data.ticket as any);
+      }
+      setShowDismissPostSurveyModal(false);
+      toast({
+        title: data.alreadyClosed ? "Já encerrado" : "Encerrado",
+        description: data.alreadyClosed
+          ? "O ticket já estava encerrado."
+          : "Respostas na janela pós-pesquisa foram ignoradas e o ciclo foi finalizado.",
+      });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Erro desconhecido";
+      toast({
+        title: "Não foi possível encerrar",
+        description: msg,
+        variant: "destructive",
+      });
+    } finally {
+      setIsClosing(false);
+    }
+  }
+
+  const showPostSurveyDismissButton =
+    isPostSurveyWindowActive(ticket) &&
+    (ticket.status === "RESOLVED" || ticket.status === "CLOSED");
 
   return (
     <div className="flex flex-col h-full min-h-0 overflow-hidden">
@@ -1151,6 +1230,20 @@ export function ChatWindow({ ticket, onShowContactInfo, onMobileBack }: ChatWind
             </Button>
           )}
           {ticket.status === "RESOLVED" || ticket.status === "CLOSED" ? (
+            <>
+          {showPostSurveyDismissButton && (
+            <Button
+              type="button"
+              onClick={() => setShowDismissPostSurveyModal(true)}
+              variant="outline"
+              size="sm"
+              disabled={isClosing}
+              className="text-muted-foreground border-border hover:bg-muted h-7 md:h-8 px-2 md:px-3 text-xs md:text-sm"
+            >
+              <span className="hidden md:inline">Ignorar respostas e encerrar</span>
+              <span className="md:hidden">Ignorar</span>
+            </Button>
+          )}
             <Button 
               onClick={handleReopen} 
               variant="outline" 
@@ -1166,6 +1259,7 @@ export function ChatWindow({ ticket, onShowContactInfo, onMobileBack }: ChatWind
               <span className="hidden md:inline">Reabrir</span>
               <span className="md:hidden">Abrir</span>
             </Button>
+            </>
           ) : (
             <>
               <Button
@@ -1704,6 +1798,26 @@ export function ChatWindow({ ticket, onShowContactInfo, onMobileBack }: ChatWind
               onCancel={() => setShowTemplateSelectorInChat(false)}
             />
           )}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={showDismissPostSurveyModal} onOpenChange={setShowDismissPostSurveyModal}>
+        <DialogContent className="sm:max-w-[425px]">
+          <DialogHeader>
+            <DialogTitle>Ignorar respostas e encerrar</DialogTitle>
+            <DialogDescription>
+              O cliente ainda pode enviar mensagens após a pesquisa, mas elas não reabrem o atendimento
+              automaticamente neste período. Confirme se deseja encerrar o ticket de forma explícita.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button variant="outline" onClick={() => setShowDismissPostSurveyModal(false)}>
+              Cancelar
+            </Button>
+            <Button onClick={handleConfirmDismissPostSurvey} disabled={isClosing}>
+              {isClosing ? <Loader2 className="w-4 h-4 animate-spin" /> : "Confirmar encerramento"}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 

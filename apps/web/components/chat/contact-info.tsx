@@ -31,6 +31,9 @@ import {
 } from "@/components/ui/select";
 import { useToast } from "@/components/ui/use-toast";
 
+/** Valor sentinela no Select para devolver o ticket à fila do setor (sem atendente). */
+const SELECT_QUEUE_VALUE = "__queue__";
+
 interface ContactInfoProps {
   ticket: any;
   onClose: () => void;
@@ -59,15 +62,11 @@ export function ContactInfo({ ticket, onClose, onTicketUpdate }: ContactInfoProp
     .toUpperCase()
     .slice(0, 2);
 
-  // Update name and email when ticket.contact changes (from socket events or updates)
+  // Sincronizar com o contato do ticket atual (troca de conversa ou socket); sempre zerar e-mail se vier vazio no payload
   useEffect(() => {
-    if (ticket.contact?.name !== undefined) {
-      setName(ticket.contact.name || "");
-    }
-    if (ticket.contact?.email !== undefined) {
-      setEmail(ticket.contact.email || "");
-    }
-  }, [ticket.contact?.name, ticket.contact?.email]);
+    setName(ticket.contact?.name ?? "");
+    setEmail(ticket.contact?.email ?? "");
+  }, [ticket.id, ticket.contact?.id]);
 
   async function handleSave() {
     setIsSaving(true);
@@ -135,6 +134,12 @@ export function ContactInfo({ ticket, onClose, onTicketUpdate }: ContactInfoProp
     fetchUsers();
   }, []);
 
+  useEffect(() => {
+    if (!ticket.assignedTo && selectedUserId === SELECT_QUEUE_VALUE) {
+      setSelectedUserId("");
+    }
+  }, [ticket.assignedTo?.id, selectedUserId]);
+
   async function handleTransferDepartment() {
     if (!selectedDepartmentId || selectedDepartmentId === ticket.department?.id) {
       return;
@@ -191,16 +196,27 @@ export function ContactInfo({ ticket, onClose, onTicketUpdate }: ContactInfoProp
   }
 
   async function handleTransferUser() {
-    if (!selectedUserId || selectedUserId === ticket.assignedTo?.id) {
+    if (!selectedUserId) return;
+    if (selectedUserId !== SELECT_QUEUE_VALUE && selectedUserId === ticket.assignedTo?.id) {
+      return;
+    }
+    if (selectedUserId === SELECT_QUEUE_VALUE && !ticket.assignedTo) {
       return;
     }
 
     setIsTransferringUser(true);
     try {
-      const response = await api.post(`/tickets/${ticket.id}/transfer`, {
-        toUserId: selectedUserId,
-        reason: "Transferência manual para outro atendente",
-      });
+      const payload =
+        selectedUserId === SELECT_QUEUE_VALUE
+          ? {
+              releaseToQueue: true,
+              reason: "Devolvido à fila do setor pelo atendente",
+            }
+          : {
+              toUserId: selectedUserId,
+              reason: "Transferência manual para outro atendente",
+            };
+      const response = await api.post(`/tickets/${ticket.id}/transfer`, payload);
       
       // Reset selection first
       setSelectedUserId("");
@@ -484,6 +500,11 @@ export function ContactInfo({ ticket, onClose, onTicketUpdate }: ContactInfoProp
                   <SelectValue placeholder="Selecione um atendente" />
                 </SelectTrigger>
                 <SelectContent>
+                  {ticket.assignedTo ? (
+                    <SelectItem value={SELECT_QUEUE_VALUE}>
+                      <span className="text-muted-foreground">Nenhum (fila do setor)</span>
+                    </SelectItem>
+                  ) : null}
                   {users
                     .filter((user) => user.id !== ticket.assignedTo?.id)
                     .map((user) => (
@@ -514,12 +535,24 @@ export function ContactInfo({ ticket, onClose, onTicketUpdate }: ContactInfoProp
                 variant="outline"
                 className="w-full"
                 onClick={handleTransferUser}
-                disabled={!selectedUserId || isTransferringUser || isTransferring}
+                disabled={
+                  !selectedUserId ||
+                  (selectedUserId !== SELECT_QUEUE_VALUE &&
+                    selectedUserId === ticket.assignedTo?.id) ||
+                  (selectedUserId === SELECT_QUEUE_VALUE && !ticket.assignedTo) ||
+                  isTransferringUser ||
+                  isTransferring
+                }
               >
                 {isTransferringUser ? (
                   <>
                     <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
                     Transferindo...
+                  </>
+                ) : selectedUserId === SELECT_QUEUE_VALUE ? (
+                  <>
+                    <ArrowRight className="w-4 h-4 mr-2" />
+                    Devolver à fila
                   </>
                 ) : (
                   <>

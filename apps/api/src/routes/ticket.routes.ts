@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { prisma } from '../config/database.js';
 import { authenticate, requireAdmin } from '../middlewares/auth.middleware.js';
 import { ensureTenant } from '../middlewares/tenant.middleware.js';
-import { NotFoundError, ForbiddenError } from '../middlewares/error.middleware.js';
+import { NotFoundError, ForbiddenError, ValidationError } from '../middlewares/error.middleware.js';
 import { generateProtocol } from '../utils/protocol.js';
 import { toCanonicalPhone } from '../utils/canonical-phone.js';
 import { logger } from '../config/logger.js';
@@ -15,6 +15,7 @@ import {
   getVisibleDepartmentIdsForUser,
 } from '../utils/ticket-list-where.js';
 import { SLAService } from '../services/sla/sla.service.js';
+import { isWithinPostSurveyQuietWindow } from '../utils/post-survey-quiet-window.js';
 
 const router = Router();
 
@@ -1241,15 +1242,164 @@ const optionalId = z
   .optional()
   .transform((val) => (val === '' || val == null ? undefined : val));
 
+const ticketTransferInclude = {
+  contact: {
+    select: {
+      id: true,
+      name: true,
+      phone: true,
+      avatar: true,
+      isClient: true,
+      email: true,
+    },
+  },
+  assignedTo: {
+    select: {
+      id: true,
+      name: true,
+      avatar: true,
+      isAI: true,
+    },
+  },
+  department: {
+    select: {
+      id: true,
+      name: true,
+      color: true,
+    },
+  },
+} as const;
+
 // Transfer ticket
 router.post('/:id/transfer', authenticate, ensureTenant, async (req, res, next) => {
   try {
     const body = typeof req.body === 'object' && req.body !== null ? req.body : {};
-    const { toDepartmentId, toUserId, reason } = z.object({
-      toDepartmentId: optionalId,
-      toUserId: optionalId,
-      reason: z.string().optional(),
-    }).parse(body);
+    const { toDepartmentId, toUserId, reason, releaseToQueue } = z
+      .object({
+        toDepartmentId: optionalId,
+        toUserId: optionalId,
+        reason: z.string().optional(),
+        releaseToQueue: z.boolean().optional(),
+      })
+      .parse(body);
+
+    if (releaseToQueue) {
+      if (toDepartmentId || toUserId) {
+        throw new ForbiddenError(
+          'Não use releaseToQueue junto com departamento ou usuário; envie apenas releaseToQueue.'
+        );
+      }
+
+      const ticketForRelease = await prisma.ticket.findFirst({
+        where: {
+          id: req.params.id,
+          companyId: req.user!.companyId,
+        },
+      });
+
+      if (!ticketForRelease) {
+        throw new NotFoundError('Ticket not found');
+      }
+
+      if (!ticketForRelease.assignedToId) {
+        const unchanged = await prisma.ticket.findUnique({
+          where: { id: ticketForRelease.id },
+          include: ticketTransferInclude,
+        });
+        return res.json(unchanged);
+      }
+
+      const previousAssigneeId = ticketForRelease.assignedToId;
+
+      const updatedTicket = await prisma.ticket.update({
+        where: { id: ticketForRelease.id },
+        data: {
+          assignedToId: null,
+          status: 'PENDING',
+          isAIHandled: false,
+          aiTakeoverAt: null,
+        },
+        include: ticketTransferInclude,
+      });
+
+      await prisma.ticketTransfer.create({
+        data: {
+          ticketId: ticketForRelease.id,
+          fromUserId: previousAssigneeId,
+          toUserId: null,
+          fromDeptId: ticketForRelease.departmentId,
+          toDeptId: ticketForRelease.departmentId,
+          transferType: 'USER_TO_USER',
+          reason: reason || 'Devolvido à fila do setor',
+        },
+      });
+
+      await prisma.activity.create({
+        data: {
+          type: 'TICKET_TRANSFERRED',
+          description: 'Ticket devolvido à fila do setor (sem atendente)',
+          ticketId: ticketForRelease.id,
+          userId: req.user!.userId,
+          metadata: { reason, releaseToQueue: true },
+        },
+      });
+
+      const systemMessage = await prisma.message.create({
+        data: {
+          type: 'SYSTEM',
+          content: `Atendimento devolvido à fila do setor por ${req.user!.name}`,
+          isFromMe: true,
+          status: 'DELIVERED',
+          ticketId: ticketForRelease.id,
+          connectionId: ticketForRelease.connectionId,
+        },
+      });
+
+      const ioRelease = req.app.get('io');
+      ioRelease.to(`company:${req.user!.companyId}`).emit('ticket:transferred', {
+        ticketId: ticketForRelease.id,
+        fromUserId: previousAssigneeId,
+        toUserId: null,
+        toDepartmentId: updatedTicket.departmentId,
+        departmentId: updatedTicket.departmentId,
+        departmentName: updatedTicket.department?.name,
+        status: updatedTicket.status,
+        isAIHandled: updatedTicket.isAIHandled,
+        assignedTo: null,
+      });
+      ioRelease.to(`ticket:${ticketForRelease.id}`).emit('message:received', { message: systemMessage });
+
+      if (previousAssigneeId) {
+        const previousUser = await prisma.user.findUnique({
+          where: { id: previousAssigneeId },
+          select: { id: true, isAI: true, aiConfig: true },
+        });
+        if (previousUser?.isAI && ExternalAIWebhookService.isExternalAI(previousUser.aiConfig)) {
+          ExternalAIWebhookService.sendTicketUnassigned(
+            previousUser,
+            {
+              id: updatedTicket.id,
+              protocol: updatedTicket.protocol,
+              status: updatedTicket.status,
+              departmentId: updatedTicket.departmentId,
+              department: updatedTicket.department,
+              contact: updatedTicket.contact as any,
+            }
+          ).catch(err => logger.error('[ExternalAI] Error sending unassigned webhook on releaseToQueue:', err));
+        }
+      }
+
+      sendOutboundEvent(req.user!.companyId, 'conversation_updated', {
+        ticketId: updatedTicket.id,
+        companyId: updatedTicket.companyId,
+        status: updatedTicket.status,
+        departmentId: updatedTicket.departmentId ?? undefined,
+        assignedToId: undefined,
+        updatedAt: updatedTicket.updatedAt.toISOString(),
+      });
+
+      return res.json(updatedTicket);
+    }
 
     if (!toDepartmentId && !toUserId) {
       throw new ForbiddenError('Deve informar departamento ou usuário para transferir');
@@ -1349,33 +1499,7 @@ router.post('/:id/transfer', authenticate, ensureTenant, async (req, res, next) 
     const updatedTicket = await prisma.ticket.update({
       where: { id: ticket.id },
       data: transferUpdateData,
-      include: {
-        contact: {
-          select: {
-            id: true,
-            name: true,
-            phone: true,
-            avatar: true,
-            isClient: true,
-            email: true,
-          },
-        },
-        assignedTo: {
-          select: {
-            id: true,
-            name: true,
-            avatar: true,
-            isAI: true,
-          },
-        },
-        department: {
-          select: {
-            id: true,
-            name: true,
-            color: true,
-          },
-        },
-      },
+      include: ticketTransferInclude,
     });
 
     // Create transfer record (toDeptId = effective department applied)
@@ -1914,6 +2038,133 @@ router.post('/:id/close', authenticate, ensureTenant, async (req, res, next) => 
     }
 
     res.json(updatedTicket);
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Encerrar explicitamente durante janela pós-pesquisa (sem reabrir por mensagens triviais)
+router.post('/:id/dismiss-post-survey', authenticate, ensureTenant, async (req, res, next) => {
+  try {
+    const ticket = await prisma.ticket.findFirst({
+      where: {
+        id: req.params.id,
+        companyId: req.user!.companyId,
+      },
+    });
+
+    if (!ticket) {
+      throw new NotFoundError('Ticket not found');
+    }
+
+    if (ticket.status !== 'RESOLVED' && ticket.status !== 'CLOSED') {
+      throw new ValidationError('O ticket precisa estar resolvido ou encerrado.');
+    }
+
+    if (!ticket.surveySentAt || !isWithinPostSurveyQuietWindow(ticket.surveySentAt)) {
+      throw new ValidationError(
+        'Esta ação só está disponível na janela após o envio da pesquisa (12 horas por padrão).'
+      );
+    }
+
+    const fullTicketInclude = {
+      contact: true,
+      assignedTo: {
+        select: {
+          id: true,
+          name: true,
+          avatar: true,
+          email: true,
+          isAI: true,
+        },
+      },
+      department: true,
+      connection: {
+        select: {
+          id: true,
+          name: true,
+          type: true,
+          phone: true,
+        },
+      },
+      emailConnection: {
+        select: {
+          id: true,
+          name: true,
+          email: true,
+        },
+      },
+      _count: {
+        select: {
+          messages: {
+            where: {
+              isFromMe: false,
+              readAt: null,
+            },
+          },
+        },
+      },
+    } as const;
+
+    if (ticket.status === 'CLOSED') {
+      const fullTicket = await prisma.ticket.findFirst({
+        where: { id: ticket.id, companyId: req.user!.companyId },
+        include: fullTicketInclude,
+      });
+      return res.json({ ticket: fullTicket, alreadyClosed: true });
+    }
+
+    const closedAt = new Date();
+    await prisma.ticket.update({
+      where: { id: ticket.id },
+      data: {
+        status: 'CLOSED',
+        closedAt,
+      },
+    });
+
+    const systemMessage = await prisma.message.create({
+      data: {
+        type: 'SYSTEM',
+        content: `🔒 Ciclo pós-pesquisa encerrado por ${req.user!.name}.`,
+        isFromMe: true,
+        isInternal: true,
+        status: 'DELIVERED',
+        ticketId: ticket.id,
+        connectionId: ticket.connectionId,
+      },
+    });
+
+    await prisma.activity.create({
+      data: {
+        type: 'TICKET_CLOSED',
+        description: `Ticket encerrado por ${req.user!.name} (ignorar respostas na janela pós-pesquisa)`,
+        ticketId: ticket.id,
+        userId: req.user!.userId,
+        metadata: { source: 'post_survey_dismiss' },
+      },
+    });
+
+    const fullTicket = await prisma.ticket.findFirst({
+      where: { id: ticket.id, companyId: req.user!.companyId },
+      include: fullTicketInclude,
+    });
+
+    const io = req.app.get('io');
+    if (io && fullTicket) {
+      io.to(`company:${req.user!.companyId}`).emit('ticket:updated', fullTicket);
+      io.to(`ticket:${ticket.id}`).emit('message:received', { message: systemMessage });
+    }
+
+    sendOutboundEvent(req.user!.companyId, 'conversation_updated', {
+      ticketId: ticket.id,
+      companyId: req.user!.companyId,
+      status: 'CLOSED',
+      closedAt: closedAt.toISOString(),
+      source: 'post_survey_dismiss',
+    });
+
+    res.json({ ticket: fullTicket, alreadyClosed: false });
   } catch (error) {
     next(error);
   }
