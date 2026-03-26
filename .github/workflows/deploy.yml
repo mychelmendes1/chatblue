@@ -118,13 +118,16 @@ jobs:
           "echo 'Conexao SSH OK' && uptime"
 
       # CORRECAO: Backup falho agora bloqueia o deploy (a menos que skip_backup=true)
+      # Script versionado em deploy/backup.sh -> no servidor apos rsync: /opt/chatblue/app/deploy/backup.sh
+      # (caminho antigo /opt/chatblue/scripts/backup.sh nao existe no repo)
       - name: Backup antes do deploy
         if: ${{ github.event.inputs.skip_backup != 'true' }}
-        run: |
-          ssh -i ~/.ssh/deploy_key \
-          -p ${{ secrets.SERVER_SSH_PORT || 22 }} \
-          ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} \
-          "bash /opt/chatblue/scripts/backup.sh --quiet"
+        run: >
+          ssh -i ~/.ssh/deploy_key
+          -p ${{ secrets.SERVER_SSH_PORT || 22 }}
+          -o BatchMode=yes
+          ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}
+          'bash /opt/chatblue/app/deploy/backup.sh --quiet'
 
       - name: Sincronizar codigo via rsync
         run: |
