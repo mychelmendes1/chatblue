@@ -31,6 +31,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       ENVIRONMENT: prod
+      ECR_REGISTRY: 724698481758.dkr.ecr.us-east-2.amazonaws.com
       API_REPOSITORY: chatblue-api-prod
       WEB_REPOSITORY: chatblue-web-prod
       MIGRATION_REPOSITORY: chatblue-migration-prod
@@ -89,7 +90,6 @@ jobs:
 
       - name: Build and push Docker images (prod)
         env:
-          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
           NEXT_PUBLIC_API_URL: ${{ secrets.NEXT_PUBLIC_API_URL_PROD }}
           NEXT_PUBLIC_SOCKET_URL: ${{ secrets.NEXT_PUBLIC_SOCKET_URL_PROD }}
           NEXT_PUBLIC_VAPID_PUBLIC_KEY: ${{ secrets.NEXT_PUBLIC_VAPID_PUBLIC_KEY_PROD || '' }}

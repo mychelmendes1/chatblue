@@ -34,11 +34,8 @@ services:
       retries: 5
     restart: unless-stopped
 
-  # Database migrations (roda antes da API)
+  # Database migrations (roda antes da API, usa imagem da api)
   migration:
-    build:
-      context: ..
-      dockerfile: docker/Dockerfile.api
     image: chatblue-api
     container_name: chatblue-migration
     environment:
