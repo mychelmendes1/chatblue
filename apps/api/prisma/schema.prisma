@@ -223,6 +223,8 @@ model Company {
   mlAIDecisionLogs    MLAIDecisionLog[]
   mlTrainingBatches   MLTrainingBatch[]
 
+  mcpIntegrationKeyCompanies McpIntegrationKeyCompany[]
+
   @@map("companies")
 }
 
@@ -269,7 +271,41 @@ model User {
   // Connections where this user is the default handler (when AI is disabled)
   defaultConnections WhatsAppConnection[] @relation("ConnectionDefaultUser")
 
+  mcpIntegrationKeysCreated McpIntegrationKey[] @relation("McpIntegrationKeyCreator")
+
   @@map("users")
+}
+
+/// Chave de integração MCP (Perplexity / clientes machine-to-machine), escopada a N empresas pelo criador
+model McpIntegrationKey {
+  id           String    @id @default(cuid())
+  name         String?
+  /// bcrypt do segredo (plaintext mostrado só na criação)
+  secretHash   String    @map("secret_hash")
+  revokedAt    DateTime? @map("revoked_at")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+
+  createdByUserId String @map("created_by_user_id")
+  createdBy       User   @relation("McpIntegrationKeyCreator", fields: [createdByUserId], references: [id], onDelete: Cascade)
+
+  companies McpIntegrationKeyCompany[]
+
+  @@index([createdByUserId])
+  @@index([revokedAt])
+  @@map("mcp_integration_keys")
+}
+
+model McpIntegrationKeyCompany {
+  mcpIntegrationKeyId String @map("mcp_integration_key_id")
+  companyId           String @map("company_id")
+
+  mcpIntegrationKey McpIntegrationKey @relation(fields: [mcpIntegrationKeyId], references: [id], onDelete: Cascade)
+  company           Company           @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@id([mcpIntegrationKeyId, companyId])
+  @@index([companyId])
+  @@map("mcp_integration_key_companies")
 }
 
 /// Relacionamento Usuário-Empresa (Multi-empresa com aprovação)
