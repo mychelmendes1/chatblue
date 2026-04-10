@@ -624,11 +624,15 @@ router.get('/nps', authenticate, ensureTenant, async (req, res, next) => {
         npsRatedAt: { gte: startDate },
       },
       select: {
+        id: true,
+        protocol: true,
+        subject: true,
         npsScore: true,
         npsComment: true,
         npsRatedAt: true,
         departmentId: true,
         assignedToId: true,
+        contact: { select: { name: true } },
       },
     });
 
@@ -681,6 +685,10 @@ router.get('/nps', authenticate, ensureTenant, async (req, res, next) => {
         comment: t.npsComment,
         date: t.npsRatedAt,
         category: t.npsScore! >= 9 ? 'promoter' : t.npsScore! >= 7 ? 'passive' : 'detractor',
+        ticketId: t.id,
+        protocol: t.protocol,
+        contactName: t.contact?.name ?? null,
+        subject: t.subject ?? null,
       }));
 
     res.json({

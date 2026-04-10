@@ -61,6 +61,7 @@ import { externalRouter } from './routes/external.routes.js';
 import sgtRouter from './routes/sgt.routes.js';
 import { campaignDispatchRouter } from './routes/campaign-dispatch.routes.js';
 import { emailConnectionRouter } from './routes/email-connection.routes.js';
+import { mcpIntegrationRouter } from './routes/mcp-integration.routes.js';
 import { setupSocketHandlers } from './sockets/index';
 import { startWorkers, stopWorkers } from './jobs/index';
 import { prisma } from './config/database';
@@ -184,6 +185,7 @@ app.use('/api/external', externalRouter);
 app.use('/api/integrations/sgt', sgtRouter);
 app.use('/api/webhooks', campaignDispatchRouter);
 app.use('/api/email-connections', emailConnectionRouter);
+app.use('/api/integrations/mcp', mcpIntegrationRouter);
 app.use('/webhooks', webhookRouter);
 
 // Serve uploaded files statically (same path as upload.service and Baileys)

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import {
   BarChart3,
   TrendingUp,
@@ -106,6 +107,10 @@ interface NPSData {
     comment: string;
     date: string;
     category: string;
+    ticketId: string;
+    protocol: string;
+    contactName: string | null;
+    subject: string | null;
   }[];
 }
 
@@ -968,8 +973,8 @@ export default function MetricsPage() {
                   </CardHeader>
                   <CardContent>
                     <div className="space-y-4 max-h-80 overflow-y-auto">
-                      {npsData.recentComments.map((comment, i) => (
-                        <div key={i} className="border-l-4 pl-3 py-2" style={{
+                      {npsData.recentComments.map((comment) => (
+                        <div key={`${comment.ticketId}-${comment.date}`} className="border-l-4 pl-3 py-2" style={{
                           borderColor: comment.category === 'promoter' ? '#22c55e' : comment.category === 'passive' ? '#eab308' : '#ef4444'
                         }}>
                           <div className="flex items-center gap-2 mb-1">
@@ -978,6 +983,18 @@ export default function MetricsPage() {
                             </Badge>
                             <span className="text-xs text-muted-foreground">
                               {new Date(comment.date).toLocaleDateString('pt-BR')}
+                            </span>
+                          </div>
+                          <div className="mb-1.5">
+                            <Link
+                              href={`/chat?ticket=${encodeURIComponent(comment.ticketId)}`}
+                              className="text-sm font-medium text-primary hover:underline"
+                            >
+                              {comment.protocol}
+                            </Link>
+                            <span className="text-sm text-muted-foreground">
+                              {" · "}
+                              {comment.contactName?.trim() || comment.subject?.trim() || "Sem nome"}
                             </span>
                           </div>
                           <p className="text-sm">{comment.comment}</p>
