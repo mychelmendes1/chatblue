@@ -8,6 +8,7 @@ import { NotFoundError } from '../middlewares/error.middleware.js';
 import { BaileysService } from '../services/whatsapp/baileys.service.js';
 import { MetaCloudService } from '../services/whatsapp/meta-cloud.service.js';
 import { InstagramService } from '../services/instagram/instagram.service.js';
+import { encryptSecret } from '../utils/crypto.util.js';
 
 const router = Router();
 
@@ -84,6 +85,8 @@ router.get('/', authenticate, ensureTenant, async (req, res, next) => {
         companyId: true,
         instagramAccountId: true,
         instagramUsername: true,
+        authMethod: true,
+        tokenExpiresAt: true,
         aiEnabled: true,
         defaultUserId: true,
         defaultUser: {
@@ -260,7 +263,8 @@ router.post('/instagram', authenticate, requireAdmin, ensureTenant, async (req, 
       data: {
         name: data.name,
         type: 'INSTAGRAM',
-        accessToken: data.accessToken,
+        accessToken: encryptSecret(data.accessToken),
+        authMethod: 'manual',
         instagramAccountId: data.instagramAccountId,
         webhookToken: data.webhookToken,
         status: 'DISCONNECTED',
@@ -270,8 +274,8 @@ router.post('/instagram', authenticate, requireAdmin, ensureTenant, async (req, 
 
     // Test connection and get account info
     const instagramService = new InstagramService(connection);
-    const isValid = await instagramService.testConnection();
-    logger.info(`[POST /connections/instagram] Connection ${connection.id} (${data.name}), testConnection: ${isValid}`);
+    const { valid: isValid, error: testError } = await instagramService.testConnection();
+    logger.info(`[POST /connections/instagram] Connection ${connection.id} (${data.name}), testConnection: ${isValid}${testError ? ` (${testError})` : ''}`);
 
     let instagramUsername: string | undefined;
     if (isValid) {
@@ -290,8 +294,9 @@ router.post('/instagram', authenticate, requireAdmin, ensureTenant, async (req, 
       }
     }
 
+    const { accessToken: _token, ...safeConnection } = connection;
     res.status(201).json({
-      ...connection,
+      ...safeConnection,
       status: isValid ? 'CONNECTED' : 'DISCONNECTED',
       instagramUsername,
     });

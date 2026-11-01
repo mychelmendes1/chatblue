@@ -12,6 +12,9 @@ import { mlQualityScorerProcessor } from "./processors/ml-quality-scorer.process
 import { mlPatternDetectorProcessor } from "./processors/ml-pattern-detector.processor";
 import { mlMetricsProcessor } from "./processors/ml-metrics.processor";
 import { dailyReportProcessor } from "./processors/daily-report.processor";
+import { instagramWebhookProcessor } from "./processors/instagram-webhook.processor";
+import { instagramTokenRefreshProcessor } from "./processors/instagram-token-refresh.processor";
+import crypto from "crypto";
 
 // Queue definitions
 export const slaCheckQueue = new Queue("sla-check", {
@@ -137,6 +140,33 @@ export const dailyReportQueue = new Queue("daily-report", {
   },
 });
 
+// Instagram: eventos do webhook (um job por entry) e renovação de tokens OAuth
+export const instagramWebhookQueue = new Queue("instagram-webhook", {
+  connection: redis,
+  defaultJobOptions: {
+    removeOnComplete: 500,
+    removeOnFail: 1000,
+    attempts: 3,
+    backoff: {
+      type: "exponential",
+      delay: 2000,
+    },
+  },
+});
+
+export const instagramTokenRefreshQueue = new Queue("instagram-token-refresh", {
+  connection: redis,
+  defaultJobOptions: {
+    removeOnComplete: 20,
+    removeOnFail: 50,
+    attempts: 2,
+    backoff: {
+      type: "exponential",
+      delay: 60000,
+    },
+  },
+});
+
 // Workers
 let slaWorker: Worker | null = null;
 let notificationWorker: Worker | null = null;
@@ -153,6 +183,10 @@ let mlMetricsWorker: Worker | null = null;
 
 // Daily Report Worker
 let dailyReportWorker: Worker | null = null;
+
+// Instagram Workers
+let instagramWebhookWorker: Worker | null = null;
+let instagramTokenRefreshWorker: Worker | null = null;
 
 export async function startWorkers() {
   logger.info("Starting background job workers...");
@@ -311,6 +345,26 @@ export async function startWorkers() {
     logger.error(`Daily report job ${job?.id} failed:`, error);
   });
 
+  // Instagram Webhook Worker
+  instagramWebhookWorker = new Worker("instagram-webhook", instagramWebhookProcessor, {
+    connection: redis,
+    concurrency: 5,
+  });
+
+  instagramWebhookWorker.on("failed", (job: Job | undefined, error: Error) => {
+    logger.error(`Instagram webhook job ${job?.id} failed:`, error);
+  });
+
+  // Instagram Token Refresh Worker
+  instagramTokenRefreshWorker = new Worker("instagram-token-refresh", instagramTokenRefreshProcessor, {
+    connection: redis,
+    concurrency: 1,
+  });
+
+  instagramTokenRefreshWorker.on("failed", (job: Job | undefined, error: Error) => {
+    logger.error(`Instagram token refresh job ${job?.id} failed:`, error);
+  });
+
   // Schedule recurring jobs
   await scheduleRecurringJobs();
 
@@ -434,6 +488,17 @@ async function scheduleRecurringJobs() {
     }
   );
 
+  // Renovação dos tokens long-lived do Instagram a cada 12 h
+  await instagramTokenRefreshQueue.add(
+    "refresh-instagram-tokens",
+    {},
+    {
+      repeat: {
+        every: 12 * 60 * 60 * 1000, // 12 hours
+      },
+    }
+  );
+
   logger.info("Recurring jobs scheduled");
 }
 
@@ -452,6 +517,8 @@ export async function stopWorkers() {
     mlPatternDetectorWorker,
     mlMetricsWorker,
     dailyReportWorker,
+    instagramWebhookWorker,
+    instagramTokenRefreshWorker,
   ];
 
   await Promise.all(
@@ -514,4 +581,14 @@ export async function addMLMetricsJob(data: {
   date?: string;
 }) {
   return mlMetricsQueue.add(`ml-metrics-${data.type}`, data);
+}
+
+// Instagram: enfileira um entry do webhook (jobId derivado do conteúdo para dedupe de reentregas)
+export async function addInstagramWebhookJob(entry: any, receivedAt: Date = new Date()) {
+  const hash = crypto.createHash("sha256").update(JSON.stringify(entry)).digest("hex").slice(0, 40);
+  return instagramWebhookQueue.add(
+    "entry",
+    { entry, receivedAt: receivedAt.toISOString() },
+    { jobId: `ig-${hash}` }
+  );
 }

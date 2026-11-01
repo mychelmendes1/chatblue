@@ -3,8 +3,68 @@ import { logger } from '../../config/logger.js';
 import * as fs from 'fs';
 import * as path from 'path';
 import { getUploadsDir } from '../../utils/uploads-dir.util.js';
+import { decryptSecret } from '../../utils/crypto.util.js';
+import { buildMetaError, getInstagramGraphVersion } from './instagram-oauth.service.js';
 
-const META_API_URL = 'https://graph.facebook.com/v18.0';
+/** Limite de texto de uma mensagem no Instagram Direct (bytes UTF-8) */
+export const INSTAGRAM_TEXT_MAX_BYTES = 1000;
+
+export interface InstagramSendOptions {
+  /** Tag HUMAN_AGENT: estende a janela para 7 dias (somente atendente humano) */
+  tag?: 'HUMAN_AGENT';
+  /** Responder a uma mensagem específica (mid) */
+  replyToMid?: string;
+}
+
+export interface InstagramMedia {
+  id: string;
+  caption?: string;
+  media_type?: string;
+  media_product_type?: string;
+  media_url?: string;
+  thumbnail_url?: string;
+  permalink?: string;
+  timestamp?: string;
+}
+
+const MEDIA_FIELDS = 'id,caption,media_type,media_product_type,media_url,thumbnail_url,permalink,timestamp';
+
+/**
+ * Divide um texto em pedaços de até `maxBytes` bytes UTF-8, preferindo quebrar
+ * em quebra de linha/espaço e nunca cortando um caractere no meio.
+ */
+export function splitTextByBytes(text: string, maxBytes = INSTAGRAM_TEXT_MAX_BYTES): string[] {
+  if (Buffer.byteLength(text, 'utf8') <= maxBytes) return [text];
+
+  const chunks: string[] = [];
+  let rest = text;
+  while (rest.length > 0) {
+    if (Buffer.byteLength(rest, 'utf8') <= maxBytes) {
+      chunks.push(rest);
+      break;
+    }
+    // Maior prefixo (por code point) que cabe em maxBytes
+    let bytes = 0;
+    let cut = 0;
+    for (const ch of rest) {
+      const b = Buffer.byteLength(ch, 'utf8');
+      if (bytes + b > maxBytes) break;
+      bytes += b;
+      cut += ch.length;
+    }
+    let piece = rest.slice(0, cut);
+    // Tenta quebrar em fronteira natural se não perder mais da metade do pedaço
+    const breakAt = Math.max(piece.lastIndexOf('\n'), piece.lastIndexOf(' '));
+    if (breakAt > cut / 2) {
+      piece = rest.slice(0, breakAt);
+      rest = rest.slice(breakAt + 1);
+    } else {
+      rest = rest.slice(cut);
+    }
+    if (piece.trim().length > 0) chunks.push(piece);
+  }
+  return chunks;
+}
 
 export class InstagramService {
   private connection: WhatsAppConnection;
@@ -13,36 +73,140 @@ export class InstagramService {
     this.connection = connection;
   }
 
+  // ============================================
+  // Infra
+  // ============================================
+
+  /** Conexões manuais antigas (Página do Facebook) podem continuar no graph.facebook.com */
+  private get usesFacebookGraph(): boolean {
+    return (
+      this.connection.authMethod !== 'oauth' &&
+      process.env.INSTAGRAM_LEGACY_FACEBOOK_GRAPH === 'true'
+    );
+  }
+
+  private get baseUrl(): string {
+    const version = getInstagramGraphVersion();
+    return this.usesFacebookGraph
+      ? `https://graph.facebook.com/${version}`
+      : `https://graph.instagram.com/${version}`;
+  }
+
+  private get token(): string {
+    return decryptSecret(this.connection.accessToken) || '';
+  }
+
+  /** ID da conta usado nos endpoints `/{ig-id}/...` */
+  private get igId(): string {
+    return this.connection.instagramAccountId || 'me';
+  }
+
+  /**
+   * Chamada genérica à Graph API. Lança Error com a mensagem da Meta e `err.meta`
+   * ({ code, error_subcode, type, fbtrace_id }).
+   */
+  private async request<T = any>(
+    method: 'GET' | 'POST' | 'DELETE',
+    apiPath: string,
+    options: { query?: Record<string, string | number | boolean | undefined>; body?: any; logLabel?: string } = {}
+  ): Promise<T> {
+    const url = new URL(`${this.baseUrl}/${apiPath.replace(/^\//, '')}`);
+    for (const [k, v] of Object.entries(options.query || {})) {
+      if (v !== undefined && v !== null) url.searchParams.set(k, String(v));
+    }
+
+    const headers: Record<string, string> = { Authorization: `Bearer ${this.token}` };
+    let body: string | undefined;
+    if (options.body !== undefined) {
+      headers['Content-Type'] = 'application/json';
+      body = JSON.stringify(options.body);
+    }
+
+    const response = await fetch(url.toString(), { method, headers, body });
+    const text = await response.text();
+    let data: any = {};
+    if (text) {
+      try {
+        data = JSON.parse(text);
+      } catch {
+        data = { raw: text };
+      }
+    }
+
+    if (!response.ok || data?.error) {
+      const err = buildMetaError(data, `Instagram API error (${response.status})`, response.status);
+      logger.error(`Instagram ${options.logLabel || apiPath} failed:`, {
+        status: response.status,
+        error: data?.error || data,
+        connectionId: this.connection.id,
+      });
+      throw err;
+    }
+
+    return data as T;
+  }
+
+  private async postMessage(
+    payload: Record<string, any>,
+    options: InstagramSendOptions = {},
+    logLabel = 'send message'
+  ): Promise<{ messageId: string; recipientId?: string }> {
+    const body: Record<string, any> = { ...payload };
+    if (options.tag === 'HUMAN_AGENT') {
+      body.messaging_type = 'MESSAGE_TAG';
+      body.tag = 'HUMAN_AGENT';
+    }
+    if (options.replyToMid) {
+      body.reply_to = { mid: options.replyToMid };
+    }
+    const data = await this.request<any>('POST', `${this.igId}/messages`, { body, logLabel });
+    return { messageId: data.message_id || '', recipientId: data.recipient_id };
+  }
+
+  private async sendAttachment(
+    recipientId: string,
+    type: 'image' | 'video' | 'audio' | 'file',
+    url: string,
+    options: { tag?: 'HUMAN_AGENT' } = {}
+  ): Promise<{ messageId: string }> {
+    const { messageId } = await this.postMessage(
+      {
+        recipient: { id: recipientId },
+        message: {
+          attachment: {
+            type,
+            payload: { url, is_reusable: true },
+          },
+        },
+      },
+      options,
+      `send ${type}`
+    );
+    return { messageId };
+  }
+
+  // ============================================
+  // Conta
+  // ============================================
+
   /**
    * Test connection to Instagram API.
    * Returns { valid: true } on success, or { valid: false, error: '...' } with the Meta API error message.
    */
   async testConnection(): Promise<{ valid: boolean; error?: string }> {
     try {
-      const url = `${META_API_URL}/${this.connection.instagramAccountId}?fields=id,username,name`;
-      logger.info(`[Instagram] testConnection → GET ${url.replace(this.connection.accessToken || '', '***')}`);
-
-      const response = await fetch(url, {
-        headers: {
-          Authorization: `Bearer ${this.connection.accessToken}`,
-        },
+      const target = this.usesFacebookGraph ? this.igId : 'me';
+      await this.request('GET', target, {
+        query: { fields: this.usesFacebookGraph ? 'id,username,name' : 'id,user_id,username' },
+        logLabel: 'testConnection',
       });
-
-      if (!response.ok) {
-        const body = await response.json().catch(() => ({}));
-        const metaError = (body as any)?.error?.message || response.statusText || 'Erro desconhecido';
-        logger.warn('Instagram testConnection failed', {
-          status: response.status,
-          statusText: response.statusText,
-          metaError,
-          instagramAccountId: this.connection.instagramAccountId,
-        });
-        return { valid: false, error: `Meta API (${response.status}): ${metaError}` };
-      }
       logger.info('[Instagram] testConnection → OK');
       return { valid: true };
     } catch (error: any) {
       const message = error?.message || String(error);
+      if (error?.meta) {
+        return { valid: false, error: `Meta API (${error.status || error.meta.code || '?'}): ${message}` };
+      }
       logger.error('Instagram connection test exception:', { message });
       return { valid: false, error: `Erro de rede: ${message}` };
     }
@@ -58,20 +222,11 @@ export class InstagramService {
     profilePictureUrl?: string;
   } | null> {
     try {
-      const response = await fetch(
-        `${META_API_URL}/${this.connection.instagramAccountId}?fields=id,username,name,profile_picture_url`,
-        {
-          headers: {
-            Authorization: `Bearer ${this.connection.accessToken}`,
-          },
-        }
-      );
-
-      if (!response.ok) {
-        return null;
-      }
-
-      const data = await response.json() as any;
+      const target = this.usesFacebookGraph ? this.igId : 'me';
+      const data = await this.request<any>('GET', target, {
+        query: { fields: 'id,username,name,profile_picture_url' },
+        logLabel: 'getAccountInfo',
+      });
       return {
         id: data.id,
         username: data.username,
@@ -84,40 +239,34 @@ export class InstagramService {
     }
   }
 
+  // ============================================
+  // Mensagens (Direct)
+  // ============================================
+
   /**
-   * Send a text message via Instagram DM
+   * Send a text message via Instagram DM.
+   * Textos acima de 1000 bytes são quebrados em envios sequenciais; retorna o último messageId.
    */
   async sendTextMessage(
     recipientId: string,
-    content: string
+    content: string,
+    options: InstagramSendOptions = {}
   ): Promise<{ messageId: string }> {
-    const response = await fetch(
-      `${META_API_URL}/${this.connection.instagramAccountId}/messages`,
-      {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${this.connection.accessToken}`,
-          'Content-Type': 'application/json',
+    const parts = splitTextByBytes(content || '');
+    let lastId = '';
+    for (let i = 0; i < parts.length; i++) {
+      const { messageId } = await this.postMessage(
+        {
+          recipient: { id: recipientId },
+          message: { text: parts[i] },
         },
-        body: JSON.stringify({
-          recipient: {
-            id: recipientId,
-          },
-          message: {
-            text: content,
-          },
-        }),
-      }
-    );
-
-    const data = await response.json() as any;
-
-    if (!response.ok) {
-      logger.error('Instagram send message failed:', data);
-      throw new Error(data.error?.message || 'Failed to send message');
+        // reply_to apenas na primeira parte
+        { tag: options.tag, replyToMid: i === 0 ? options.replyToMid : undefined },
+        'send message'
+      );
+      lastId = messageId;
     }
-
-    return { messageId: data.message_id || '' };
+    return { messageId: lastId };
   }
 
   /**
@@ -125,41 +274,10 @@ export class InstagramService {
    */
   async sendImageMessage(
     recipientId: string,
-    imageUrl: string
+    imageUrl: string,
+    options: { tag?: 'HUMAN_AGENT' } = {}
   ): Promise<{ messageId: string }> {
-    const response = await fetch(
-      `${META_API_URL}/${this.connection.instagramAccountId}/messages`,
-      {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${this.connection.accessToken}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          recipient: {
-            id: recipientId,
-          },
-          message: {
-            attachment: {
-              type: 'image',
-              payload: {
-                url: imageUrl,
-                is_reusable: true,
-              },
-            },
-          },
-        }),
-      }
-    );
-
-    const data = await response.json() as any;
-
-    if (!response.ok) {
-      logger.error('Instagram send image failed:', data);
-      throw new Error(data.error?.message || 'Failed to send image');
-    }
-
-    return { messageId: data.message_id || '' };
+    return this.sendAttachment(recipientId, 'image', imageUrl, options);
   }
 
   /**
@@ -167,41 +285,10 @@ export class InstagramService {
    */
   async sendVideoMessage(
     recipientId: string,
-    videoUrl: string
+    videoUrl: string,
+    options: { tag?: 'HUMAN_AGENT' } = {}
   ): Promise<{ messageId: string }> {
-    const response = await fetch(
-      `${META_API_URL}/${this.connection.instagramAccountId}/messages`,
-      {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${this.connection.accessToken}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          recipient: {
-            id: recipientId,
-          },
-          message: {
-            attachment: {
-              type: 'video',
-              payload: {
-                url: videoUrl,
-                is_reusable: true,
-              },
-            },
-          },
-        }),
-      }
-    );
-
-    const data = await response.json() as any;
-
-    if (!response.ok) {
-      logger.error('Instagram send video failed:', data);
-      throw new Error(data.error?.message || 'Failed to send video');
-    }
-
-    return { messageId: data.message_id || '' };
+    return this.sendAttachment(recipientId, 'video', videoUrl, options);
   }
 
   /**
@@ -209,41 +296,10 @@ export class InstagramService {
    */
   async sendAudioMessage(
     recipientId: string,
-    audioUrl: string
+    audioUrl: string,
+    options: { tag?: 'HUMAN_AGENT' } = {}
   ): Promise<{ messageId: string }> {
-    const response = await fetch(
-      `${META_API_URL}/${this.connection.instagramAccountId}/messages`,
-      {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${this.connection.accessToken}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          recipient: {
-            id: recipientId,
-          },
-          message: {
-            attachment: {
-              type: 'audio',
-              payload: {
-                url: audioUrl,
-                is_reusable: true,
-              },
-            },
-          },
-        }),
-      }
-    );
-
-    const data = await response.json() as any;
-
-    if (!response.ok) {
-      logger.error('Instagram send audio failed:', data);
-      throw new Error(data.error?.message || 'Failed to send audio');
-    }
-
-    return { messageId: data.message_id || '' };
+    return this.sendAttachment(recipientId, 'audio', audioUrl, options);
   }
 
   /**
@@ -251,41 +307,10 @@ export class InstagramService {
    */
   async sendFileMessage(
     recipientId: string,
-    fileUrl: string
+    fileUrl: string,
+    options: { tag?: 'HUMAN_AGENT' } = {}
   ): Promise<{ messageId: string }> {
-    const response = await fetch(
-      `${META_API_URL}/${this.connection.instagramAccountId}/messages`,
-      {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${this.connection.accessToken}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          recipient: {
-            id: recipientId,
-          },
-          message: {
-            attachment: {
-              type: 'file',
-              payload: {
-                url: fileUrl,
-                is_reusable: true,
-              },
-            },
-          },
-        }),
-      }
-    );
-
-    const data = await response.json() as any;
-
-    if (!response.ok) {
-      logger.error('Instagram send file failed:', data);
-      throw new Error(data.error?.message || 'Failed to send file');
-    }
-
-    return { messageId: data.message_id || '' };
+    return this.sendAttachment(recipientId, 'file', fileUrl, options);
   }
 
   /**
@@ -294,18 +319,19 @@ export class InstagramService {
   async sendMediaMessage(
     recipientId: string,
     mediaUrl: string,
-    mediaType: string
+    mediaType: string,
+    options: { tag?: 'HUMAN_AGENT' } = {}
   ): Promise<{ messageId: string }> {
     switch (mediaType.toUpperCase()) {
       case 'IMAGE':
-        return this.sendImageMessage(recipientId, mediaUrl);
+        return this.sendImageMessage(recipientId, mediaUrl, options);
       case 'VIDEO':
-        return this.sendVideoMessage(recipientId, mediaUrl);
+        return this.sendVideoMessage(recipientId, mediaUrl, options);
       case 'AUDIO':
-        return this.sendAudioMessage(recipientId, mediaUrl);
+        return this.sendAudioMessage(recipientId, mediaUrl, options);
       case 'DOCUMENT':
       default:
-        return this.sendFileMessage(recipientId, mediaUrl);
+        return this.sendFileMessage(recipientId, mediaUrl, options);
     }
   }
 
@@ -314,74 +340,32 @@ export class InstagramService {
    */
   async sendSticker(
     recipientId: string,
-    stickerId: string
+    _stickerId: string
   ): Promise<{ messageId: string }> {
-    const response = await fetch(
-      `${META_API_URL}/${this.connection.instagramAccountId}/messages`,
+    const { messageId } = await this.postMessage(
       {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${this.connection.accessToken}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          recipient: {
-            id: recipientId,
-          },
-          message: {
-            attachment: {
-              type: 'like_heart', // Instagram heart sticker
-            },
-          },
-        }),
-      }
+        recipient: { id: recipientId },
+        message: { attachment: { type: 'like_heart' } }, // Instagram heart sticker
+      },
+      {},
+      'send sticker'
     );
-
-    const data = await response.json() as any;
-
-    if (!response.ok) {
-      logger.error('Instagram send sticker failed:', data);
-      throw new Error(data.error?.message || 'Failed to send sticker');
-    }
-
-    return { messageId: data.message_id || '' };
+    return { messageId };
   }
 
   /**
    * Send a heart/like reaction
    */
-  async sendHeartReaction(
-    recipientId: string
-  ): Promise<{ messageId: string }> {
-    const response = await fetch(
-      `${META_API_URL}/${this.connection.instagramAccountId}/messages`,
+  async sendHeartReaction(recipientId: string): Promise<{ messageId: string }> {
+    const { messageId } = await this.postMessage(
       {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${this.connection.accessToken}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          recipient: {
-            id: recipientId,
-          },
-          message: {
-            attachment: {
-              type: 'like_heart',
-            },
-          },
-        }),
-      }
+        recipient: { id: recipientId },
+        message: { attachment: { type: 'like_heart' } },
+      },
+      {},
+      'send heart'
     );
-
-    const data = await response.json() as any;
-
-    if (!response.ok) {
-      logger.error('Instagram send heart failed:', data);
-      throw new Error(data.error?.message || 'Failed to send heart');
-    }
-
-    return { messageId: data.message_id || '' };
+    return { messageId };
   }
 
   /**
@@ -392,35 +376,23 @@ export class InstagramService {
     messageId: string,
     emoji: string
   ): Promise<{ success: boolean }> {
-    const response = await fetch(
-      `${META_API_URL}/${this.connection.instagramAccountId}/messages`,
-      {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${this.connection.accessToken}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          recipient: {
-            id: recipientId,
-          },
+    try {
+      await this.postMessage(
+        {
+          recipient: { id: recipientId },
           sender_action: 'react',
           payload: {
             message_id: messageId,
             reaction: emoji || 'love', // Default to love reaction
           },
-        }),
-      }
-    );
-
-    const data = await response.json() as any;
-
-    if (!response.ok) {
-      logger.error('Instagram send reaction failed:', data);
+        },
+        {},
+        'send reaction'
+      );
+      return { success: true };
+    } catch {
       return { success: false };
     }
-
-    return { success: true };
   }
 
   /**
@@ -430,68 +402,55 @@ export class InstagramService {
     recipientId: string,
     messageId: string
   ): Promise<{ success: boolean }> {
-    const response = await fetch(
-      `${META_API_URL}/${this.connection.instagramAccountId}/messages`,
-      {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${this.connection.accessToken}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          recipient: {
-            id: recipientId,
-          },
+    try {
+      await this.postMessage(
+        {
+          recipient: { id: recipientId },
           sender_action: 'unreact',
-          payload: {
-            message_id: messageId,
-          },
-        }),
-      }
-    );
-
-    const data = await response.json() as any;
-
-    if (!response.ok) {
-      logger.error('Instagram remove reaction failed:', data);
+          payload: { message_id: messageId },
+        },
+        {},
+        'remove reaction'
+      );
+      return { success: true };
+    } catch {
       return { success: false };
     }
-
-    return { success: true };
   }
 
   /**
-   * Get user profile from Instagram
+   * Get user profile from Instagram (IGSID)
    */
-  async getUserProfile(userId: string): Promise<{
+  async getUserProfile(igsid: string): Promise<{
     id: string;
     username?: string;
     name?: string;
     profilePic?: string;
+    followerCount?: number;
+    isUserFollowBusiness?: boolean;
+    isBusinessFollowUser?: boolean;
+    isVerifiedUser?: boolean;
   } | null> {
     try {
-      const response = await fetch(
-        `${META_API_URL}/${userId}?fields=id,username,name,profile_pic`,
-        {
-          headers: {
-            Authorization: `Bearer ${this.connection.accessToken}`,
-          },
-        }
-      );
-
-      if (!response.ok) {
-        return null;
-      }
-
-      const data = await response.json() as any;
+      const data = await this.request<any>('GET', igsid, {
+        query: {
+          fields:
+            'name,username,profile_pic,follower_count,is_user_follow_business,is_business_follow_user,is_verified_user',
+        },
+        logLabel: 'getUserProfile',
+      });
       return {
-        id: data.id,
+        id: data.id || igsid,
         username: data.username,
         name: data.name,
         profilePic: data.profile_pic,
+        followerCount: data.follower_count,
+        isUserFollowBusiness: data.is_user_follow_business,
+        isBusinessFollowUser: data.is_business_follow_user,
+        isVerifiedUser: data.is_verified_user,
       };
     } catch (error) {
-      logger.error('Failed to get Instagram user profile:', error);
+      logger.warn('Failed to get Instagram user profile:', { igsid, error: (error as any)?.message });
       return null;
     }
   }
@@ -505,7 +464,7 @@ export class InstagramService {
   ): Promise<{ localPath: string; mimeType: string }> {
     const response = await fetch(mediaUrl, {
       headers: {
-        Authorization: `Bearer ${this.connection.accessToken}`,
+        Authorization: `Bearer ${this.token}`,
       },
     });
 
@@ -527,7 +486,7 @@ export class InstagramService {
       'audio/ogg': 'ogg',
     };
 
-    const extension = extensionMap[contentType] || 'bin';
+    const extension = extensionMap[contentType.split(';')[0].trim()] || 'bin';
     const finalFilename = filename || `instagram_${Date.now()}.${extension}`;
 
     // Save to uploads directory
@@ -554,26 +513,9 @@ export class InstagramService {
    */
   async markAsSeen(senderId: string): Promise<boolean> {
     try {
-      const response = await fetch(
-        `${META_API_URL}/${this.connection.instagramAccountId}/messages`,
-        {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${this.connection.accessToken}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            recipient: {
-              id: senderId,
-            },
-            sender_action: 'mark_seen',
-          }),
-        }
-      );
-
-      return response.ok;
-    } catch (error) {
-      logger.error('Instagram mark as seen failed:', error);
+      await this.postMessage({ recipient: { id: senderId }, sender_action: 'mark_seen' }, {}, 'mark_seen');
+      return true;
+    } catch {
       return false;
     }
   }
@@ -583,26 +525,13 @@ export class InstagramService {
    */
   async sendTypingIndicator(recipientId: string, isTyping: boolean): Promise<boolean> {
     try {
-      const response = await fetch(
-        `${META_API_URL}/${this.connection.instagramAccountId}/messages`,
-        {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${this.connection.accessToken}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            recipient: {
-              id: recipientId,
-            },
-            sender_action: isTyping ? 'typing_on' : 'typing_off',
-          }),
-        }
+      await this.postMessage(
+        { recipient: { id: recipientId }, sender_action: isTyping ? 'typing_on' : 'typing_off' },
+        {},
+        'typing indicator'
       );
-
-      return response.ok;
-    } catch (error) {
-      logger.error('Instagram typing indicator failed:', error);
+      return true;
+    } catch {
       return false;
     }
   }
@@ -615,38 +544,22 @@ export class InstagramService {
     text: string,
     quickReplies: Array<{ title: string; payload: string }>
   ): Promise<{ messageId: string }> {
-    const response = await fetch(
-      `${META_API_URL}/${this.connection.instagramAccountId}/messages`,
+    const { messageId } = await this.postMessage(
       {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${this.connection.accessToken}`,
-          'Content-Type': 'application/json',
+        recipient: { id: recipientId },
+        message: {
+          text,
+          quick_replies: quickReplies.slice(0, 13).map((qr) => ({
+            content_type: 'text',
+            title: qr.title.slice(0, 20),
+            payload: qr.payload,
+          })),
         },
-        body: JSON.stringify({
-          recipient: {
-            id: recipientId,
-          },
-          message: {
-            text,
-            quick_replies: quickReplies.slice(0, 13).map((qr) => ({
-              content_type: 'text',
-              title: qr.title.slice(0, 20),
-              payload: qr.payload,
-            })),
-          },
-        }),
-      }
+      },
+      {},
+      'send ice breaker'
     );
-
-    const data = await response.json() as any;
-
-    if (!response.ok) {
-      logger.error('Instagram send ice breaker failed:', data);
-      throw new Error(data.error?.message || 'Failed to send ice breaker');
-    }
-
-    return { messageId: data.message_id || '' };
+    return { messageId };
   }
 
   /**
@@ -662,55 +575,36 @@ export class InstagramService {
       buttons?: Array<{ type: string; title: string; url?: string; payload?: string }>;
     }>
   ): Promise<{ messageId: string }> {
-    const response = await fetch(
-      `${META_API_URL}/${this.connection.instagramAccountId}/messages`,
+    const { messageId } = await this.postMessage(
       {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${this.connection.accessToken}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          recipient: {
-            id: recipientId,
-          },
-          message: {
-            attachment: {
-              type: 'template',
-              payload: {
-                template_type: 'generic',
-                elements: elements.slice(0, 10).map((el) => ({
-                  title: el.title,
-                  subtitle: el.subtitle,
-                  image_url: el.imageUrl,
-                  default_action: el.defaultAction
-                    ? {
-                        type: el.defaultAction.type,
-                        url: el.defaultAction.url,
-                      }
-                    : undefined,
-                  buttons: el.buttons?.slice(0, 3).map((btn) => ({
-                    type: btn.type,
-                    title: btn.title,
-                    url: btn.url,
-                    payload: btn.payload,
-                  })),
+        recipient: { id: recipientId },
+        message: {
+          attachment: {
+            type: 'template',
+            payload: {
+              template_type: 'generic',
+              elements: elements.slice(0, 10).map((el) => ({
+                title: el.title,
+                subtitle: el.subtitle,
+                image_url: el.imageUrl,
+                default_action: el.defaultAction
+                  ? { type: el.defaultAction.type, url: el.defaultAction.url }
+                  : undefined,
+                buttons: el.buttons?.slice(0, 3).map((btn) => ({
+                  type: btn.type,
+                  title: btn.title,
+                  url: btn.url,
+                  payload: btn.payload,
                 })),
-              },
+              })),
             },
           },
-        }),
-      }
+        },
+      },
+      {},
+      'send generic template'
     );
-
-    const data = await response.json() as any;
-
-    if (!response.ok) {
-      logger.error('Instagram send generic template failed:', data);
-      throw new Error(data.error?.message || 'Failed to send template');
-    }
-
-    return { messageId: data.message_id || '' };
+    return { messageId };
   }
 
   /**
@@ -720,38 +614,85 @@ export class InstagramService {
     recipientId: string,
     productId: string
   ): Promise<{ messageId: string }> {
-    const response = await fetch(
-      `${META_API_URL}/${this.connection.instagramAccountId}/messages`,
+    const { messageId } = await this.postMessage(
       {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${this.connection.accessToken}`,
-          'Content-Type': 'application/json',
+        recipient: { id: recipientId },
+        message: {
+          attachment: {
+            type: 'template',
+            payload: { template_type: 'product', product_id: productId },
+          },
         },
-        body: JSON.stringify({
-          recipient: {
-            id: recipientId,
-          },
-          message: {
-            attachment: {
-              type: 'template',
-              payload: {
-                template_type: 'product',
-                product_id: productId,
-              },
-            },
-          },
-        }),
-      }
+      },
+      {},
+      'send product template'
     );
+    return { messageId };
+  }
 
-    const data = await response.json() as any;
+  // ============================================
+  // Comentários
+  // ============================================
 
-    if (!response.ok) {
-      logger.error('Instagram send product template failed:', data);
-      throw new Error(data.error?.message || 'Failed to send product');
-    }
+  /**
+   * Resposta pública a um comentário (POST /{comment-id}/replies)
+   */
+  async replyToComment(commentId: string, message: string): Promise<{ id: string }> {
+    const data = await this.request<any>('POST', `${commentId}/replies`, {
+      body: { message },
+      logLabel: 'replyToComment',
+    });
+    return { id: data.id || '' };
+  }
 
-    return { messageId: data.message_id || '' };
+  /**
+   * Private reply: DM a partir de um comentário (1 por comentário, até 7 dias).
+   * POST /{ig-id}/messages com recipient: { comment_id }
+   */
+  async sendPrivateReply(
+    commentId: string,
+    message: { text: string } | { attachment: any }
+  ): Promise<{ messageId: string; recipientId?: string }> {
+    return this.postMessage(
+      {
+        recipient: { comment_id: commentId },
+        message,
+      },
+      {},
+      'sendPrivateReply'
+    );
+  }
+
+  /**
+   * Oculta/mostra um comentário (POST /{comment-id}?hide=true|false)
+   */
+  async hideComment(commentId: string, hide: boolean): Promise<{ success: boolean }> {
+    const data = await this.request<any>('POST', commentId, {
+      query: { hide: hide ? 'true' : 'false' },
+      logLabel: 'hideComment',
+    });
+    return { success: data?.success !== false };
+  }
+
+  // ============================================
+  // Mídia (posts/reels)
+  // ============================================
+
+  async getMedia(mediaId: string): Promise<InstagramMedia> {
+    return this.request<InstagramMedia>('GET', mediaId, {
+      query: { fields: MEDIA_FIELDS },
+      logLabel: 'getMedia',
+    });
+  }
+
+  async listMedia(
+    limit = 25,
+    after?: string
+  ): Promise<{ data: InstagramMedia[]; paging?: { cursors?: { before?: string; after?: string }; next?: string } }> {
+    const data = await this.request<any>('GET', `${this.igId}/media`, {
+      query: { fields: MEDIA_FIELDS, limit, after },
+      logLabel: 'listMedia',
+    });
+    return { data: data.data || [], paging: data.paging };
   }
 }
