@@ -17,6 +17,7 @@ import {
   X,
   Inbox,
   LayoutGrid,
+  Instagram,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -44,6 +45,7 @@ const navigation = [
   { name: "Métricas", href: "/metrics", icon: BarChart3 },
   { name: "Usuários", href: "/users", icon: Shield, adminOnly: true },
   { name: "Conexões", href: "/connections", icon: Wifi },
+  { name: "Instagram", href: "/instagram", icon: Instagram, adminOnly: true },
   { name: "Atendente IA", href: "/ai-agent", icon: Bot },
   { name: "Conhecimento", href: "/knowledge", icon: Book, adminOnly: true },
   { name: "Configurações", href: "/settings", icon: Settings },

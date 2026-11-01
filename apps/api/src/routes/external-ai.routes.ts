@@ -3,7 +3,8 @@ import { z } from 'zod';
 import { prisma } from '../config/database.js';
 import { authenticateExternalAI } from '../middlewares/external-ai-auth.middleware.js';
 import { NotFoundError, ForbiddenError, ValidationError } from '../middlewares/error.middleware.js';
-import { WhatsAppService } from '../services/whatsapp/whatsapp.service.js';
+import { ChannelSender } from '../services/outbound/channel-sender.service.js';
+import { InstagramWindowClosedError } from '../services/instagram/instagram-window.service.js';
 import { ExternalAIWebhookService } from '../services/external-ai/external-ai-webhook.service.js';
 import { logger } from '../config/logger.js';
 import { normalizeMediaUrl } from '../utils/media-url.util.js';
@@ -121,8 +122,6 @@ router.post('/messages', async (req, res, next) => {
     const ticket = await validateTicketAccess(ticketId, req.aiUser!);
     const connection = await getActiveConnection(ticket);
 
-    const whatsappService = new WhatsAppService(connection);
-
     // Format message with AI agent name
     const aiName = req.aiUser!.name || 'Assistente';
 
@@ -153,18 +152,41 @@ router.post('/messages', async (req, res, next) => {
 
     let result: { messageId: string; finalMediaUrl?: string };
 
-    if (type === 'TEXT' || !mediaUrl) {
-      // Send text message
-      const formattedContent = `*${aiName}:*\n${content}`;
-      result = await whatsappService.sendMessage(ticket.contact.phone, formattedContent);
-    } else {
-      // Send media message
-      result = await whatsappService.sendMedia(
-        ticket.contact.phone,
-        mediaUrl,
-        type || 'IMAGE',
-        caption ? `*${aiName}:*\n${caption}` : undefined
-      );
+    try {
+      if (type === 'TEXT' || !mediaUrl) {
+        // Send text message (WhatsApp: `*Nome:*`; Instagram: texto simples, respeitando a janela)
+        result = await ChannelSender.sendText(connection, ticket.contact, content || '', {
+          actor: 'ai',
+          senderName: aiName,
+        });
+      } else {
+        // Send media message
+        result = await ChannelSender.sendMedia(
+          connection,
+          ticket.contact,
+          mediaUrl,
+          type || 'IMAGE',
+          caption ? ChannelSender.formatText(connection, caption, aiName) : undefined,
+          { actor: 'ai' }
+        );
+      }
+    } catch (sendError) {
+      if (sendError instanceof InstagramWindowClosedError) {
+        // IA nunca usa HUMAN_AGENT: não envia e marca a mensagem como FAILED
+        const reason = sendError.state.reason || sendError.message;
+        logger.warn(`[ExternalAI] Envio bloqueado pela janela do Instagram no ticket ${ticket.id}: ${reason}`);
+        await prisma.message.update({
+          where: { id: message.id },
+          data: { status: 'FAILED', failedReason: reason },
+        });
+        return res.status(422).json({
+          success: false,
+          message: reason,
+          code: 'INSTAGRAM_WINDOW_CLOSED',
+          window: sendError.state,
+        });
+      }
+      throw sendError;
     }
 
     // Update message with WhatsApp ID

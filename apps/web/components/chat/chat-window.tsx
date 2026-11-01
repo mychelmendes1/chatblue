@@ -65,6 +65,12 @@ import { useSocket } from "@/components/providers/socket-provider";
 import { api } from "@/lib/api";
 import { TemplateSelector } from "@/components/chat/template-selector";
 import { useToast } from "@/components/ui/use-toast";
+import {
+  InstagramWindowBadge,
+  InstagramWindowComposerNotice,
+  isInstagramSendBlocked,
+  useInstagramWindow,
+} from "@/components/chat/instagram-window-badge";
 
 /** Alinhado a POST_SURVEY_QUIET_HOURS na API (padrão 12h). NEXT_PUBLIC opcional no web. */
 function getClientPostSurveyQuietWindowMs(): number {
@@ -244,6 +250,11 @@ export function ChatWindow({ ticket, onShowContactInfo, onMobileBack }: ChatWind
   // Template selector in chat (for Meta Cloud - send template without closing conversation)
   const [showTemplateSelectorInChat, setShowTemplateSelectorInChat] = useState(false);
   const { toast } = useToast();
+
+  // Instagram messaging window (24h / 7d / human agent)
+  const isInstagramTicket = ticket.connection?.type === "INSTAGRAM";
+  const instagramWindow = useInstagramWindow(ticket.id, isInstagramTicket);
+  const instagramSendBlocked = !isInternalMode && isInstagramSendBlocked(instagramWindow);
 
   const contactName = ticket.contact?.name || formatPhone(ticket.contact?.phone);
 
@@ -690,8 +701,13 @@ export function ChatWindow({ ticket, onShowContactInfo, onMobileBack }: ChatWind
       setReplyingTo(null);
       // Scroll after sending
       setTimeout(() => scrollToBottom(false), 150);
-    } catch (error) {
+    } catch (error: any) {
       console.error("Failed to send message:", error);
+      toast({
+        title: "Erro ao enviar mensagem",
+        description: error?.message || "Tente novamente.",
+        variant: "destructive",
+      });
     } finally {
       setIsSending(false);
     }
@@ -837,7 +853,7 @@ export function ChatWindow({ ticket, onShowContactInfo, onMobileBack }: ChatWind
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => null);
-        const serverMsg = errorData?.error;
+        const serverMsg = errorData?.message || errorData?.error;
         throw new Error(serverMsg || "Falha ao enviar arquivo");
       }
 
@@ -1176,7 +1192,9 @@ export function ChatWindow({ ticket, onShowContactInfo, onMobileBack }: ChatWind
                   <span className="hidden md:inline">IA</span>
                 </span>
               )}
-              {messagingWindow && (
+              {isInstagramTicket ? (
+                <InstagramWindowBadge state={instagramWindow} />
+              ) : messagingWindow && (
                 messagingWindow.isOpen ? (
                   <span className="flex items-center gap-1 text-[10px] md:text-xs bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400 px-1.5 md:px-2 py-0.5 rounded" title={`Janela de 24h aberta - ${messagingWindow.hoursRemaining}h restantes`}>
                     <Clock className="w-3 h-3" />
@@ -1548,6 +1566,8 @@ export function ChatWindow({ ticket, onShowContactInfo, onMobileBack }: ChatWind
           className="hidden"
         />
 
+        <InstagramWindowComposerNotice state={isInternalMode ? null : instagramWindow} />
+
         <form
           onSubmit={handleSendMessage}
           onPasteCapture={handlePaste}
@@ -1771,7 +1791,8 @@ export function ChatWindow({ ticket, onShowContactInfo, onMobileBack }: ChatWind
             type="submit" 
             size="icon" 
             className="h-8 w-8 md:h-10 md:w-10 flex-shrink-0"
-            disabled={(!newMessage.trim() && !selectedFile) || isSending || isUploading}
+            disabled={(!newMessage.trim() && !selectedFile) || isSending || isUploading || instagramSendBlocked}
+            title={instagramSendBlocked ? instagramWindow?.reason || "Janela do Instagram fechada. O cliente precisa mandar mensagem." : undefined}
           >
             {isUploading ? (
               <Loader2 className="w-4 h-4 md:w-5 md:h-5 animate-spin" />

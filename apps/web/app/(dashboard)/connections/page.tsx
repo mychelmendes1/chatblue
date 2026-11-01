@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   Wifi,
   WifiOff,
@@ -21,7 +22,15 @@ import {
   Settings2,
   Eye,
   EyeOff,
+  Instagram,
+  Copy,
+  ChevronDown,
+  ChevronRight,
+  AlertTriangle,
+  KeyRound,
 } from "lucide-react";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -76,6 +85,8 @@ interface Connection {
   instagramAccountId?: string;
   instagramUsername?: string;
   aiEnabled: boolean;
+  authMethod?: "oauth" | "manual" | null;
+  tokenExpiresAt?: string | null;
   defaultUserId?: string | null;
   defaultUser?: {
     id: string;
@@ -91,6 +102,79 @@ interface Connection {
     tickets: number;
     messages: number;
   };
+}
+
+interface InstagramConfig {
+  configured: boolean;
+  redirectUri: string;
+  webhookUrl: string;
+}
+
+interface InstagramStatus {
+  id: string;
+  name: string;
+  instagramUsername?: string | null;
+  instagramAccountId?: string | null;
+  status: string;
+  authMethod: "oauth" | "manual" | null;
+  tokenExpiresAt: string | null;
+  webhookFields: string[];
+  lastTokenRefreshAt: string | null;
+  lastError: string | null;
+}
+
+function formatDateBR(iso: string): string {
+  const d = new Date(iso);
+  return d.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric" });
+}
+
+function copyToClipboard(text: string, toast: ReturnType<typeof useToast>["toast"], description?: string) {
+  navigator.clipboard
+    .writeText(text)
+    .then(() => toast({ title: "Copiado!", description }))
+    .catch(() => toast({ title: "Não foi possível copiar", variant: "destructive" }));
+}
+
+/** Lê ?instagram=ok|denied|error após o retorno do OAuth, mostra toast e limpa a URL. */
+function InstagramOAuthResultHandler({ onResult }: { onResult: () => void }) {
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  const { toast } = useToast();
+  const handled = useRef(false);
+
+  useEffect(() => {
+    const result = searchParams.get("instagram");
+    if (!result || handled.current) return;
+    handled.current = true;
+    if (result === "ok" && searchParams.get("warning") === "webhooks") {
+      toast({
+        title: "Instagram conectado, mas sem webhooks",
+        description: "A conta foi autorizada, mas a inscrição nos webhooks falhou. Use \"Reinscrever webhooks\" na conexão.",
+        variant: "destructive",
+        duration: 12000,
+      });
+    } else if (result === "ok") {
+      toast({ title: "Instagram conectado!", description: "A conta foi autorizada e os webhooks foram inscritos." });
+    } else if (result === "denied") {
+      toast({
+        title: "Autorização cancelada",
+        description: "A conexão com o Instagram não foi autorizada.",
+        variant: "destructive",
+      });
+    } else {
+      const reason = searchParams.get("reason");
+      toast({
+        title: "Erro ao conectar Instagram",
+        description: reason || "Não foi possível concluir a conexão. Tente novamente.",
+        variant: "destructive",
+        duration: 12000,
+      });
+    }
+    onResult();
+    router.replace("/connections");
+  }, [searchParams, router, toast, onResult]);
+
+  return null;
 }
 
 interface CompanyUser {
@@ -124,6 +208,12 @@ export default function ConnectionsPage() {
   const [availableUsers, setAvailableUsers] = useState<CompanyUser[]>([]);
   const [isLoadingAISettings, setIsLoadingAISettings] = useState(false);
   const refreshedInstagramIds = useRef<Set<string>>(new Set());
+  const isAdmin = user?.role === "ADMIN" || user?.role === "SUPER_ADMIN";
+
+  // Instagram (OAuth / app-level webhook)
+  const [instagramConfig, setInstagramConfig] = useState<InstagramConfig | null>(null);
+  const [instagramStatus, setInstagramStatus] = useState<Record<string, InstagramStatus>>({});
+  const [instagramActionLoading, setInstagramActionLoading] = useState<string | null>(null);
 
   // Edit Instagram connection dialog
   const [showEditInstagramDialog, setShowEditInstagramDialog] = useState(false);
@@ -131,7 +221,59 @@ export default function ConnectionsPage() {
 
   useEffect(() => {
     fetchConnections();
+    fetchInstagramConfig();
   }, []);
+
+  const hasInstagram = connections.some((c) => c.type === "INSTAGRAM");
+  useEffect(() => {
+    if (hasInstagram) fetchInstagramStatus();
+  }, [hasInstagram, connections]);
+
+  async function fetchInstagramConfig() {
+    try {
+      const response = await api.get<InstagramConfig>("/integrations/instagram/config");
+      setInstagramConfig(response.data);
+    } catch (error) {
+      console.debug("Could not fetch Instagram config:", error);
+    }
+  }
+
+  async function fetchInstagramStatus() {
+    try {
+      const response = await api.get<InstagramStatus[]>("/integrations/instagram/status");
+      const map: Record<string, InstagramStatus> = {};
+      (response.data || []).forEach((s) => {
+        map[s.id] = s;
+      });
+      setInstagramStatus(map);
+    } catch (error) {
+      console.debug("Could not fetch Instagram status:", error);
+    }
+  }
+
+  async function handleInstagramAction(connectionId: string, action: "refresh-token" | "resubscribe") {
+    setInstagramActionLoading(`${connectionId}:${action}`);
+    try {
+      await api.post(`/integrations/instagram/${connectionId}/${action}`);
+      toast({
+        title: action === "refresh-token" ? "Token renovado" : "Webhooks reinscritos",
+        description:
+          action === "refresh-token"
+            ? "O token de acesso do Instagram foi renovado."
+            : "A conta foi reinscrita nos webhooks de mensagens e comentários.",
+      });
+      fetchConnections();
+      fetchInstagramStatus();
+    } catch (error: any) {
+      toast({
+        title: action === "refresh-token" ? "Erro ao renovar token" : "Erro ao reinscrever webhooks",
+        description: error?.message || "Tente novamente.",
+        variant: "destructive",
+      });
+    } finally {
+      setInstagramActionLoading(null);
+    }
+  }
 
   // Corrige Instagram/Meta Cloud presos em "Conectando": chama refresh e exibe resultado
   useEffect(() => {
@@ -423,6 +565,11 @@ export default function ConnectionsPage() {
     }
   }
 
+  const handleOAuthResult = useRef(() => {
+    fetchConnections();
+    fetchInstagramStatus();
+  }).current;
+
   const getStatusIcon = (status: string) => {
     switch (status) {
       case "CONNECTED":
@@ -458,6 +605,9 @@ export default function ConnectionsPage() {
 
   return (
     <div className="p-6 max-w-6xl mx-auto">
+      <Suspense fallback={null}>
+        <InstagramOAuthResultHandler onResult={handleOAuthResult} />
+      </Suspense>
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-2xl font-bold">Conexões</h1>
@@ -474,6 +624,7 @@ export default function ConnectionsPage() {
           </DialogTrigger>
           <DialogContent>
             <NewConnectionDialog
+              instagramConfig={instagramConfig}
               onSuccess={() => {
                 console.log("onSuccess called, closing dialog and refreshing connections...");
                 setShowNewDialog(false);
@@ -643,34 +794,119 @@ export default function ConnectionsPage() {
                     </div>
                   )}
 
-                  {connection.type === "INSTAGRAM" && (
-                    <div className="space-y-1.5 rounded-md border bg-muted/40 p-2">
-                      <span className="text-xs font-medium text-muted-foreground">URL do webhook (Meta)</span>
-                      <p className="text-xs font-mono break-all text-foreground">
-                        {(typeof window !== "undefined" ? process.env.NEXT_PUBLIC_API_URL : null) || "https://chat.grupoblue.com.br"}
-                        /webhooks/instagram/{connection.id}
-                      </p>
-                      {typeof window !== "undefined" &&
-                        process.env.NEXT_PUBLIC_API_URL?.startsWith("http://localhost") && (
-                          <p className="text-xs text-amber-600 dark:text-amber-400">
-                            Localhost não é acessível pela Meta. Use ngrok (ou similar) e configure a URL pública no painel.
+                  {connection.type === "INSTAGRAM" && (() => {
+                    const igStatus = instagramStatus[connection.id];
+                    const authMethod = igStatus?.authMethod ?? connection.authMethod ?? null;
+                    const tokenExpiresAt = igStatus?.tokenExpiresAt ?? connection.tokenExpiresAt ?? null;
+                    const daysLeft = tokenExpiresAt
+                      ? (new Date(tokenExpiresAt).getTime() - Date.now()) / (1000 * 60 * 60 * 24)
+                      : null;
+                    const webhookUrl = instagramConfig?.webhookUrl;
+                    return (
+                      <>
+                        <div className="flex items-center justify-between">
+                          <span className="text-sm text-muted-foreground">Autenticação</span>
+                          {authMethod ? (
+                            <Badge
+                              variant="outline"
+                              className={cn(
+                                authMethod === "oauth"
+                                  ? "border-pink-300 text-pink-700 dark:text-pink-300"
+                                  : "text-muted-foreground"
+                              )}
+                            >
+                              {authMethod === "oauth" ? "OAuth" : "Manual"}
+                            </Badge>
+                          ) : (
+                            <span className="text-sm text-muted-foreground">—</span>
+                          )}
+                        </div>
+                        {tokenExpiresAt && daysLeft !== null && (
+                          <div
+                            className={cn(
+                              "flex items-center gap-1.5 text-xs rounded-md px-2 py-1",
+                              daysLeft <= 0
+                                ? "bg-red-50 text-red-700 dark:bg-red-950/30 dark:text-red-400"
+                                : daysLeft < 10
+                                ? "bg-amber-50 text-amber-700 dark:bg-amber-950/30 dark:text-amber-400"
+                                : "text-muted-foreground"
+                            )}
+                          >
+                            {daysLeft < 10 && <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" />}
+                            {daysLeft <= 0
+                              ? `Token expirado em ${formatDateBR(tokenExpiresAt)} — renove ou reconecte`
+                              : `Token válido até ${formatDateBR(tokenExpiresAt)}`}
+                          </div>
+                        )}
+                        {igStatus?.webhookFields && igStatus.webhookFields.length > 0 && (
+                          <div className="flex flex-wrap gap-1">
+                            {igStatus.webhookFields.map((f) => (
+                              <Badge key={f} variant="secondary" className="text-[10px] font-mono px-1.5 py-0">
+                                {f}
+                              </Badge>
+                            ))}
+                          </div>
+                        )}
+                        {igStatus?.lastError && (
+                          <p className="text-xs text-red-600 dark:text-red-400 break-words">
+                            <strong>Último erro:</strong> {igStatus.lastError}
                           </p>
                         )}
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        className="h-7 text-xs"
-                        onClick={() => {
-                          const url = `${(typeof window !== "undefined" ? process.env.NEXT_PUBLIC_API_URL : null) || "https://chat.grupoblue.com.br"}/webhooks/instagram/${connection.id}`;
-                          navigator.clipboard.writeText(url);
-                          toast({ title: "URL copiada!", description: "Cole no painel da Meta (Instagram → Webhooks)." });
-                        }}
-                      >
-                        Copiar URL
-                      </Button>
-                    </div>
-                  )}
+                        {webhookUrl && (
+                          <div className="space-y-1.5 rounded-md border bg-muted/40 p-2">
+                            <span className="text-xs font-medium text-muted-foreground">URL do webhook (app Meta)</span>
+                            <p className="text-xs font-mono break-all text-foreground">{webhookUrl}</p>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              className="h-7 text-xs"
+                              onClick={() =>
+                                copyToClipboard(webhookUrl, toast, "Cole no painel da Meta (Instagram → Webhooks).")
+                              }
+                            >
+                              <Copy className="w-3 h-3 mr-1" />
+                              Copiar URL
+                            </Button>
+                          </div>
+                        )}
+                        {isAdmin && (
+                          <div className="flex flex-wrap gap-2">
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              className="h-7 text-xs"
+                              disabled={instagramActionLoading !== null}
+                              onClick={() => handleInstagramAction(connection.id, "refresh-token")}
+                            >
+                              {instagramActionLoading === `${connection.id}:refresh-token` ? (
+                                <Loader2 className="w-3 h-3 mr-1 animate-spin" />
+                              ) : (
+                                <KeyRound className="w-3 h-3 mr-1" />
+                              )}
+                              Renovar token
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              className="h-7 text-xs"
+                              disabled={instagramActionLoading !== null}
+                              onClick={() => handleInstagramAction(connection.id, "resubscribe")}
+                            >
+                              {instagramActionLoading === `${connection.id}:resubscribe` ? (
+                                <Loader2 className="w-3 h-3 mr-1 animate-spin" />
+                              ) : (
+                                <RefreshCw className="w-3 h-3 mr-1" />
+                              )}
+                              Reinscrever webhooks
+                            </Button>
+                          </div>
+                        )}
+                      </>
+                    );
+                  })()}
 
                   {connection.type === "META_CLOUD" && (
                     <div className="space-y-1.5 rounded-md border bg-muted/40 p-2">
@@ -956,7 +1192,13 @@ export default function ConnectionsPage() {
   );
 }
 
-function NewConnectionDialog({ onSuccess }: { onSuccess: () => void }) {
+function NewConnectionDialog({
+  onSuccess,
+  instagramConfig,
+}: {
+  onSuccess: () => void;
+  instagramConfig: InstagramConfig | null;
+}) {
   const { toast } = useToast();
   const { user } = useAuthStore();
   const [type, setType] = useState<"BAILEYS" | "META_CLOUD" | "INSTAGRAM">("BAILEYS");
@@ -975,6 +1217,26 @@ function NewConnectionDialog({ onSuccess }: { onSuccess: () => void }) {
   const [instagramAccountId, setInstagramAccountId] = useState("");
   const [instagramAccessToken, setInstagramAccessToken] = useState("");
   const [instagramWebhookToken, setInstagramWebhookToken] = useState("");
+  const [showInstagramManual, setShowInstagramManual] = useState(false);
+  const [isRedirectingInstagram, setIsRedirectingInstagram] = useState(false);
+
+  async function handleConnectInstagramOAuth() {
+    setIsRedirectingInstagram(true);
+    try {
+      const response = await api.get<{ authorizeUrl: string }>(
+        `/integrations/instagram/connect?returnTo=${encodeURIComponent("/connections")}`
+      );
+      if (!response.data?.authorizeUrl) throw new Error("URL de autorização não retornada pelo servidor");
+      window.location.href = response.data.authorizeUrl;
+    } catch (error: any) {
+      setIsRedirectingInstagram(false);
+      toast({
+        title: "Erro ao iniciar conexão com Instagram",
+        description: error?.message || "Tente novamente.",
+        variant: "destructive",
+      });
+    }
+  }
 
   useEffect(() => {
     if (user?.role === "SUPER_ADMIN") {
@@ -1096,7 +1358,7 @@ function NewConnectionDialog({ onSuccess }: { onSuccess: () => void }) {
         ? `${baseUrlClean}/webhooks/meta/${response.data.id}`
         : null;
       const callbackUrlInstagram = type === "INSTAGRAM" && response?.data?.id
-        ? `${baseUrlClean}/webhooks/instagram/${response.data.id}`
+        ? instagramConfig?.webhookUrl || `${baseUrlClean}/webhooks/instagram`
         : null;
       if (type === "META_CLOUD" && callbackUrlMeta) {
         navigator.clipboard.writeText(callbackUrlMeta).catch(() => {});
@@ -1328,102 +1590,182 @@ function NewConnectionDialog({ onSuccess }: { onSuccess: () => void }) {
           </TabsContent>
 
           <TabsContent value="INSTAGRAM" className="space-y-4 mt-4">
-            <div className="space-y-2">
-              <Label htmlFor="name-instagram">Nome da conexão</Label>
-              <Input
-                id="name-instagram"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder="Ex: Instagram Loja"
-                required
-              />
-            </div>
-            {user?.role === "SUPER_ADMIN" && (
-              <div className="space-y-2">
-                <Label>Empresa</Label>
-                <Select
-                  value={selectedCompanyId}
-                  onValueChange={setSelectedCompanyId}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Selecione uma empresa" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {availableCompanies.map((company) => (
-                      <SelectItem key={company.id} value={company.id}>
+            <div className="space-y-3">
+              <p className="text-sm text-muted-foreground">
+                Conecte uma <strong>conta profissional</strong> do Instagram (Business ou Creator). Você
+                fará login no Instagram e autorizará o ChatBlue a ler e responder{" "}
+                <strong>mensagens do Direct</strong> e <strong>comentários</strong>.
+              </p>
+              <Button
+                type="button"
+                size="lg"
+                className="w-full h-12 text-base text-white bg-gradient-to-r from-purple-600 via-pink-600 to-orange-500 hover:opacity-90 disabled:opacity-50"
+                disabled={!instagramConfig?.configured || isRedirectingInstagram}
+                onClick={handleConnectInstagramOAuth}
+              >
+                {isRedirectingInstagram ? (
+                  <Loader2 className="w-5 h-5 mr-2 animate-spin" />
+                ) : (
+                  <Instagram className="w-5 h-5 mr-2" />
+                )}
+                Conectar com Instagram
+              </Button>
+              {instagramConfig === null && (
+                <p className="text-xs text-muted-foreground">Verificando configuração do servidor...</p>
+              )}
+              {instagramConfig && !instagramConfig.configured && (
+                <Alert className="border-amber-300 bg-amber-50 text-amber-900 dark:bg-amber-950/20 dark:text-amber-200 dark:border-amber-800">
+                  <AlertTriangle className="h-4 w-4 !text-amber-600" />
+                  <AlertTitle>Integração com a Meta não configurada</AlertTitle>
+                  <AlertDescription className="space-y-2 text-xs">
+                    <p>
+                      Configure <code className="px-1 rounded bg-amber-100 dark:bg-amber-900">META_APP_ID</code> e{" "}
+                      <code className="px-1 rounded bg-amber-100 dark:bg-amber-900">META_APP_SECRET</code> no servidor.
+                      Registre as URLs abaixo no app da Meta:
+                    </p>
+                    {[
+                      { label: "URL de redirecionamento OAuth", value: instagramConfig.redirectUri },
+                      { label: "URL do webhook", value: instagramConfig.webhookUrl },
+                    ].map((item) => (
+                      <div key={item.label} className="space-y-1">
+                        <span className="font-medium">{item.label}</span>
                         <div className="flex items-center gap-2">
-                          <Avatar className="h-5 w-5">
-                            <AvatarImage src={company.logo} />
-                            <AvatarFallback>
-                              <Building2 className="w-3 h-3" />
-                            </AvatarFallback>
-                          </Avatar>
-                          {company.name}
+                          <code className="flex-1 break-all rounded bg-amber-100 dark:bg-amber-900 px-1.5 py-1 font-mono">
+                            {item.value || "—"}
+                          </code>
+                          {item.value && (
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="icon"
+                              className="h-7 w-7 flex-shrink-0"
+                              title="Copiar"
+                              onClick={() => copyToClipboard(item.value, toast)}
+                            >
+                              <Copy className="w-3 h-3" />
+                            </Button>
+                          )}
                         </div>
-                      </SelectItem>
+                      </div>
                     ))}
-                  </SelectContent>
-                </Select>
+                  </AlertDescription>
+                </Alert>
+              )}
+            </div>
+
+            <div className="border-t pt-3">
+              <button
+                type="button"
+                className="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
+                onClick={() => setShowInstagramManual((v) => !v)}
+              >
+                {showInstagramManual ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+                Configuração manual (avançado)
+              </button>
+            </div>
+
+            {showInstagramManual && (
+              <div className="space-y-4">
+                <div className="space-y-2">
+                  <Label htmlFor="name-instagram">Nome da conexão</Label>
+                  <Input
+                    id="name-instagram"
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    placeholder="Ex: Instagram Loja"
+                    required
+                  />
+                </div>
+                {user?.role === "SUPER_ADMIN" && (
+                  <div className="space-y-2">
+                    <Label>Empresa</Label>
+                    <Select
+                      value={selectedCompanyId}
+                      onValueChange={setSelectedCompanyId}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Selecione uma empresa" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {availableCompanies.map((company) => (
+                          <SelectItem key={company.id} value={company.id}>
+                            <div className="flex items-center gap-2">
+                              <Avatar className="h-5 w-5">
+                                <AvatarImage src={company.logo} />
+                                <AvatarFallback>
+                                  <Building2 className="w-3 h-3" />
+                                </AvatarFallback>
+                              </Avatar>
+                              {company.name}
+                            </div>
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
+                <div className="space-y-2">
+                  <Label htmlFor="instagramAccountId">Instagram Account ID</Label>
+                  <Input
+                    id="instagramAccountId"
+                    value={instagramAccountId}
+                    onChange={(e) => setInstagramAccountId(e.target.value)}
+                    placeholder="ID da conta do Instagram"
+                    required
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    O ID da conta profissional do Instagram (IGSID)
+                  </p>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="instagramAccessToken">Access Token</Label>
+                  <Input
+                    id="instagramAccessToken"
+                    type="password"
+                    value={instagramAccessToken}
+                    onChange={(e) => setInstagramAccessToken(e.target.value)}
+                    placeholder="Token de acesso da Meta"
+                    required
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Token de acesso da API do Instagram (Meta Graph API)
+                  </p>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="instagramWebhookToken">Webhook Verify Token</Label>
+                  <Input
+                    id="instagramWebhookToken"
+                    value={instagramWebhookToken}
+                    onChange={(e) => setInstagramWebhookToken(e.target.value)}
+                    placeholder="Token de verificação do webhook"
+                    required
+                  />
+                </div>
+                <div className="p-3 bg-pink-50 dark:bg-pink-950/20 border border-pink-200 dark:border-pink-800 rounded-md">
+                  <p className="text-xs text-pink-800 dark:text-pink-200">
+                    <strong>Nota:</strong> Para usar Instagram DM, você precisa de uma conta profissional
+                    do Instagram conectada a uma página do Facebook. O token deve ter permissões de
+                    <code className="mx-1 px-1 bg-pink-100 dark:bg-pink-900 rounded">instagram_basic</code> e
+                    <code className="mx-1 px-1 bg-pink-100 dark:bg-pink-900 rounded">instagram_manage_messages</code>.
+                  </p>
+                  <p className="text-xs text-pink-700 dark:text-pink-300 mt-2">
+                    Guia completo: <code className="px-1 bg-pink-100 dark:bg-pink-900 rounded">docs/CONEXAO_INSTAGRAM.md</code>
+                  </p>
+                </div>
               </div>
             )}
-            <div className="space-y-2">
-              <Label htmlFor="instagramAccountId">Instagram Account ID</Label>
-              <Input
-                id="instagramAccountId"
-                value={instagramAccountId}
-                onChange={(e) => setInstagramAccountId(e.target.value)}
-                placeholder="ID da conta do Instagram"
-                required
-              />
-              <p className="text-xs text-muted-foreground">
-                O ID da conta profissional do Instagram (IGSID)
-              </p>
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="instagramAccessToken">Access Token</Label>
-              <Input
-                id="instagramAccessToken"
-                type="password"
-                value={instagramAccessToken}
-                onChange={(e) => setInstagramAccessToken(e.target.value)}
-                placeholder="Token de acesso da Meta"
-                required
-              />
-              <p className="text-xs text-muted-foreground">
-                Token de acesso da API do Instagram (Meta Graph API)
-              </p>
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="instagramWebhookToken">Webhook Verify Token</Label>
-              <Input
-                id="instagramWebhookToken"
-                value={instagramWebhookToken}
-                onChange={(e) => setInstagramWebhookToken(e.target.value)}
-                placeholder="Token de verificação do webhook"
-                required
-              />
-            </div>
-            <div className="p-3 bg-pink-50 dark:bg-pink-950/20 border border-pink-200 dark:border-pink-800 rounded-md">
-              <p className="text-xs text-pink-800 dark:text-pink-200">
-                <strong>Nota:</strong> Para usar Instagram DM, você precisa de uma conta profissional
-                do Instagram conectada a uma página do Facebook. O token deve ter permissões de
-                <code className="mx-1 px-1 bg-pink-100 dark:bg-pink-900 rounded">instagram_basic</code> e
-                <code className="mx-1 px-1 bg-pink-100 dark:bg-pink-900 rounded">instagram_manage_messages</code>.
-              </p>
-              <p className="text-xs text-pink-700 dark:text-pink-300 mt-2">
-                Guia completo: <code className="px-1 bg-pink-100 dark:bg-pink-900 rounded">docs/CONEXAO_INSTAGRAM.md</code>
-              </p>
-            </div>
           </TabsContent>
         </Tabs>
       </div>
 
-      <DialogFooter>
-        <Button type="submit" disabled={isLoading}>
-          {isLoading && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
-          Criar Conexão
-        </Button>
-      </DialogFooter>
+      {(type !== "INSTAGRAM" || showInstagramManual) && (
+        <DialogFooter>
+          <Button type="submit" disabled={isLoading}>
+            {isLoading && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+            Criar Conexão
+          </Button>
+        </DialogFooter>
+      )}
     </form>
   );
 }

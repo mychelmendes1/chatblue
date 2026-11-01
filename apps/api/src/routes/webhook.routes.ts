@@ -3,7 +3,9 @@ import { prisma } from '../config/database.js';
 import { logger } from '../config/logger.js';
 import { MessageProcessor } from '../services/message-processor.service.js';
 import { MetaCloudService } from '../services/whatsapp/meta-cloud.service.js';
-import { InstagramService } from '../services/instagram/instagram.service.js';
+import { verifyMetaSignature } from '../utils/meta-signature.util.js';
+import { addInstagramWebhookJob } from '../jobs/index.js';
+import { instagramWebhookProcessor } from '../jobs/processors/instagram-webhook.processor.js';
 import { translateMetaError, getErrorSuggestion } from '../utils/meta-error-translator.js';
 import { getGlobalIo } from '../server.js';
 
@@ -475,8 +477,79 @@ async function handleReaction(
 // ============================================
 // INSTAGRAM WEBHOOKS
 // ============================================
+// Webhook ÚNICO do app (Instagram API with Instagram Login): a Meta aceita uma URL de callback
+// por app, então o roteamento para a conexão é feito pelo `entry.id` (ID da conta Instagram)
+// no processador da fila `instagram-webhook`.
 
-// Instagram webhook verification
+let warnedMissingAppSecret = false;
+
+/** Handler comum do POST (webhook único e rota legada por conexão) */
+async function handleInstagramWebhookPost(req: any, res: any): Promise<void> {
+  const signature = verifyMetaSignature(req.rawBody, req.get('x-hub-signature-256'));
+  if (signature.skipped && !warnedMissingAppSecret) {
+    warnedMissingAppSecret = true;
+    logger.warn('[IG Webhook] META_APP_SECRET não definido: assinatura X-Hub-Signature-256 NÃO está sendo validada');
+  }
+  if (!signature.valid) {
+    logger.warn('[IG Webhook] Assinatura inválida, requisição rejeitada', { ip: req.ip, path: req.originalUrl });
+    res.sendStatus(401);
+    return;
+  }
+
+  // Responde rápido para a Meta; o processamento acontece na fila
+  res.sendStatus(200);
+
+  const body = req.body || {};
+  if (body.object && body.object !== 'instagram') {
+    logger.debug(`[IG Webhook] object "${body.object}" ignorado`);
+    return;
+  }
+
+  const receivedAt = new Date();
+  for (const entry of body.entry || []) {
+    try {
+      await addInstagramWebhookJob(entry, receivedAt);
+    } catch (error) {
+      // Sem fila (Redis fora): processa inline para não perder o evento
+      logger.error('[IG Webhook] Falha ao enfileirar entry, processando inline', {
+        error: (error as any)?.message || error,
+      });
+      try {
+        await instagramWebhookProcessor({
+          id: 'inline',
+          data: { entry, receivedAt: receivedAt.toISOString() },
+        } as any);
+      } catch (inlineError) {
+        logger.error('[IG Webhook] Falha no processamento inline', inlineError);
+      }
+    }
+  }
+}
+
+// Verificação do webhook único
+router.get('/instagram', (req, res) => {
+  const mode = req.query['hub.mode'];
+  const token = req.query['hub.verify_token'];
+  const challenge = req.query['hub.challenge'];
+  const expected = process.env.INSTAGRAM_WEBHOOK_VERIFY_TOKEN;
+
+  if (mode === 'subscribe' && expected && token === expected) {
+    logger.info('[IG Webhook] Webhook único verificado');
+    return res.status(200).send(challenge);
+  }
+  logger.warn('[IG Webhook] Falha na verificação do webhook único', { mode, hasExpected: Boolean(expected) });
+  return res.sendStatus(403);
+});
+
+// Eventos do webhook único
+router.post('/instagram', (req, res) => {
+  handleInstagramWebhookPost(req, res).catch((error) => {
+    logger.error('Instagram webhook processing error:', error);
+    if (!res.headersSent) res.sendStatus(500);
+  });
+});
+
+// Instagram webhook verification (legado, por conexão)
 router.get('/instagram/:connectionId', async (req, res) => {
   try {
     const mode = req.query['hub.mode'];
@@ -491,7 +564,12 @@ router.get('/instagram/:connectionId', async (req, res) => {
       return res.sendStatus(404);
     }
 
-    if (mode === 'subscribe' && token === connection.webhookToken) {
+    const globalToken = process.env.INSTAGRAM_WEBHOOK_VERIFY_TOKEN;
+    if (
+      mode === 'subscribe' &&
+      token &&
+      (token === connection.webhookToken || (globalToken && token === globalToken))
+    ) {
       logger.info(`Instagram webhook verified for connection ${connection.id}`);
       return res.status(200).send(challenge);
     }
@@ -503,328 +581,14 @@ router.get('/instagram/:connectionId', async (req, res) => {
   }
 });
 
-/**
- * Extract message content from Instagram webhook message
- */
-async function extractInstagramMessageContent(
-  message: any,
-  connection: any
-): Promise<{
-  type: string;
-  content: string;
-  mediaUrl?: string;
-  quotedMessageId?: string;
-  reactionEmoji?: string;
-  reactionMessageId?: string;
-  storyMention?: {
-    id: string;
-    url?: string;
-  };
-  storyReply?: {
-    id: string;
-    url?: string;
-  };
-}> {
-  let type = 'TEXT';
-  let content = '';
-  let mediaUrl: string | undefined;
-  let quotedMessageId: string | undefined;
-  let reactionEmoji: string | undefined;
-  let reactionMessageId: string | undefined;
-  let storyMention: { id: string; url?: string } | undefined;
-  let storyReply: { id: string; url?: string } | undefined;
-
-  // Check if this is a reply
-  if (message.reply_to?.mid) {
-    quotedMessageId = message.reply_to.mid;
-  }
-
-  // Handle different message types
-  if (message.text) {
-    type = 'TEXT';
-    content = message.text;
-  } else if (message.attachments && message.attachments.length > 0) {
-    const attachment = message.attachments[0];
-    const attachmentType = attachment.type;
-    const payload = attachment.payload;
-
-    switch (attachmentType) {
-      case 'image':
-        type = 'IMAGE';
-        mediaUrl = payload.url;
-        break;
-      case 'video':
-        type = 'VIDEO';
-        mediaUrl = payload.url;
-        break;
-      case 'audio':
-        type = 'AUDIO';
-        mediaUrl = payload.url;
-        break;
-      case 'file':
-        type = 'DOCUMENT';
-        mediaUrl = payload.url;
-        break;
-      case 'share':
-        // Shared post or story
-        type = 'TEXT';
-        content = payload.url || '[Shared content]';
-        break;
-      case 'story_mention':
-        // User mentioned our account in their story
-        type = 'SYSTEM';
-        content = '[Story mention]';
-        storyMention = {
-          id: payload.story_id,
-          url: payload.url,
-        };
-        break;
-      case 'reel':
-        type = 'VIDEO';
-        content = '[Reel shared]';
-        mediaUrl = payload.url;
-        break;
-      case 'ig_reel':
-        type = 'VIDEO';
-        content = '[Instagram Reel]';
-        mediaUrl = payload.url;
-        break;
-      default:
-        type = 'TEXT';
-        content = `[${attachmentType}]`;
-    }
-  } else if (message.sticker_id) {
-    type = 'STICKER';
-    content = message.sticker_id.toString();
-  } else if (message.reaction) {
-    // This is a reaction to a message
-    reactionEmoji = message.reaction.emoji;
-    reactionMessageId = message.reaction.mid;
-  } else if (message.referral?.story) {
-    // Reply to a story
-    type = 'TEXT';
-    content = message.text || '[Story reply]';
-    storyReply = {
-      id: message.referral.story.id,
-      url: message.referral.story.url,
-    };
-  }
-
-  // Download media if present
-  if (mediaUrl && connection) {
-    try {
-      const instagramService = new InstagramService(connection);
-      const { localPath } = await instagramService.downloadMedia(mediaUrl);
-      const apiUrl = process.env.API_URL || 'http://localhost:3001';
-      mediaUrl = `${apiUrl}/uploads/media/${localPath.split('/').pop()}`;
-    } catch (error) {
-      logger.error('Failed to download Instagram media:', error);
-    }
-  }
-
-  return {
-    type,
-    content,
-    mediaUrl,
-    quotedMessageId,
-    reactionEmoji,
-    reactionMessageId,
-    storyMention,
-    storyReply,
-  };
-}
-
-// Instagram webhook events
-router.post('/instagram/:connectionId', async (req, res) => {
-  try {
-    // Always respond quickly to Meta
-    res.sendStatus(200);
-
-    const connection = await prisma.whatsAppConnection.findUnique({
-      where: { id: req.params.connectionId },
-      include: { company: true },
-    });
-
-    if (!connection || connection.type !== 'INSTAGRAM') {
-      logger.warn(`Instagram webhook for unknown/invalid connection: ${req.params.connectionId}`);
-      return;
-    }
-
-    const body = req.body;
-    logger.debug('Instagram webhook received:', JSON.stringify(body, null, 2));
-
-    // Process webhook entries
-    if (body.object === 'instagram') {
-      for (const entry of body.entry || []) {
-        // Process messaging events
-        if (entry.messaging) {
-          for (const event of entry.messaging) {
-            const senderId = event.sender?.id;
-            const recipientId = event.recipient?.id;
-            const timestamp = event.timestamp;
-
-            // Skip if this is from our own account
-            if (senderId === connection.instagramAccountId) {
-              continue;
-            }
-
-            // Handle different event types
-            if (event.message) {
-              // Incoming message
-              const extracted = await extractInstagramMessageContent(event.message, connection);
-
-              // Handle reactions separately
-              if (extracted.reactionEmoji !== undefined && extracted.reactionMessageId) {
-                await handleInstagramReaction(
-                  extracted.reactionMessageId,
-                  extracted.reactionEmoji,
-                  senderId,
-                  false
-                );
-                continue;
-              }
-
-              // Process regular message
-              await MessageProcessor.processIncoming({
-                connectionId: connection.id,
-                companyId: connection.companyId,
-                from: senderId,
-                wamid: event.message.mid,
-                type: extracted.type,
-                content: extracted.content,
-                mediaUrl: extracted.mediaUrl,
-                timestamp: new Date(timestamp),
-                quotedMessageId: extracted.quotedMessageId,
-                metadata: {
-                  platform: 'instagram',
-                  storyMention: extracted.storyMention,
-                  storyReply: extracted.storyReply,
-                } as any,
-              });
-            } else if (event.read) {
-              // Message read receipt
-              const watermark = event.read.watermark;
-              logger.debug(`Instagram message read up to: ${watermark}`);
-            } else if (event.reaction) {
-              // Reaction to a message
-              await handleInstagramReaction(
-                event.reaction.mid,
-                event.reaction.emoji || '',
-                senderId,
-                false
-              );
-            } else if (event.postback) {
-              // Button postback
-              const payload = event.postback.payload;
-              const title = event.postback.title;
-
-              await MessageProcessor.processIncoming({
-                connectionId: connection.id,
-                companyId: connection.companyId,
-                from: senderId,
-                wamid: event.postback.mid || `postback_${Date.now()}`,
-                type: 'INTERACTIVE',
-                content: title || payload,
-                timestamp: new Date(timestamp),
-                metadata: {
-                  platform: 'instagram',
-                  interactiveResponse: {
-                    type: 'postback',
-                    payload,
-                    title,
-                  } as any,
-                } as any,
-              });
-            } else if (event.referral) {
-              // User came from an ad, link, or other referral
-              logger.info('Instagram referral event:', event.referral);
-            }
-          }
-        }
-
-        // Process standby events (when another app has control)
-        if (entry.standby) {
-          for (const event of entry.standby) {
-            logger.debug('Instagram standby event:', event);
-          }
-        }
-      }
-    }
-  } catch (error) {
+// Instagram webhook events (legado, por conexão): mesmo fluxo do webhook único,
+// a conexão é resolvida pelo entry.id
+router.post('/instagram/:connectionId', (req, res) => {
+  handleInstagramWebhookPost(req, res).catch((error) => {
     logger.error('Instagram webhook processing error:', error);
-  }
+    if (!res.headersSent) res.sendStatus(500);
+  });
 });
-
-/**
- * Handle Instagram reaction to a message
- */
-async function handleInstagramReaction(
-  messageId: string,
-  emoji: string,
-  from: string,
-  fromMe: boolean
-): Promise<void> {
-  try {
-    // Find the message
-    const message = await prisma.message.findFirst({
-      where: { wamid: messageId },
-      include: { ticket: true },
-    });
-
-    if (!message) {
-      logger.warn(`Message not found for Instagram reaction: ${messageId}`);
-      return;
-    }
-
-    // Store reaction
-    if (emoji) {
-      await prisma.message.update({
-        where: { id: message.id },
-        data: {
-          reactions: {
-            push: {
-              emoji,
-              from,
-              fromMe,
-              platform: 'instagram',
-              timestamp: new Date().toISOString(),
-            },
-          },
-        },
-      });
-    } else {
-      // Remove reaction
-      const currentReactions = (message.reactions as any[]) || [];
-      const filteredReactions = currentReactions.filter(
-        (r) => !(r.from === from && r.fromMe === fromMe)
-      );
-
-      await prisma.message.update({
-        where: { id: message.id },
-        data: {
-          reactions: filteredReactions,
-        },
-      });
-    }
-
-    // Emit socket event
-    const io = (global as any).io;
-    if (io && message.ticket) {
-      io.to(`ticket:${message.ticket.id}`).emit('message:reaction', {
-        messageId: message.id,
-        wamid: messageId,
-        emoji,
-        from,
-        fromMe,
-        platform: 'instagram',
-      });
-    }
-
-    logger.info(`Instagram reaction ${emoji || '(removed)'} on message ${messageId}`);
-  } catch (error) {
-    logger.error('Error handling Instagram reaction:', error);
-  }
-}
 
 // ============================================
 // BAILEYS WEBHOOKS
