@@ -48,12 +48,15 @@ export async function getActiveConnectionForTicket(ticket: {
       })
     : null;
 
-  if (!activeConnection) {
+  // Não troca de canal: ticket do Instagram não pode cair numa conexão WhatsApp (o destinatário é um
+  // IGSID) e ticket do WhatsApp não pode cair numa conexão Instagram (o destinatário é um telefone).
+  if (!activeConnection && currentConnection?.type !== 'INSTAGRAM') {
     activeConnection = await prisma.whatsAppConnection.findFirst({
       where: {
         companyId,
         status: 'CONNECTED',
         isActive: true,
+        type: { not: 'INSTAGRAM' },
       },
       orderBy: [{ isDefault: 'desc' }, { lastConnected: 'desc' }],
     });

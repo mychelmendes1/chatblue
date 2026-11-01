@@ -47,11 +47,15 @@ export async function refreshInstagramToken(
       error: message,
       meta: error?.meta,
     });
+    // Só marca ERROR se o token realmente não serve mais (inválido/expirado). Falhas transitórias
+    // ou "token com menos de 24 h" mantêm a conexão CONNECTED: o token atual continua válido.
+    const tokenExpired = !!connection.tokenExpiresAt && connection.tokenExpiresAt.getTime() <= Date.now();
+    const tokenInvalid = error?.meta?.code === 190;
     await prisma.whatsAppConnection
       .update({
         where: { id: connection.id },
         data: {
-          status: 'ERROR',
+          ...((tokenExpired || tokenInvalid) && { status: 'ERROR' as const }),
           lastError: `Falha ao renovar token do Instagram: ${message}`.slice(0, 1000),
         },
       })

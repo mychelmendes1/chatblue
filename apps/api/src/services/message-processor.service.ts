@@ -192,13 +192,14 @@ export class MessageProcessor {
       // Canonical phone for contact unification (e.g. Brazil 9th digit: 554298067510 and 5542998067510 -> same contact)
       const canonicalPhone = !normalizedPhone ? undefined : toCanonicalPhone(normalizedPhone);
 
+      const isInstagram = data.metadata?.platform === 'instagram';
+
       // Check if this looks like a LID (Linked ID) instead of a real phone number
-      const isLid = this.isLikelyLid(normalizedPhone);
+      // (IGSIDs do Instagram têm 16+ dígitos e não são LIDs: precisam ficar em instagramId)
+      const isLid = !isInstagram && this.isLikelyLid(normalizedPhone);
       if (isLid) {
         logger.warn(`Phone ${normalizedPhone} appears to be a LID (WhatsApp privacy ID). User may have phone privacy enabled.`);
       }
-
-      const isInstagram = data.metadata?.platform === 'instagram';
 
       // Get or create contact - search by normalized phone, canonical phone, LID, or Instagram ID
       const contactWhere: any = {
@@ -257,7 +258,7 @@ export class MessageProcessor {
         }
         
         // If the contact was previously stored with a LID and we now have a real phone, update it
-        if (contact.lidId && !isLid && normalizedPhone !== contact.phone) {
+        if (contact.lidId && !isLid && !isInstagram && normalizedPhone !== contact.phone) {
           updates.phone = normalizedPhone;
           logger.info(`Updating contact phone from LID ${contact.lidId} to real phone: ${normalizedPhone}`);
         }

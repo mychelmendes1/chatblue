@@ -80,6 +80,23 @@ async function getPushName(connection: WhatsAppConnection, igsid: string): Promi
   }
 }
 
+/**
+ * Retry do BullMQ após falha parcial: processIncoming lança mesmo depois de gravar a mensagem
+ * (ex.: erro na IA). Sem esta checagem o retry duplicaria a mensagem e a resposta automática.
+ */
+async function alreadyStored(connection: WhatsAppConnection, mid: string | undefined): Promise<boolean> {
+  if (!mid) return false;
+  const existing = await prisma.message.findFirst({
+    where: { wamid: mid, connectionId: connection.id },
+    select: { id: true },
+  });
+  if (existing) {
+    logger.debug(`[IG Webhook] Mensagem ${mid} já gravada, ignorando reprocessamento`);
+    return true;
+  }
+  return false;
+}
+
 /** messaging_seen: marca nossas mensagens como lidas até o watermark */
 async function handleRead(connection: WhatsAppConnection, senderId: string, event: any): Promise<void> {
   let watermark: Date | null = null;
@@ -152,6 +169,8 @@ async function handleMessagingEvent(connection: WhatsAppConnection, event: any):
       return;
     }
 
+    if (await alreadyStored(connection, message.mid)) return;
+
     const extracted = await extractInstagramMessageContent(message, connection);
 
     // Reações chegando dentro de `message`
@@ -209,6 +228,8 @@ async function handleMessagingEvent(connection: WhatsAppConnection, event: any):
   }
 
   if (event.postback) {
+    if (await alreadyStored(connection, event.postback.mid)) return;
+
     const payload = event.postback.payload;
     const title = event.postback.title;
     const referral = extractInstagramReferral(event);
