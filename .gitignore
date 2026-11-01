@@ -53,3 +53,6 @@ temp
 
 # Docker
 docker/data
+
+# TypeScript incremental build info
+*.tsbuildinfo
