@@ -6,6 +6,7 @@ import { redis } from '../../config/redis.js';
 import { MessageProcessor } from '../../services/message-processor.service.js';
 import { InstagramService } from '../../services/instagram/instagram.service.js';
 import { CommentAutomationService } from '../../services/instagram/comment-automation.service.js';
+import { InstagramWindowService } from '../../services/instagram/instagram-window.service.js';
 import {
   extractInstagramMessageContent,
   extractInstagramReferral,
@@ -242,15 +243,23 @@ async function handleMessagingEvent(connection: WhatsAppConnection, event: any):
     const referral = extractInstagramReferral(event);
     logger.info('[IG Webhook] Referral recebido', { connectionId: connection.id, senderId, referral });
     if (referral && (referral.ad_id || String(referral.source || '').toUpperCase() === 'ADS')) {
-      await prisma.contact
-        .updateMany({
+      // Abre a janela de 7 dias (Click-to-Direct) a partir do momento do referral
+      const contact = await prisma.contact
+        .findFirst({
           where: {
             companyId: connection.companyId,
             OR: [{ instagramId: senderId }, { phone: senderId }],
           },
-          data: { windowSource: 'ctd_ad' },
+          select: { id: true },
         })
-        .catch((error) => logger.warn('[IG Webhook] Falha ao marcar windowSource ctd_ad', { error }));
+        .catch(() => null);
+      if (contact) {
+        await InstagramWindowService.registerInbound(
+          contact.id,
+          event.timestamp ? new Date(Number(event.timestamp)) : new Date(),
+          { fromAd: true }
+        ).catch((error) => logger.warn('[IG Webhook] Falha ao abrir janela ctd_ad', { error }));
+      }
     }
     return;
   }

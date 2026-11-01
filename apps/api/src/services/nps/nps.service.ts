@@ -1,6 +1,7 @@
 import { prisma } from '../../config/database.js';
 import { logger } from '../../config/logger.js';
-import { WhatsAppService } from '../whatsapp/whatsapp.service.js';
+import { ChannelSender } from '../outbound/channel-sender.service.js';
+import { InstagramWindowClosedError } from '../instagram/instagram-window.service.js';
 import { getActiveConnectionForTicket } from '../../utils/connection-for-ticket.js';
 import crypto from 'crypto';
 
@@ -91,11 +92,11 @@ Sua opinião é muito importante para nós! 😊`;
       // Resolve active connection (handles orphaned tickets after session delete)
       const { connection: connectionToUse } = await getActiveConnectionForTicket(ticket);
 
-      // Send message via WhatsApp
-      const whatsappService = new WhatsAppService(connectionToUse);
-
+      // Envia pelo canal da conexão (WhatsApp ou Instagram, respeitando a janela de 24h)
       try {
-        const result = await whatsappService.sendMessage(ticket.contact.phone, message);
+        const result = await ChannelSender.sendText(connectionToUse, ticket.contact, message, {
+          actor: 'automation',
+        });
 
         // Create message record in database
         await prisma.message.create({
@@ -115,6 +116,10 @@ Sua opinião é muito importante para nós! 😊`;
 
         logger.info(`NPS survey sent to ticket ${ticket.protocol} (${ticket.contact.phone})`);
       } catch (error: any) {
+        if (error instanceof InstagramWindowClosedError) {
+          logger.warn(`NPS survey skipped for ticket ${ticket.protocol}: ${error.state.reason}`);
+          return;
+        }
         logger.error(`Failed to send NPS survey for ticket ${ticket.protocol}:`, error);
         // Don't throw - we don't want to break the resolve/close flow
       }

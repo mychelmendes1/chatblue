@@ -284,8 +284,8 @@ router.post(
 
       // Send via WhatsApp
       try {
-        const { WhatsAppService } = await import("../services/whatsapp/whatsapp.service.js");
-        const whatsappService = new WhatsAppService(connectionToUse);
+        // Envio pelo canal da conexão (WhatsApp ou Instagram, respeitando a janela de 24h)
+        const { ChannelSender } = await import("../services/outbound/channel-sender.service.js");
         
         // Get sender name
         const sender = await prisma.user.findUnique({
@@ -294,8 +294,10 @@ router.post(
         });
         const senderName = sender?.name || "Atendente";
         
-        // Format caption with sender name
-        const formattedCaption = caption ? `*${senderName}:*\n\n${caption}` : undefined;
+        // Format caption with sender name (negrito só no WhatsApp)
+        const formattedCaption = caption
+          ? ChannelSender.formatText(connectionToUse, caption, senderName, "\n\n")
+          : undefined;
         
         // Normalize URL to HTTPS before sending to WhatsApp
         // Baileys needs to download the file, so it must be accessible via HTTPS
@@ -305,12 +307,14 @@ router.post(
         const filename = req.file.originalname;
         const mimetype = req.file.mimetype;
         
-        const result = await whatsappService.sendMedia(
-          ticket.contact.phone,
+        const result = await ChannelSender.sendMedia(
+          connectionToUse,
+          ticket.contact,
           normalizedUrl,
           messageType,
           formattedCaption,
           {
+            actor: "human",
             filename,
             mimetype,
           }
@@ -365,6 +369,25 @@ router.post(
 
         res.json(updatedMessage);
       } catch (whatsappError: any) {
+        const { InstagramWindowClosedError } = await import("../services/instagram/instagram-window.service.js");
+        if (whatsappError instanceof InstagramWindowClosedError) {
+          const reason = whatsappError.state.reason || whatsappError.message;
+          const failedMessage = await prisma.message.update({
+            where: { id: message.id },
+            data: { status: "FAILED", failedReason: reason },
+          });
+          const io = (req as any).app.get("io");
+          if (io) {
+            io.to(`ticket:${ticket.id}`).emit("message:sent", { ...failedMessage, translatedError: reason });
+          }
+          return res.status(422).json({
+            message: reason,
+            code: "INSTAGRAM_WINDOW_CLOSED",
+            window: whatsappError.state,
+            failedMessage,
+          });
+        }
+
         logger.error({ err: whatsappError }, "Error sending media via WhatsApp");
         
         await prisma.message.update({

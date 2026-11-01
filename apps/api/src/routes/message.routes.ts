@@ -5,7 +5,11 @@ import { authenticate } from '../middlewares/auth.middleware.js';
 import { ensureTenant } from '../middlewares/tenant.middleware.js';
 import { NotFoundError } from '../middlewares/error.middleware.js';
 import { WhatsAppService } from '../services/whatsapp/whatsapp.service.js';
-import { InstagramService } from '../services/instagram/instagram.service.js';
+import { ChannelSender } from '../services/outbound/channel-sender.service.js';
+import {
+  InstagramWindowService,
+  InstagramWindowClosedError,
+} from '../services/instagram/instagram-window.service.js';
 import { logger } from '../config/logger.js';
 import { normalizeMediaUrl } from '../utils/media-url.util.js';
 import { translateMetaError, getErrorSuggestion } from '../utils/meta-error-translator.js';
@@ -13,6 +17,146 @@ import { sendOutboundEvent } from '../services/outbound-webhook.service.js';
 import { getActiveConnectionForTicket } from '../utils/connection-for-ticket.js';
 
 const router = Router();
+
+const WHATSAPP_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Janela do Instagram fechada: marca a mensagem como FAILED, avisa via socket e responde 422.
+ * Resposta: { message, code: 'INSTAGRAM_WINDOW_CLOSED', window, failedMessage }
+ */
+async function respondInstagramWindowClosed(
+  req: any,
+  res: any,
+  ticketId: string,
+  messageId: string,
+  error: InstagramWindowClosedError
+): Promise<void> {
+  const reason = error.state.reason || error.message;
+
+  logger.warn('[Instagram] Envio bloqueado: janela fechada', {
+    ticketId,
+    messageId,
+    source: error.state.source,
+    lastInboundAt: error.state.lastInboundAt,
+  });
+
+  const failedMessage = await prisma.message.update({
+    where: { id: messageId },
+    data: {
+      status: 'FAILED',
+      failedReason: reason,
+    },
+    include: {
+      sender: {
+        select: {
+          id: true,
+          name: true,
+          avatar: true,
+          isAI: true,
+        },
+      },
+    },
+  });
+
+  const io = req.app.get('io');
+  if (io) {
+    io.to(`ticket:${ticketId}`).emit('message:error', {
+      messageId,
+      error: reason,
+      suggestion: null,
+      originalError: reason,
+      code: 'INSTAGRAM_WINDOW_CLOSED',
+      window: error.state,
+    });
+    io.to(`ticket:${ticketId}`).emit('message:sent', {
+      ...failedMessage,
+      mediaUrl: normalizeMediaUrl(failedMessage.mediaUrl),
+      translatedError: reason,
+    });
+  }
+
+  res.status(422).json({
+    message: reason,
+    code: 'INSTAGRAM_WINDOW_CLOSED',
+    window: error.state,
+    failedMessage: {
+      ...failedMessage,
+      mediaUrl: normalizeMediaUrl(failedMessage.mediaUrl),
+    },
+  });
+}
+
+// Estado da janela de mensagens do ticket (Instagram: 24h/7d + Human Agent; WhatsApp Cloud: 24h)
+router.get('/ticket/:ticketId/window', authenticate, ensureTenant, async (req, res, next) => {
+  try {
+    const ticket = await prisma.ticket.findFirst({
+      where: {
+        id: req.params.ticketId,
+        companyId: req.user!.companyId,
+      },
+      select: {
+        id: true,
+        connection: { select: { type: true } },
+        contact: { select: { id: true, lastMessageAt: true, windowSource: true } },
+      },
+    });
+
+    if (!ticket) {
+      throw new NotFoundError('Ticket not found');
+    }
+
+    const connectionType = ticket.connection?.type ?? null;
+
+    if (connectionType === 'INSTAGRAM') {
+      const state = await InstagramWindowService.getStateForTicket(ticket.id, req.user!.companyId);
+      if (state) {
+        return res.json({
+          channel: 'instagram',
+          connectionType,
+          windowApplies: true,
+          ...state,
+          hoursRemaining:
+            state.minutesRemaining !== null ? Math.floor(state.minutesRemaining / 60) : null,
+          lastMessageAt: state.lastInboundAt,
+          requiresTemplate: false,
+        });
+      }
+    }
+
+    // WhatsApp: mesma regra de /contacts/:id/messaging-window (janela de 24h da API oficial).
+    // Baileys não tem janela (windowApplies = false, sempre aberto).
+    const windowApplies = connectionType === 'META_CLOUD';
+    const now = Date.now();
+    const lastInboundAt = ticket.contact?.lastMessageAt ?? null;
+    const expiresAt = lastInboundAt ? new Date(lastInboundAt.getTime() + WHATSAPP_WINDOW_MS) : null;
+    const windowOpen = !!expiresAt && expiresAt.getTime() > now;
+    const isOpen = windowApplies ? windowOpen : true;
+    const minutesRemaining = expiresAt
+      ? (windowOpen ? Math.max(0, Math.floor((expiresAt.getTime() - now) / 60000)) : 0)
+      : null;
+
+    res.json({
+      channel: 'whatsapp',
+      connectionType,
+      windowApplies,
+      isOpen,
+      expiresAt,
+      minutesRemaining,
+      hoursRemaining: minutesRemaining !== null ? Math.floor(minutesRemaining / 60) : null,
+      source: null,
+      humanAgentAvailable: false,
+      humanAgentExpiresAt: null,
+      lastInboundAt,
+      lastMessageAt: lastInboundAt,
+      requiresTemplate: windowApplies && !windowOpen,
+      ...(windowApplies && !windowOpen && {
+        reason: 'Janela de 24h do WhatsApp fechada. Use um template aprovado para reengajar o contato.',
+      }),
+    });
+  } catch (error) {
+    next(error);
+  }
+});
 
 // Get messages for a ticket (including history from previous tickets)
 router.get('/ticket/:ticketId', authenticate, ensureTenant, async (req, res, next) => {
@@ -212,9 +356,8 @@ router.post('/ticket/:ticketId', authenticate, ensureTenant, async (req, res, ne
 
     // Only send to WhatsApp if not internal
     if (!isInternal) {
-      // Format message with sender name in bold for WhatsApp
+      // Nome do atendente como prefixo (negrito no WhatsApp, texto simples no Instagram - via ChannelSender)
       const senderName = sender?.name || 'Atendente';
-      const formattedContent = `*${senderName}:*\n\n${content}`;
 
       // Log contact phone for debugging
       logger.debug(`Sending message to contact phone: ${ticket.contact.phone} (ticket: ${ticket.id}, contact: ${ticket.contact.id})`);
@@ -230,22 +373,24 @@ router.post('/ticket/:ticketId', authenticate, ensureTenant, async (req, res, ne
         });
       }
 
-      // Recipient: for Instagram use instagramId (or phone, which may store PSID); for WhatsApp use phone
-      const recipientId = connectionToUse.type === 'INSTAGRAM'
-        ? (ticket.contact.instagramId || ticket.contact.phone)
-        : ticket.contact.phone;
+      // Instagram: responder citando o mid da mensagem original (se houver)
+      let replyToMid: string | undefined;
+      if (quotedId && connectionToUse.type === 'INSTAGRAM') {
+        const quotedMsg = await prisma.message.findUnique({
+          where: { id: quotedId },
+          select: { wamid: true },
+        });
+        replyToMid = quotedMsg?.wamid || undefined;
+      }
 
       try {
-        let result: { messageId: string };
-        if (connectionToUse.type === 'INSTAGRAM') {
-          const instagramService = new InstagramService(connectionToUse);
-          result = await instagramService.sendTextMessage(recipientId, formattedContent);
-        } else {
-          const whatsappService = new WhatsAppService(connectionToUse);
-          result = await whatsappService.sendMessage(recipientId, formattedContent, {
-            quotedMessageId: quotedId || undefined,
-          });
-        }
+        const result = await ChannelSender.sendText(connectionToUse, ticket.contact, content, {
+          actor: 'human',
+          senderName,
+          senderSeparator: '\n\n',
+          quotedMessageId: quotedId || undefined,
+          replyToMid,
+        });
 
         // Update message with WhatsApp ID and SENT status
         updatedMessage = await prisma.message.update({
@@ -254,6 +399,9 @@ router.post('/ticket/:ticketId', authenticate, ensureTenant, async (req, res, ne
             wamid: result.messageId,
             status: 'SENT',
             sentAt: new Date(),
+            ...(result.tag && {
+              metadata: { instagramTag: result.tag },
+            }),
           },
           include: {
             sender: {
@@ -275,12 +423,18 @@ router.post('/ticket/:ticketId', authenticate, ensureTenant, async (req, res, ne
           },
         });
       } catch (sendError: any) {
+        // Janela do Instagram fechada: não chegou a chamar a API
+        if (sendError instanceof InstagramWindowClosedError) {
+          await respondInstagramWindowClosed(req, res, ticket.id, message.id, sendError);
+          return;
+        }
+
         // Translate error to Portuguese
         const errorMessage = sendError.message || 'Erro desconhecido';
         const translatedError = translateMetaError(errorMessage);
         const suggestion = getErrorSuggestion(errorMessage);
-        
-        logger.error('Message send failed:', { 
+
+        logger.error('Message send failed:', {
           ticketId: ticket.id, 
           messageId: message.id, 
           error: errorMessage,
@@ -557,37 +711,23 @@ router.post('/ticket/:ticketId/media', authenticate, ensureTenant, async (req, r
     // Normalize URL to HTTPS before sending
     const normalizedMediaUrl = normalizeMediaUrl(mediaUrl) || mediaUrl;
     const originalMediaUrl = message.mediaUrl;
-    const recipientId = connectionToUse.type === 'INSTAGRAM'
-      ? (ticket.contact.instagramId || ticket.contact.phone)
-      : ticket.contact.phone;
 
-    let result: { messageId: string; finalMediaUrl?: string };
-    if (connectionToUse.type === 'INSTAGRAM') {
-      const instagramService = new InstagramService(connectionToUse);
-      switch (mediaType) {
-        case 'IMAGE':
-          result = await instagramService.sendImageMessage(recipientId, normalizedMediaUrl);
-          break;
-        case 'VIDEO':
-          result = await instagramService.sendVideoMessage(recipientId, normalizedMediaUrl);
-          break;
-        case 'AUDIO':
-          result = await instagramService.sendAudioMessage(recipientId, normalizedMediaUrl);
-          break;
-        case 'DOCUMENT':
-          result = await instagramService.sendFileMessage(recipientId, normalizedMediaUrl);
-          break;
-        default:
-          result = await instagramService.sendTextMessage(recipientId, caption || '[Mídia]');
-      }
-    } else {
-      const whatsappService = new WhatsAppService(connectionToUse);
-      result = await whatsappService.sendMedia(
-        recipientId,
+    let result: { messageId: string; finalMediaUrl?: string; tag?: 'HUMAN_AGENT' };
+    try {
+      result = await ChannelSender.sendMedia(
+        connectionToUse,
+        ticket.contact,
         normalizedMediaUrl,
         mediaType,
-        caption
+        caption,
+        { actor: 'human' }
       );
+    } catch (sendError: any) {
+      if (sendError instanceof InstagramWindowClosedError) {
+        await respondInstagramWindowClosed(req, res, ticket.id, message.id, sendError);
+        return;
+      }
+      throw sendError;
     }
 
     // Update message with external message ID and status
@@ -597,6 +737,7 @@ router.post('/ticket/:ticketId/media', authenticate, ensureTenant, async (req, r
       wamid: result.messageId,
       status: 'SENT',
       sentAt: new Date(),
+      ...(result.tag && { metadata: { instagramTag: result.tag } }),
     };
 
     if (result.finalMediaUrl && result.finalMediaUrl !== originalMediaUrl && result.finalMediaUrl.includes('audio-converted')) {
