@@ -13,7 +13,8 @@ import { TransferAnalyzerService } from './ai/transfer-analyzer.service.js';
 import { NotionService } from './notion/notion.service.js';
 import { SLAService } from './sla/sla.service.js';
 import { ExternalAIWebhookService, BlueChatResponse, ExternalAIConfig } from './external-ai/external-ai-webhook.service.js';
-import { WhatsAppService } from './whatsapp/whatsapp.service.js';
+import { ChannelSender } from './outbound/channel-sender.service.js';
+import { InstagramWindowService, InstagramWindowClosedError } from './instagram/instagram-window.service.js';
 import { sendOutboundEvent } from './outbound-webhook.service.js';
 import { isWithinPostSurveyQuietWindow } from '../utils/post-survey-quiet-window.js';
 import * as path from 'path';
@@ -49,6 +50,12 @@ interface IncomingMessage {
       listTitle?: string;
       listDescription?: string;
     };
+    /** Instagram: origem da conversa (anúncio Click-to-Direct, link ig.me, etc.) */
+    referral?: { ref?: string; source?: string; type?: string; ad_id?: string };
+    /** Instagram: menção em story */
+    storyMention?: { id: string; url?: string };
+    /** Instagram: resposta a story */
+    storyReply?: { id: string; url?: string };
   };
 }
 
@@ -892,6 +899,22 @@ export class MessageProcessor {
         createdAt: message.createdAt.toISOString(),
       });
 
+      // Atualiza a janela de mensagens ANTES de qualquer resposta automática (fora do horário, IA),
+      // para que o envio já enxergue a janela aberta por esta mensagem.
+      if (isInstagram) {
+        // Instagram: 24h (standard) ou 7 dias (anúncio Click-to-Direct)
+        const referral = (data.metadata as any)?.referral;
+        await InstagramWindowService.registerInbound(contact.id, timestamp, {
+          fromAd: !!referral?.ad_id || referral?.source === 'ADS',
+        });
+      } else {
+        // Update contact's lastMessageAt for 24-hour messaging window tracking (Meta Cloud API)
+        await prisma.contact.update({
+          where: { id: contact.id },
+          data: { lastMessageAt: timestamp },
+        });
+      }
+
       // Horário de funcionamento: se recebemos fora do horário, enviar mensagem automática
       const companySettings = await prisma.companySettings.findUnique({
         where: { companyId },
@@ -929,9 +952,9 @@ export class MessageProcessor {
                 where: { id: connectionId },
               });
               if (connection) {
-                const { WhatsAppService } = await import('./whatsapp/whatsapp.service.js');
-                const whatsappService = new WhatsAppService(connection);
-                const result = await whatsappService.sendMessage(contact.phone, outOfHoursText);
+                const result = await ChannelSender.sendText(connection, contact, outOfHoursText, {
+                  actor: 'automation',
+                });
                 const sentMessage = await prisma.message.create({
                   data: {
                     type: 'TEXT',
@@ -971,7 +994,11 @@ export class MessageProcessor {
                 logger.info(`Out-of-hours auto-reply sent for ticket ${ticket.id} (next allowed in 4 hours)`);
               }
             } catch (err) {
-              logger.error('Failed to send out-of-hours message:', err);
+              if (err instanceof InstagramWindowClosedError) {
+                logger.warn(`Out-of-hours message skipped for ticket ${ticket.id}: ${err.state.reason}`);
+              } else {
+                logger.error('Failed to send out-of-hours message:', err);
+              }
             }
           }
         }
@@ -994,12 +1021,6 @@ export class MessageProcessor {
           }
         }
       }
-
-      // Update contact's lastMessageAt for 24-hour messaging window tracking (Meta Cloud API)
-      await prisma.contact.update({
-        where: { id: contact.id },
-        data: { lastMessageAt: timestamp },
-      });
 
       // Fetch message with quoted relation for socket emission
       const messageWithQuoted = await prisma.message.findUnique({
@@ -1380,16 +1401,20 @@ export class MessageProcessor {
     // 1. Enviar resposta da IA de volta ao cliente
     // ========================================================================
     if (autoReply && response.action === 'RESPOND' && response.response?.text) {
+      let activeConnectionId: string = ticket.connectionId;
       try {
         // Obter conexão ativa para envio (reatribui ticket se sessão foi excluída)
         const { connection } = await getActiveConnectionForTicket(ticket);
         if (connection) {
-          const whatsappService = new WhatsAppService(connection);
           const aiName = aiUser.name || 'Assistente IA';
-          const formattedMessage = `*${aiName}:*\n${response.response.text}`;
 
-          // Enviar mensagem via WhatsApp
-          const sendResult = await whatsappService.sendMessage(ticket.contact.phone, formattedMessage);
+          // Enviar mensagem pelo canal da conexão (WhatsApp ou Instagram, respeitando a janela).
+          // InstagramWindowClosedError é tratado no catch abaixo (não envia, registra FAILED).
+          activeConnectionId = connection.id;
+          const sendResult = await ChannelSender.sendText(connection, ticket.contact, response.response.text, {
+            actor: 'ai',
+            senderName: aiName,
+          });
 
           // Salvar mensagem no banco de dados
           const aiMessage = await prisma.message.create({
@@ -1457,10 +1482,21 @@ export class MessageProcessor {
           logger.warn(`[ExternalAI] No active WhatsApp connection found to send auto-reply for ticket ${ticket.id}`);
         }
       } catch (error: any) {
-        logger.error(`[ExternalAI] Error sending auto-reply for ticket ${ticket.id}:`, {
-          message: error?.message,
-          stack: error?.stack,
-        });
+        if (error instanceof InstagramWindowClosedError) {
+          await this.recordWindowBlockedMessage({
+            ticketId: ticket.id,
+            companyId,
+            connectionId: activeConnectionId,
+            senderId: aiUser.id,
+            content: response.response.text,
+            error,
+          });
+        } else {
+          logger.error(`[ExternalAI] Error sending auto-reply for ticket ${ticket.id}:`, {
+            message: error?.message,
+            stack: error?.stack,
+          });
+        }
       }
     }
 
@@ -1614,13 +1650,28 @@ export class MessageProcessor {
         // Enviar mensagem de despedida se houver texto na resposta
         if (autoReply && response.response?.text) {
           const { connection } = await getActiveConnectionForTicket(ticket);
+          let sendResult: { messageId: string } | null = null;
           if (connection) {
-            const whatsappService = new WhatsAppService(connection);
             const aiName = aiUser.name || 'Assistente IA';
-            const formattedMessage = `*${aiName}:*\n${response.response.text}`;
-
-            const sendResult = await whatsappService.sendMessage(ticket.contact.phone, formattedMessage);
-
+            try {
+              sendResult = await ChannelSender.sendText(connection, ticket.contact, response.response.text, {
+                actor: 'ai',
+                senderName: aiName,
+              });
+            } catch (sendError) {
+              if (!(sendError instanceof InstagramWindowClosedError)) throw sendError;
+              // Janela do Instagram fechada: não envia a despedida, mas segue resolvendo o ticket
+              await this.recordWindowBlockedMessage({
+                ticketId: ticket.id,
+                companyId,
+                connectionId: connection.id,
+                senderId: aiUser.id,
+                content: response.response.text,
+                error: sendError,
+              });
+            }
+          }
+          if (connection && sendResult) {
             const aiMessage = await prisma.message.create({
               data: {
                 type: 'TEXT',
@@ -2049,12 +2100,80 @@ export class MessageProcessor {
     }
   }
 
+  /**
+   * Instagram: envio automático (IA/automação) bloqueado pela janela de 24h.
+   * Não envia; registra a mensagem como FAILED com o motivo e avisa a UI. Nunca lança.
+   */
+  private static async recordWindowBlockedMessage(params: {
+    ticketId: string;
+    companyId: string;
+    connectionId: string;
+    senderId?: string | null;
+    content: string;
+    error: InstagramWindowClosedError;
+    existingMessageId?: string;
+  }): Promise<void> {
+    const { ticketId, companyId, connectionId, senderId, content, error, existingMessageId } = params;
+    const reason = error.state.reason || error.message;
+
+    logger.warn(`[Instagram] Envio automático (${error.actor}) bloqueado pela janela no ticket ${ticketId}: ${reason}`, {
+      source: error.state.source,
+      lastInboundAt: error.state.lastInboundAt,
+    });
+
+    try {
+      const failedMessage = existingMessageId
+        ? await prisma.message.update({
+            where: { id: existingMessageId },
+            data: { status: 'FAILED', failedReason: reason },
+            include: { sender: { select: { id: true, name: true, avatar: true, isAI: true } } },
+          })
+        : await prisma.message.create({
+            data: {
+              type: 'TEXT',
+              content,
+              isFromMe: true,
+              isAIGenerated: true,
+              status: 'FAILED',
+              failedReason: reason,
+              ticketId,
+              senderId: senderId || undefined,
+              connectionId,
+            },
+            include: { sender: { select: { id: true, name: true, avatar: true, isAI: true } } },
+          });
+
+      const io = (global as any).io;
+      if (io) {
+        const normalized = { ...failedMessage, mediaUrl: normalizeMediaUrl(failedMessage.mediaUrl), ticketId };
+        if (!existingMessageId) {
+          io.to(`ticket:${ticketId}`).emit('message:new', normalized);
+        }
+        io.to(`ticket:${ticketId}`).emit('message:sent', { ...normalized, translatedError: reason });
+        io.to(`ticket:${ticketId}`).emit('message:error', {
+          messageId: failedMessage.id,
+          error: reason,
+          suggestion: null,
+          originalError: reason,
+          code: 'INSTAGRAM_WINDOW_CLOSED',
+          window: error.state,
+        });
+      }
+    } catch (dbError: any) {
+      logger.error(`[Instagram] Falha ao registrar mensagem bloqueada pela janela (ticket ${ticketId}):`, {
+        message: dbError?.message,
+        companyId,
+      });
+    }
+  }
+
   private static async sendAIResponse(
     ticketId: string,
     companyId: string,
     response: string,
     ticket: any,
-    contact: any
+    contact: any,
+    actor: 'ai' | 'automation' = 'ai'
   ): Promise<void> {
     // Get AI agent name
     const aiAgent = ticket.assignedToId ? await prisma.user.findUnique({
@@ -2072,8 +2191,6 @@ export class MessageProcessor {
     
     logger.info(`Sending AI response in ${finalParts.length} part(s)`);
 
-    const { WhatsAppService } = await import('./whatsapp/whatsapp.service.js');
-    const whatsappService = new WhatsAppService(ticket.connection);
     const io = (global as any).io;
 
     let lastMessage: any = null;
@@ -2119,11 +2236,30 @@ export class MessageProcessor {
         createdAt: aiMessage.createdAt.toISOString(),
       });
 
-      // Only add name to first message
-      const messageContent = i === 0 ? `*${aiName}:*\n${part}` : part;
-
-      // Send via WhatsApp
-      const result = await whatsappService.sendMessage(contact.phone, messageContent);
+      // Envia pelo canal da conexão. Nome só na primeira parte
+      // (WhatsApp: `*Nome:*`; Instagram: `Nome:` sem negrito e sem formatação WhatsApp).
+      let result: { messageId: string };
+      try {
+        result = await ChannelSender.sendText(ticket.connection, contact, part, {
+          actor,
+          senderName: i === 0 ? aiName : undefined,
+        });
+      } catch (sendError) {
+        if (sendError instanceof InstagramWindowClosedError) {
+          // Janela do Instagram fechada: não envia, marca FAILED e interrompe as demais partes
+          await this.recordWindowBlockedMessage({
+            ticketId,
+            companyId,
+            connectionId: ticket.connectionId,
+            senderId: ticket.assignedToId,
+            content: part,
+            error: sendError,
+            existingMessageId: aiMessage.id,
+          });
+          break;
+        }
+        throw sendError;
+      }
 
       lastMessage = await prisma.message.update({
         where: { id: aiMessage.id },
@@ -2232,6 +2368,15 @@ export class MessageProcessor {
         return;
       }
 
+      // Instagram: sem janela aberta não adianta gerar a mensagem (IA nunca usa HUMAN_AGENT)
+      if (ticket.connection?.type === 'INSTAGRAM') {
+        const window = InstagramWindowService.getState(ticket.contact);
+        if (!window.isOpen) {
+          logger.warn(`[OpeningMessage] Ticket ${ticketId}: janela do Instagram fechada, mensagem inicial não enviada (${window.reason})`);
+          return;
+        }
+      }
+
       const aiConfig = ticket.assignedTo.aiConfig as any;
       const syntheticMessage =
         'Esta conversa foi transferida para você. Com base no histórico abaixo, envie uma única mensagem inicial ao cliente, apresentando-se e continuando o atendimento de forma natural. Não repita o histórico na resposta.';
@@ -2279,7 +2424,7 @@ export class MessageProcessor {
       if (response?.trim()) {
         const responseValidation = builtContext.guardrails.validateAIResponse(response, syntheticMessage);
         const finalResponse = responseValidation.isValid ? response : (responseValidation.suggestedResponse || response);
-        await this.sendAIResponse(ticketId, companyId, finalResponse, ticket, ticket.contact);
+        await this.sendAIResponse(ticketId, companyId, finalResponse, ticket, ticket.contact, 'automation');
         logger.info(`[OpeningMessage] Sent opening message for ticket ${ticketId}`);
       }
     } catch (err: any) {

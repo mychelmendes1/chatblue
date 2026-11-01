@@ -47,10 +47,44 @@ const META_ERROR_TRANSLATIONS: Record<string, string> = {
   'Internal error': '⚠️ Erro interno do WhatsApp. Tente novamente.',
 };
 
+// Erros da API do Instagram (Direct). Verificados antes dos do WhatsApp porque alguns
+// trechos genéricos (ex.: "Permission denied") também aparecem nas mensagens do Instagram.
+const INSTAGRAM_WINDOW_ERROR =
+  '⚠️ Mensagem fora da janela de 24h do Instagram. O cliente precisa enviar uma nova mensagem (ou use a resposta como agente humano, se habilitado).';
+const INSTAGRAM_ERROR_TRANSLATIONS: Array<{ match: (lower: string) => boolean; translation: string }> = [
+  {
+    match: (m) => m.includes('(#10) this message is sent outside of allowed window') || m.includes('outside of allowed window'),
+    translation: INSTAGRAM_WINDOW_ERROR,
+  },
+  {
+    match: (m) => m.includes('(#551)') || m.includes("this person isn't available right now") || m.includes('this person isn’t available right now'),
+    translation: '⚠️ Esta pessoa não está disponível no Instagram no momento (pode ter bloqueado ou desativado mensagens).',
+  },
+  {
+    match: (m) => m.includes('human agent') || m.includes('human_agent'),
+    translation: '⚠️ A permissão Human Agent não está aprovada para este app.',
+  },
+  {
+    match: (m) => m.includes('(#100) invalid parameter') && m.includes('comment'),
+    translation: '⚠️ Parâmetro inválido na API do Instagram.',
+  },
+];
+
+function translateInstagramError(errorMessage: string): string | null {
+  const lower = errorMessage.toLowerCase();
+  const found = INSTAGRAM_ERROR_TRANSLATIONS.find((t) => t.match(lower));
+  return found ? found.translation : null;
+}
+
 /**
  * Traduz uma mensagem de erro do Meta para português
  */
 export function translateMetaError(errorMessage: string): string {
+  const instagramTranslation = translateInstagramError(errorMessage);
+  if (instagramTranslation) {
+    return instagramTranslation;
+  }
+
   // Verificar tradução exata
   if (META_ERROR_TRANSLATIONS[errorMessage]) {
     return META_ERROR_TRANSLATIONS[errorMessage];
@@ -128,6 +162,10 @@ export function isWindowError(errorMessage: string): boolean {
  * Obtém uma sugestão de ação baseada no erro
  */
 export function getErrorSuggestion(errorMessage: string): string | null {
+  if (errorMessage.toLowerCase().includes('outside of allowed window')) {
+    return 'Dica: No Instagram não existem templates. Aguarde o cliente enviar uma nova mensagem no Direct.';
+  }
+
   if (isWindowError(errorMessage)) {
     return 'Dica: Use a opção "Enviar Template" para reengajar o contato fora da janela de 24h.';
   }
