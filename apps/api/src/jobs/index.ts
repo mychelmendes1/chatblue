@@ -147,6 +147,9 @@ export const emailPollQueue = new Queue("email-poll", {
     removeOnComplete: 50,
     removeOnFail: 100,
     attempts: 1,
+  },
+});
+
 // Instagram: eventos do webhook (um job por entry) e renovação de tokens OAuth
 export const instagramWebhookQueue = new Queue("instagram-webhook", {
   connection: redis,

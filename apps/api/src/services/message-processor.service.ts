@@ -676,6 +676,7 @@ export class MessageProcessor {
           data: {
             protocol: generateProtocol(),
             status: 'PENDING',
+            channel: isInstagram ? 'INSTAGRAM' : 'WHATSAPP',
             isAIHandled: shouldUseAI && !!aiUser,
             aiTakeoverAt: shouldUseAI && aiUser ? new Date() : null,
             slaDeadline,
