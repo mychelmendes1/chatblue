@@ -119,13 +119,13 @@ enum ActivityType {
 
 // AI Data Source Types
 enum AIDataSourceType {
-  INTERNAL       // Base interna do sistema
-  NOTION         // Integração Notion
-  GOOGLE_DRIVE   // Google Drive
-  CONFLUENCE     // Atlassian Confluence
-  SHAREPOINT     // Microsoft SharePoint
-  EXTERNAL_API   // APIs externas customizadas
-  WEBSITE        // Web scraping
+  INTERNAL // Base interna do sistema
+  NOTION // Integração Notion
+  GOOGLE_DRIVE // Google Drive
+  CONFLUENCE // Atlassian Confluence
+  SHAREPOINT // Microsoft SharePoint
+  EXTERNAL_API // APIs externas customizadas
+  WEBSITE // Web scraping
 }
 
 // AI Query Status
@@ -138,11 +138,11 @@ enum AIQueryStatus {
 
 // AI Document Status
 enum AIDocumentStatus {
-  PENDING        // Aguardando indexação
-  INDEXING       // Em processo de indexação
-  INDEXED        // Indexado com sucesso
-  FAILED         // Falha na indexação
-  OUTDATED       // Precisa reindexar
+  PENDING // Aguardando indexação
+  INDEXING // Em processo de indexação
+  INDEXED // Indexado com sucesso
+  FAILED // Falha na indexação
+  OUTDATED // Precisa reindexar
 }
 
 enum UserCompanyStatus {
@@ -171,29 +171,33 @@ model Company {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  users          User[]
-  userAccess     UserCompany[]
-  departments    Department[]
-  connections    WhatsAppConnection[]
-  contacts       Contact[]
-  tickets        Ticket[]
-  settings       CompanySettings?
-  slaConfigs     SLAConfig[]
-  knowledgeBase  KnowledgeBase[]
-  faqs           FAQ[]
-  metricGoals    MetricGoal[]
-  metricAlerts   MetricAlert[]
-  blueInteractions BlueInteraction[]
-  notifications  Notification[]
-  knowledgeContexts KnowledgeContext[]
-  knowledgeSources KnowledgeSource[]
-  emailAlertLogs   EmailAlertLog[]
+  users              User[]
+  userAccess         UserCompany[]
+  departments        Department[]
+  connections        WhatsAppConnection[]
+  contacts           Contact[]
+  tickets            Ticket[]
+  settings           CompanySettings?
+  slaConfigs         SLAConfig[]
+  knowledgeBase      KnowledgeBase[]
+  faqs               FAQ[]
+  metricGoals        MetricGoal[]
+  metricAlerts       MetricAlert[]
+  blueInteractions   BlueInteraction[]
+  notifications      Notification[]
+  knowledgeContexts  KnowledgeContext[]
+  knowledgeSources   KnowledgeSource[]
+  emailAlertLogs     EmailAlertLog[]
   predefinedMessages PredefinedMessage[]
 
   // AI Assistant relations
-  aiDataSources  AIDataSource[]
+  aiDataSources      AIDataSource[]
   campaignDispatches CampaignDispatch[]
-  aiAgentConfigs AIAgentConfig[]
+  aiAgentConfigs     AIAgentConfig[]
+
+  // Instagram
+  instagramCommentAutomations InstagramCommentAutomation[]
+  instagramCommentEvents      InstagramCommentEvent[]
 
   // ML Learning System relations
   mlTrainingPairs     MLTrainingPair[]
@@ -209,18 +213,18 @@ model Company {
 
 /// Usuário (Atendente ou Admin)
 model User {
-  id        String    @id @default(cuid())
-  email     String    @unique
-  password  String
-  name      String
-  avatar    String?
-  role      UserRole  @default(AGENT)
-  isAI      Boolean   @default(false) @map("is_ai")
-  aiConfig  Json?     @map("ai_config")
-  isActive  Boolean   @default(true) @map("is_active")
-  isOnline  Boolean   @default(false) @map("is_online")
-  lastSeen  DateTime? @map("last_seen")
-  
+  id       String    @id @default(cuid())
+  email    String    @unique
+  password String
+  name     String
+  avatar   String?
+  role     UserRole  @default(AGENT)
+  isAI     Boolean   @default(false) @map("is_ai")
+  aiConfig Json?     @map("ai_config")
+  isActive Boolean   @default(true) @map("is_active")
+  isOnline Boolean   @default(false) @map("is_online")
+  lastSeen DateTime? @map("last_seen")
+
   // Push notification subscription (for web push)
   pushSubscription Json? @map("push_subscription")
 
@@ -228,16 +232,16 @@ model User {
   passwordResetToken   String?   @unique @map("password_reset_token")
   passwordResetExpires DateTime? @map("password_reset_expires")
 
-  createdAt DateTime  @default(now()) @map("created_at")
-  updatedAt DateTime  @updatedAt @map("updated_at")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
   companyId String  @map("company_id")
   company   Company @relation(fields: [companyId], references: [id])
 
   departments      UserDepartment[]
-  companyAccess    UserCompany[]    @relation("UserAccess")
-  approvedAccess   UserCompany[]    @relation("ApprovedBy")
-  tickets          Ticket[]         @relation("AssignedTickets")
+  companyAccess    UserCompany[]     @relation("UserAccess")
+  approvedAccess   UserCompany[]     @relation("ApprovedBy")
+  tickets          Ticket[]          @relation("AssignedTickets")
   messages         Message[]
   activities       Activity[]
   metricGoals      MetricGoal[]
@@ -255,14 +259,14 @@ model User {
 
 /// Relacionamento Usuário-Empresa (Multi-empresa com aprovação)
 model UserCompany {
-  id        String            @id @default(cuid())
-  userId    String            @map("user_id")
-  user      User              @relation("UserAccess", fields: [userId], references: [id], onDelete: Cascade)
-  companyId String            @map("company_id")
-  company   Company           @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  id        String  @id @default(cuid())
+  userId    String  @map("user_id")
+  user      User    @relation("UserAccess", fields: [userId], references: [id], onDelete: Cascade)
+  companyId String  @map("company_id")
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
 
-  role      UserCompanyRole   @default(USER)
-  status    UserCompanyStatus @default(PENDING)
+  role   UserCompanyRole   @default(USER)
+  status UserCompanyStatus @default(PENDING)
 
   approvedById String?   @map("approved_by_id")
   approvedBy   User?     @relation("ApprovedBy", fields: [approvedById], references: [id])
@@ -340,10 +344,18 @@ model WhatsAppConnection {
   instagramAccountId String? @map("instagram_account_id")
   instagramUsername  String? @map("instagram_username")
 
+  // OAuth (Instagram Business Login) - token long-lived de 60 dias, renovado por job
+  authMethod         String?   @map("auth_method") // "oauth" | "manual"
+  tokenExpiresAt     DateTime? @map("token_expires_at")
+  scopes             String[]  @default([])
+  webhookFields      String[]  @default([]) @map("webhook_fields") // campos inscritos via /subscribed_apps
+  lastTokenRefreshAt DateTime? @map("last_token_refresh_at")
+  lastError          String?   @map("last_error")
+
   // AI Settings per connection
-  aiEnabled       Boolean @default(true) @map("ai_enabled") // Se IA está habilitada nesta conexão
-  defaultUserId   String? @map("default_user_id") // Usuário padrão quando IA desabilitada
-  defaultUser     User?   @relation("ConnectionDefaultUser", fields: [defaultUserId], references: [id])
+  aiEnabled     Boolean @default(true) @map("ai_enabled") // Se IA está habilitada nesta conexão
+  defaultUserId String? @map("default_user_id") // Usuário padrão quando IA desabilitada
+  defaultUser   User?   @relation("ConnectionDefaultUser", fields: [defaultUserId], references: [id])
 
   isDefault     Boolean   @default(false) @map("is_default")
   isActive      Boolean   @default(true) @map("is_active")
@@ -357,23 +369,32 @@ model WhatsAppConnection {
   messages Message[]
   tickets  Ticket[]
 
+  instagramCommentAutomations InstagramCommentAutomation[]
+  instagramCommentEvents      InstagramCommentEvent[]
+
+  @@index([instagramAccountId])
   @@map("whatsapp_connections")
 }
 
 /// Contato
 model Contact {
-  id    String  @id @default(cuid())
-  phone String
-  name  String?
-  email String?
+  id     String  @id @default(cuid())
+  phone  String
+  name   String?
+  email  String?
   avatar String?
-  
+
   // WhatsApp LID (Linked ID) - used when user has phone privacy enabled
   // This allows us to associate LIDs with real phone numbers
   lidId String? @map("lid_id")
 
   // Instagram Scoped ID (IGSID) - used for Instagram DM conversations
-  instagramId String? @map("instagram_id")
+  instagramId       String? @map("instagram_id")
+  instagramUsername String? @map("instagram_username")
+
+  // Origem da janela de mensagens do Instagram:
+  // "standard" (24h) | "ctd_ad" (anúncio Click-to-Direct, 7 dias) | "private_reply_pending" (private reply enviado, aguardando resposta)
+  windowSource String? @map("window_source")
 
   // Dados do Notion
   notionPageId String?   @map("notion_page_id")
@@ -402,6 +423,7 @@ model Contact {
 
   @@unique([phone, companyId])
   @@index([companyId, canonicalPhone])
+  @@index([companyId, instagramId])
   @@map("contacts")
 }
 
@@ -425,23 +447,23 @@ model Ticket {
   resolutionTime Int? @map("resolution_time")
 
   // Avaliação do atendimento
-  rating        Int?    @map("rating") // 1-5 estrelas
-  ratingComment String? @map("rating_comment")
+  rating        Int?      @map("rating") // 1-5 estrelas
+  ratingComment String?   @map("rating_comment")
   ratedAt       DateTime? @map("rated_at")
-  ratingToken   String? @unique @map("rating_token") // Token único para link de avaliação
+  ratingToken   String?   @unique @map("rating_token") // Token único para link de avaliação
 
   // NPS (Net Promoter Score) - 0 a 10
-  npsScore      Int?    @map("nps_score") // 0-10: 0-6 detratores, 7-8 neutros, 9-10 promotores
-  npsComment    String? @map("nps_comment")
-  npsRatedAt    DateTime? @map("nps_rated_at")
-  npsToken      String? @unique @map("nps_token") // Token único para link de pesquisa NPS
+  npsScore   Int?      @map("nps_score") // 0-10: 0-6 detratores, 7-8 neutros, 9-10 promotores
+  npsComment String?   @map("nps_comment")
+  npsRatedAt DateTime? @map("nps_rated_at")
+  npsToken   String?   @unique @map("nps_token") // Token único para link de pesquisa NPS
 
   // Métricas de qualidade
-  isFirstContactResolution Boolean @default(false) @map("is_first_contact_resolution") // FCR
-  reopenCount   Int     @default(0) @map("reopen_count") // Quantidade de reaberturas
-  reopenedAt    DateTime? @map("reopened_at") // Última reabertura
-  abandonedAt   DateTime? @map("abandoned_at") // Quando foi abandonado na fila
-  wasAbandoned  Boolean @default(false) @map("was_abandoned") // Se foi abandonado
+  isFirstContactResolution Boolean   @default(false) @map("is_first_contact_resolution") // FCR
+  reopenCount              Int       @default(0) @map("reopen_count") // Quantidade de reaberturas
+  reopenedAt               DateTime? @map("reopened_at") // Última reabertura
+  abandonedAt              DateTime? @map("abandoned_at") // Quando foi abandonado na fila
+  wasAbandoned             Boolean   @default(false) @map("was_abandoned") // Se foi abandonado
 
   isAIHandled     Boolean   @default(false) @map("is_ai_handled")
   aiTakeoverAt    DateTime? @map("ai_takeover_at")
@@ -468,14 +490,14 @@ model Ticket {
   departmentId String?     @map("department_id")
   department   Department? @relation(fields: [departmentId], references: [id])
 
-  connectionId String?            @map("connection_id")
+  connectionId String?             @map("connection_id")
   connection   WhatsAppConnection? @relation(fields: [connectionId], references: [id])
 
   companyId String  @map("company_id")
   company   Company @relation(fields: [companyId], references: [id])
 
   // Disparo em massa (Mensageria): campanha que originou o ticket
-  campaignId          Int?      @map("campaign_id")
+  campaignId           Int?      @map("campaign_id")
   campaignDispatchedAt DateTime? @map("campaign_dispatched_at")
 
   // Referência ao ticket anterior (para histórico visual)
@@ -483,9 +505,9 @@ model Ticket {
   previousTicket   Ticket?  @relation("TicketHistory", fields: [previousTicketId], references: [id])
   nextTickets      Ticket[] @relation("TicketHistory")
 
-  messages     Message[]
-  transfers    TicketTransfer[]
-  activities   Activity[]
+  messages      Message[]
+  transfers     TicketTransfer[]
+  activities    Activity[]
   notifications Notification[]
 
   // AI Assistant relations
@@ -502,12 +524,12 @@ model Ticket {
 
 /// Idempotência de webhook campaign.dispatched (Mensageria)
 model CampaignDispatch {
-  id          String   @id @default(cuid())
-  companyId   String   @map("company_id")
-  company     Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  campaignId  Int      @map("campaign_id")
+  id           String   @id @default(cuid())
+  companyId    String   @map("company_id")
+  company      Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  campaignId   Int      @map("campaign_id")
   dispatchedAt DateTime @map("dispatched_at")
-  processedAt DateTime @default(now()) @map("processed_at")
+  processedAt  DateTime @default(now()) @map("processed_at")
 
   @@unique([companyId, campaignId, dispatchedAt])
   @@index([companyId, campaignId, dispatchedAt])
@@ -534,18 +556,18 @@ model TicketTransfer {
 
 /// Mensagem
 model Message {
-  id        String      @id @default(cuid())
-  wamid     String?
-  type      MessageType @default(TEXT)
-  content   String?
-  mediaUrl  String?     @map("media_url")
-  mediaType String?     @map("media_type")
-  caption   String?
-  transcription String? @db.Text // Transcrição de áudio/vídeo
+  id            String      @id @default(cuid())
+  wamid         String?
+  type          MessageType @default(TEXT)
+  content       String?
+  mediaUrl      String?     @map("media_url")
+  mediaType     String?     @map("media_type")
+  caption       String?
+  transcription String?     @db.Text // Transcrição de áudio/vídeo
 
-  isFromMe      Boolean @default(false) @map("is_from_me")
-  isAIGenerated Boolean @default(false) @map("is_ai_generated")
-  isInternal    Boolean @default(false) @map("is_internal")
+  isFromMe         Boolean  @default(false) @map("is_from_me")
+  isAIGenerated    Boolean  @default(false) @map("is_ai_generated")
+  isInternal       Boolean  @default(false) @map("is_internal")
   mentionedUserIds String[] @map("mentioned_user_ids")
 
   status      MessageStatus @default(PENDING)
@@ -575,7 +597,7 @@ model Message {
   senderId String? @map("sender_id")
   sender   User?   @relation(fields: [senderId], references: [id])
 
-  connectionId String?            @map("connection_id")
+  connectionId String?             @map("connection_id")
   connection   WhatsAppConnection? @relation(fields: [connectionId], references: [id])
 
   // Referência a mensagem citada (reply)
@@ -648,14 +670,14 @@ model CompanySettings {
   aiSystemPrompt String? @map("ai_system_prompt")
 
   // Whisper (Audio Transcription) - Uses OpenAI API
-  whisperApiKey  String? @map("whisper_api_key")
+  whisperApiKey String? @map("whisper_api_key")
 
   // AI Personality Settings
-  aiPersonalityTone     String? @map("ai_personality_tone") // friendly, formal, technical, empathetic
-  aiPersonalityStyle    String? @map("ai_personality_style") // concise, detailed, conversational
-  aiUseEmojis           Boolean @default(true) @map("ai_use_emojis")
-  aiUseClientName       Boolean @default(true) @map("ai_use_client_name")
-  aiGuardrailsEnabled   Boolean @default(true) @map("ai_guardrails_enabled")
+  aiPersonalityTone   String? @map("ai_personality_tone") // friendly, formal, technical, empathetic
+  aiPersonalityStyle  String? @map("ai_personality_style") // concise, detailed, conversational
+  aiUseEmojis         Boolean @default(true) @map("ai_use_emojis")
+  aiUseClientName     Boolean @default(true) @map("ai_use_client_name")
+  aiGuardrailsEnabled Boolean @default(true) @map("ai_guardrails_enabled")
 
   // Outras configurações
   autoAssign         Boolean @default(true) @map("auto_assign")
@@ -665,19 +687,19 @@ model CompanySettings {
 
   // Horário de funcionamento (por empresa)
   businessHoursEnabled   Boolean @default(false) @map("business_hours_enabled")
-  businessHoursTimezone   String? @map("business_hours_timezone")   // e.g. America/Sao_Paulo
-  businessHoursDays      String? @map("business_hours_days")       // e.g. "1,2,3,4,5" (1=Seg ... 5=Sex, 0=Dom)
-  businessHoursStartTime String? @map("business_hours_start_time")  // e.g. "09:00"
-  businessHoursEndTime   String? @map("business_hours_end_time")   // e.g. "18:00"
-  outOfHoursMessage      String? @map("out_of_hours_message")      // mensagem ao receber fora do horário (fallback: awayMessage)
+  businessHoursTimezone  String? @map("business_hours_timezone") // e.g. America/Sao_Paulo
+  businessHoursDays      String? @map("business_hours_days") // e.g. "1,2,3,4,5" (1=Seg ... 5=Sex, 0=Dom)
+  businessHoursStartTime String? @map("business_hours_start_time") // e.g. "09:00"
+  businessHoursEndTime   String? @map("business_hours_end_time") // e.g. "18:00"
+  outOfHoursMessage      String? @map("out_of_hours_message") // mensagem ao receber fora do horário (fallback: awayMessage)
 
   // Default department for transfers when no specific department is found
   defaultTransferDepartmentId String? @map("default_transfer_department_id")
 
   // Integração externa (webhook de saída + API de métricas)
-  outboundWebhookUrl         String? @map("outbound_webhook_url")          // URL para enviar eventos (ex.: Supabase function)
-  outboundWebhookSecret      String? @map("outbound_webhook_secret")      // Secret no header X-Webhook-Secret
-  externalIntegrationApiKey  String? @map("external_integration_api_key")  // Token para GET /api/external/* (X-API-Key)
+  outboundWebhookUrl        String? @map("outbound_webhook_url") // URL para enviar eventos (ex.: Supabase function)
+  outboundWebhookSecret     String? @map("outbound_webhook_secret") // Secret no header X-Webhook-Secret
+  externalIntegrationApiKey String? @map("external_integration_api_key") // Token para GET /api/external/* (X-API-Key)
 
   // Blue Assistant
   blueEnabled Boolean @default(true) @map("blue_enabled")
@@ -693,12 +715,12 @@ model CompanySettings {
 
 /// Base de Conhecimento
 model KnowledgeBase {
-  id       String  @id @default(cuid())
+  id       String   @id @default(cuid())
   title    String
-  content  String  @db.Text
+  content  String   @db.Text
   category String?
   tags     String[]
-  order    Int     @default(0)
+  order    Int      @default(0)
 
   isActive  Boolean  @default(true) @map("is_active")
   createdAt DateTime @default(now()) @map("created_at")
@@ -747,7 +769,7 @@ model FAQ {
 /// Fonte de Dados para IA (Notion, Google Drive, Confluence, etc)
 model AIDataSource {
   id          String           @id @default(cuid())
-  name        String           // "Produtos", "Políticas", "Procedimentos"
+  name        String // "Produtos", "Políticas", "Procedimentos"
   type        AIDataSourceType
   description String?
 
@@ -759,7 +781,7 @@ model AIDataSource {
   config Json @default("{}")
 
   // Organização
-  category String?  // "vendas", "suporte", "financeiro", "produtos"
+  category String? // "vendas", "suporte", "financeiro", "produtos"
   tags     String[]
   priority Int      @default(0) // Ordem de busca (maior = prioridade maior)
 
@@ -808,14 +830,14 @@ model AIDocument {
   checksum    String? // Hash do conteúdo para detectar mudanças
 
   // Embedding para busca semântica (vetor de 1536 dimensões para OpenAI, 1024 para Anthropic)
-  embedding     Float[] // Vetor de embedding
+  embedding      Float[] // Vetor de embedding
   embeddingModel String? @map("embedding_model") // Modelo usado para gerar embedding
 
   // Status de indexação
-  status         AIDocumentStatus @default(PENDING)
-  indexedAt      DateTime?        @map("indexed_at")
-  indexError     String?          @map("index_error")
-  tokensCount    Int?             @map("tokens_count") // Quantidade de tokens do documento
+  status      AIDocumentStatus @default(PENDING)
+  indexedAt   DateTime?        @map("indexed_at")
+  indexError  String?          @map("index_error")
+  tokensCount Int?             @map("tokens_count") // Quantidade de tokens do documento
 
   dataSourceId String       @map("data_source_id")
   dataSource   AIDataSource @relation(fields: [dataSourceId], references: [id], onDelete: Cascade)
@@ -844,11 +866,11 @@ model AIAgentConfig {
   name String // "IA de Vendas", "IA de Suporte", "IA Financeira"
 
   // Categoria que esta IA atende
-  category    String  // "vendas", "suporte", "financeiro", "produtos", "geral"
+  category    String // "vendas", "suporte", "financeiro", "produtos", "geral"
   description String?
 
   // Prompts específicos
-  systemPrompt String @db.Text @map("system_prompt")
+  systemPrompt String @map("system_prompt") @db.Text
 
   // Configuração do modelo
   provider    String // openai, anthropic
@@ -874,8 +896,8 @@ model AIAgentConfig {
   icon  String? // Nome do ícone Lucide
   color String? // Cor hexadecimal
 
-  isActive  Boolean  @default(true) @map("is_active")
-  isDefault Boolean  @default(false) @map("is_default") // IA padrão quando nenhuma categoria match
+  isActive  Boolean @default(true) @map("is_active")
+  isDefault Boolean @default(false) @map("is_default") // IA padrão quando nenhuma categoria match
 
   companyId String  @map("company_id")
   company   Company @relation(fields: [companyId], references: [id])
@@ -923,31 +945,31 @@ model AIAssistantQuery {
 
   // Resposta gerada
   response       String  @db.Text // Resposta gerada pela IA
-  editedResponse String? @db.Text @map("edited_response") // Resposta após edição do atendente
+  editedResponse String? @map("edited_response") @db.Text // Resposta após edição do atendente
 
   // Categoria detectada
-  detectedCategory String? @map("detected_category")
-  categoryConfidence Float? @map("category_confidence")
+  detectedCategory   String? @map("detected_category")
+  categoryConfidence Float?  @map("category_confidence")
 
   // Status do processamento
   status AIQueryStatus @default(PROCESSING)
 
   // Métricas de performance
-  processingTime  Int? @map("processing_time") // ms
-  tokensInput     Int? @map("tokens_input")
-  tokensOutput    Int? @map("tokens_output")
-  embeddingTime   Int? @map("embedding_time") // ms para gerar embedding da query
-  searchTime      Int? @map("search_time") // ms para buscar documentos
+  processingTime Int? @map("processing_time") // ms
+  tokensInput    Int? @map("tokens_input")
+  tokensOutput   Int? @map("tokens_output")
+  embeddingTime  Int? @map("embedding_time") // ms para gerar embedding da query
+  searchTime     Int? @map("search_time") // ms para buscar documentos
 
   // Uso e feedback
-  wasUsed        Boolean   @default(false) @map("was_used") // Se foi enviada ao cliente
-  wasEdited      Boolean   @default(false) @map("was_edited")
-  usedAt         DateTime? @map("used_at")
+  wasUsed   Boolean   @default(false) @map("was_used") // Se foi enviada ao cliente
+  wasEdited Boolean   @default(false) @map("was_edited")
+  usedAt    DateTime? @map("used_at")
 
   // Rating do atendente (1-5)
-  rating         Int?      @map("rating")
-  ratingComment  String?   @map("rating_comment")
-  ratedAt        DateTime? @map("rated_at")
+  rating        Int?      @map("rating")
+  ratingComment String?   @map("rating_comment")
+  ratedAt       DateTime? @map("rated_at")
 
   // Detecção de gap (se a IA não soube responder)
   hasKnowledgeGap Boolean @default(false) @map("has_knowledge_gap")
@@ -991,7 +1013,7 @@ model AIQuerySource {
   relevanceScore Float @map("relevance_score")
 
   // Trecho usado do documento
-  usedExcerpt String? @db.Text @map("used_excerpt")
+  usedExcerpt String? @map("used_excerpt") @db.Text
 
   createdAt DateTime @default(now()) @map("created_at")
 
@@ -1016,7 +1038,7 @@ model AIKnowledgeGap {
   suggestedDataSource String? @map("suggested_data_source")
 
   // Status
-  status    String   @default("pending") // pending, in_progress, resolved, dismissed
+  status     String    @default("pending") // pending, in_progress, resolved, dismissed
   resolvedAt DateTime? @map("resolved_at")
   resolvedBy String?   @map("resolved_by")
 
@@ -1034,7 +1056,7 @@ model AIAutoSuggestion {
   id String @id @default(cuid())
 
   // Mensagem que triggou a sugestão
-  triggerMessage String @db.Text @map("trigger_message")
+  triggerMessage String @map("trigger_message") @db.Text
 
   // Sugestão gerada
   suggestion String @db.Text
@@ -1068,7 +1090,7 @@ model AISentimentAnalysis {
 
   // Análise
   sentiment String // positive, negative, neutral
-  score     Float  // -1 a 1
+  score     Float // -1 a 1
 
   // Emoções detectadas
   emotions Json? // { joy: 0.8, anger: 0.1, sadness: 0.1 }
@@ -1078,8 +1100,8 @@ model AISentimentAnalysis {
   urgencyScore Float?  @map("urgency_score")
 
   // Intenção principal
-  intent          String? // question, complaint, purchase, support, etc
-  intentConfidence Float? @map("intent_confidence")
+  intent           String? // question, complaint, purchase, support, etc
+  intentConfidence Float?  @map("intent_confidence")
 
   // Palavras-chave detectadas
   keywords String[]
@@ -1104,17 +1126,17 @@ model AISentimentAnalysis {
 
 /// Interações do Blue Assistant (para analytics e histórico)
 model BlueInteraction {
-  id        String   @id @default(cuid())
-  userId    String   @map("user_id")
-  user      User     @relation(fields: [userId], references: [id])
-  companyId String   @map("company_id")
-  company   Company  @relation(fields: [companyId], references: [id])
+  id        String  @id @default(cuid())
+  userId    String  @map("user_id")
+  user      User    @relation(fields: [userId], references: [id])
+  companyId String  @map("company_id")
+  company   Company @relation(fields: [companyId], references: [id])
 
-  type     String  // 'tip' | 'chat'
+  type     String // 'tip' | 'chat'
   page     String? // Rota da página onde ocorreu a interação
-  context  Json    // Contexto da página (route, params, etc)
+  context  Json // Contexto da página (route, params, etc)
   message  String? // Mensagem do usuário (para tipo 'chat')
-  response String  // Resposta do Blue
+  response String // Resposta do Blue
 
   createdAt DateTime @default(now()) @map("created_at")
 
@@ -1128,8 +1150,8 @@ model BlueInteraction {
 model MetricGoal {
   id        String   @id @default(cuid())
   name      String
-  metric    String   // nps, slaCompliance, avgResponseTime, fcr, etc.
-  target    Float    // Valor alvo
+  metric    String // nps, slaCompliance, avgResponseTime, fcr, etc.
+  target    Float // Valor alvo
   period    String   @default("monthly") // daily, weekly, monthly, quarterly
   isActive  Boolean  @default(true) @map("is_active")
   createdAt DateTime @default(now()) @map("created_at")
@@ -1149,17 +1171,17 @@ model MetricGoal {
 
 /// Alertas de Métricas
 model MetricAlert {
-  id          String   @id @default(cuid())
-  name        String
-  metric      String   // Métrica a monitorar
-  condition   String   // below, above, equals
-  threshold   Float    // Valor de threshold
-  isActive    Boolean  @default(true) @map("is_active")
+  id        String  @id @default(cuid())
+  name      String
+  metric    String // Métrica a monitorar
+  condition String // below, above, equals
+  threshold Float // Valor de threshold
+  isActive  Boolean @default(true) @map("is_active")
 
   // Notificações
-  notifyEmail    Boolean @default(true) @map("notify_email")
-  notifyInApp    Boolean @default(true) @map("notify_in_app")
-  notifyWebhook  String? @map("notify_webhook")
+  notifyEmail   Boolean @default(true) @map("notify_email")
+  notifyInApp   Boolean @default(true) @map("notify_in_app")
+  notifyWebhook String? @map("notify_webhook")
 
   // Última vez que foi disparado
   lastTriggeredAt DateTime? @map("last_triggered_at")
@@ -1180,22 +1202,22 @@ model MetricAlert {
 
 /// Notificações do Sistema
 model Notification {
-  id        String   @id @default(cuid())
-  type      String   // notification_mention, notification_ticket_assigned, etc.
-  title     String
-  message   String
-  read      Boolean  @default(false)
-  readAt    DateTime? @map("read_at")
-  metadata  Json?    // Dados adicionais (protocol, contactName, etc.)
+  id       String    @id @default(cuid())
+  type     String // notification_mention, notification_ticket_assigned, etc.
+  title    String
+  message  String
+  read     Boolean   @default(false)
+  readAt   DateTime? @map("read_at")
+  metadata Json? // Dados adicionais (protocol, contactName, etc.)
 
-  userId    String   @map("user_id")
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  
-  ticketId  String?  @map("ticket_id")
-  ticket    Ticket?  @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  userId String @map("user_id")
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  companyId String   @map("company_id")
-  company   Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  ticketId String? @map("ticket_id")
+  ticket   Ticket? @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+
+  companyId String  @map("company_id")
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
 
   createdAt DateTime @default(now()) @map("created_at")
 
@@ -1210,7 +1232,7 @@ model EmailAlertLog {
   companyId String   @map("company_id")
   company   Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
   alertType String   @map("alert_type") // CONNECTION_DOWN | TICKETS_NO_RESPONSE
-  entityId  String?  @map("entity_id")  // connectionId para CONNECTION_DOWN; null para TICKETS_NO_RESPONSE
+  entityId  String?  @map("entity_id") // connectionId para CONNECTION_DOWN; null para TICKETS_NO_RESPONSE
   sentAt    DateTime @default(now()) @map("sent_at")
 
   @@index([companyId, alertType, entityId])
@@ -1220,12 +1242,12 @@ model EmailAlertLog {
 
 /// Mensagens pré-definidas (atalhos /xxx para atendentes)
 model PredefinedMessage {
-  id        String   @id @default(cuid())
-  companyId String   @map("company_id")
-  company   Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  shortcut  String   // atalho sem a barra, ex: "ola"
-  name      String?  // rótulo opcional para exibição
-  content   String   @db.Text // texto da mensagem
+  id        String  @id @default(cuid())
+  companyId String  @map("company_id")
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  shortcut  String // atalho sem a barra, ex: "ola"
+  name      String? // rótulo opcional para exibição
+  content   String  @db.Text // texto da mensagem
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
@@ -1241,13 +1263,13 @@ model PredefinedMessage {
 
 /// Contexto de Conhecimento (agrupa fontes relacionadas)
 model KnowledgeContext {
-  id          String   @id @default(cuid())
-  name        String
-  description String?
-  slug        String   // Unique slug per company (e.g., "system-code", "system-docs")
-  systemPrompt String? @db.Text @map("system_prompt") // Prompt do sistema para este contexto
-  keywords    String[] // Keywords para categorização
-  priority    Int      @default(0) // Ordem de prioridade
+  id           String   @id @default(cuid())
+  name         String
+  description  String?
+  slug         String // Unique slug per company (e.g., "system-code", "system-docs")
+  systemPrompt String?  @map("system_prompt") @db.Text // Prompt do sistema para este contexto
+  keywords     String[] // Keywords para categorização
+  priority     Int      @default(0) // Ordem de prioridade
 
   companyId String  @map("company_id")
   company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
@@ -1264,15 +1286,15 @@ model KnowledgeContext {
 
 /// Fonte de Conhecimento (arquivo, URL, Notion, etc.)
 model KnowledgeSource {
-  id        String   @id @default(cuid())
+  id        String  @id @default(cuid())
   name      String
-  type      String   // TEXT, PDF, NOTION, URL, DOCX, CSV, JSON
-  sourceUrl String?  @map("source_url") // URL original
-  filePath  String?  @map("file_path") // Caminho do arquivo
-  content   String?  @db.Text // Conteúdo direto (para TEXT)
-  status    String   @default("PENDING") // PENDING, PROCESSING, COMPLETED, FAILED
-  error     String?  @db.Text
-  metadata  Json?    // Metadados adicionais
+  type      String // TEXT, PDF, NOTION, URL, DOCX, CSV, JSON
+  sourceUrl String? @map("source_url") // URL original
+  filePath  String? @map("file_path") // Caminho do arquivo
+  content   String? @db.Text // Conteúdo direto (para TEXT)
+  status    String  @default("PENDING") // PENDING, PROCESSING, COMPLETED, FAILED
+  error     String? @db.Text
+  metadata  Json? // Metadados adicionais
 
   contextId String           @map("context_id")
   context   KnowledgeContext @relation(fields: [contextId], references: [id], onDelete: Cascade)
@@ -1292,12 +1314,12 @@ model KnowledgeSource {
 
 /// Chunk de Conhecimento (pedaço indexado para busca semântica)
 model KnowledgeChunk {
-  id        String   @id @default(cuid())
-  content   String   @db.Text
-  embedding String?  // JSON array de floats (embedding vetorial)
-  metadata  Json?    // Metadados adicionais (page, position, etc.)
+  id        String  @id @default(cuid())
+  content   String  @db.Text
+  embedding String? // JSON array de floats (embedding vetorial)
+  metadata  Json? // Metadados adicionais (page, position, etc.)
 
-  sourceId String         @map("source_id")
+  sourceId String          @map("source_id")
   source   KnowledgeSource @relation(fields: [sourceId], references: [id], onDelete: Cascade)
 
   createdAt DateTime @default(now()) @map("created_at")
@@ -1358,16 +1380,16 @@ model MLTrainingPair {
   aiSuggestionEdited Boolean? @map("ai_suggestion_edited") // Se editou sugestão da IA
 
   // Classificação automática
-  category   String?      // Categoria detectada (vendas, suporte, etc)
-  intent     String?      // Intenção detectada (PRICE_INQUIRY, COMPLAINT, etc)
-  sentiment  String?      // Sentimento do cliente (positive, negative, neutral)
+  category   String? // Categoria detectada (vendas, suporte, etc)
+  intent     String? // Intenção detectada (PRICE_INQUIRY, COMPLAINT, etc)
+  sentiment  String? // Sentimento do cliente (positive, negative, neutral)
   complexity MLComplexity @default(MEDIUM) // Complexidade da pergunta
 
   // Outcome do ticket (para medir qualidade)
-  ticketResolved          Boolean? @map("ticket_resolved")
-  customerRating          Int?     @map("customer_rating") // 1-5
-  npsScore                Int?     @map("nps_score") // 0-10
-  firstContactResolution  Boolean? @map("first_contact_resolution")
+  ticketResolved         Boolean? @map("ticket_resolved")
+  customerRating         Int?     @map("customer_rating") // 1-5
+  npsScore               Int?     @map("nps_score") // 0-10
+  firstContactResolution Boolean? @map("first_contact_resolution")
 
   // Status de uso no treinamento
   qualityScore    Float?    @map("quality_score") // Score de qualidade calculado (0-100)
@@ -1412,7 +1434,7 @@ model MLIntentPattern {
   centroidEmbedding Float[] @map("centroid_embedding")
 
   // Resposta padrão sugerida
-  suggestedResponseTemplate String? @db.Text @map("suggested_response_template")
+  suggestedResponseTemplate String? @map("suggested_response_template") @db.Text
 
   // Estatísticas
   occurrenceCount   Int    @default(0) @map("occurrence_count") // Quantas vezes detectado
@@ -1421,11 +1443,11 @@ model MLIntentPattern {
   avgResponseTime   Float? @map("avg_response_time") // Tempo médio de resposta humana
 
   // Status e confiança
-  isActive   Boolean @default(true) @map("is_active")
-  isApproved Boolean @default(false) @map("is_approved") // Se foi aprovado por humano
-  approvedBy String? @map("approved_by")
+  isActive   Boolean   @default(true) @map("is_active")
+  isApproved Boolean   @default(false) @map("is_approved") // Se foi aprovado por humano
+  approvedBy String?   @map("approved_by")
   approvedAt DateTime? @map("approved_at")
-  confidence Float   // Confiança do padrão (0-1)
+  confidence Float // Confiança do padrão (0-1)
 
   // Relação com templates de resposta
   responseTemplates MLResponseTemplate[]
@@ -1454,7 +1476,7 @@ model MLResponseTemplate {
 
   // Template de resposta com placeholders
   template  String @db.Text // Ex: "Olá {{nome}}! O preço do {{produto}} é R$ {{preco}}."
-  variables Json?  // Descrição das variáveis: { "nome": "Nome do cliente", "produto": "Nome do produto" }
+  variables Json? // Descrição das variáveis: { "nome": "Nome do cliente", "produto": "Nome do produto" }
 
   // Embedding do template para matching
   templateEmbedding Float[] @map("template_embedding")
@@ -1511,7 +1533,7 @@ model MLModelVersion {
   f1Score            Float? @map("f1_score")
 
   // Configuração e artefatos
-  configJson Json?   // Configuração do modelo (hyperparameters, etc)
+  configJson Json? // Configuração do modelo (hyperparameters, etc)
   modelPath  String? @map("model_path") // Caminho para artefatos salvos (se aplicável)
 
   // Status
@@ -1560,7 +1582,7 @@ model MLLearningMetric {
   knowledgeGapsFound Int @default(0) @map("knowledge_gaps_found") // Lacunas detectadas
 
   // Métricas de qualidade do modelo
-  intentAccuracy   Float? @map("intent_accuracy") // Precisão na classificação de intent
+  intentAccuracy    Float? @map("intent_accuracy") // Precisão na classificação de intent
   templateMatchRate Float? @map("template_match_rate") // % queries com template aplicável
 
   // Comparação com período anterior
@@ -1583,7 +1605,7 @@ model MLAIDecisionLog {
   messageId String  @map("message_id")
 
   // Input
-  customerMessage  String  @db.Text @map("customer_message")
+  customerMessage  String  @map("customer_message") @db.Text
   messageEmbedding Float[] @map("message_embedding")
 
   // Classificação
@@ -1593,14 +1615,14 @@ model MLAIDecisionLog {
   categoryConfidence Float?  @map("category_confidence")
 
   // Decisão tomada
-  decision        String // RESPOND_AI, TRANSFER_TO_HUMAN, SUGGEST_ONLY
-  decisionReason  String? @map("decision_reason")
+  decision       String // RESPOND_AI, TRANSFER_TO_HUMAN, SUGGEST_ONLY
+  decisionReason String? @map("decision_reason")
 
   // Resposta gerada (se houver)
-  generatedResponse  String? @db.Text @map("generated_response")
-  templateUsedId     String? @map("template_used_id")
-  documentsUsedIds   String[] @map("documents_used_ids")
-  qualityScore       Float?  @map("quality_score")
+  generatedResponse String?  @map("generated_response") @db.Text
+  templateUsedId    String?  @map("template_used_id")
+  documentsUsedIds  String[] @map("documents_used_ids")
+  qualityScore      Float?   @map("quality_score")
 
   // Outcome
   wasCorrectDecision Boolean? @map("was_correct_decision") // Se a decisão foi correta
@@ -1627,7 +1649,7 @@ model MLTrainingBatch {
   company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
 
   // Identificação
-  batchNumber Int    @map("batch_number")
+  batchNumber Int     @map("batch_number")
   description String?
 
   // Dados do batch
@@ -1636,10 +1658,10 @@ model MLTrainingBatch {
   templatesCreated Int @default(0) @map("templates_created")
 
   // Status
-  status    String   @default("PENDING") // PENDING, PROCESSING, COMPLETED, FAILED
-  startedAt DateTime? @map("started_at")
+  status      String    @default("PENDING") // PENDING, PROCESSING, COMPLETED, FAILED
+  startedAt   DateTime? @map("started_at")
   completedAt DateTime? @map("completed_at")
-  error     String?   @db.Text
+  error       String?   @db.Text
 
   // Resultado
   resultSummary Json? @map("result_summary")
@@ -1649,4 +1671,99 @@ model MLTrainingBatch {
   @@index([companyId])
   @@index([status])
   @@map("ml_training_batches")
+}
+
+// ============================================
+// INSTAGRAM - AUTOMAÇÃO DE COMENTÁRIOS
+// ============================================
+
+enum InstagramCommentEventStatus {
+  RECEIVED // comentário recebido, ainda não avaliado
+  MATCHED // casou com uma automação
+  REPLIED // resposta pública enviada
+  PRIVATE_SENT // private reply (DM) enviado
+  USER_REPLIED // a pessoa respondeu no Direct (janela de 24h aberta)
+  SKIPPED // nenhuma automação casou / filtro excluiu
+  FAILED // erro ao responder
+}
+
+/// Regra "comentou → responde no comentário e manda DM com link" (estilo ManyChat)
+model InstagramCommentAutomation {
+  id       String  @id @default(cuid())
+  name     String
+  isActive Boolean @default(true) @map("is_active")
+
+  // Alvo
+  mediaIds       String[] @default([]) @map("media_ids") // vazio = todos os posts/reels da conta
+  mediaTypes     String[] @default([]) @map("media_types") // FEED | REELS | AD | LIVE (vazio = todos)
+  keywords       String[] @default([]) // vazio = qualquer comentário
+  matchMode      String   @default("contains") @map("match_mode") // contains | exact | regex
+  excludeReplies Boolean  @default(true) @map("exclude_replies") // ignora comentários que são respostas (parent_id)
+
+  // Ações
+  publicReplies  String[] @default([]) @map("public_replies") // variações de resposta pública; sorteia uma
+  privateMessage Json     @map("private_message") // { text, linkUrl?, buttonTitle?, imageUrl? }
+  departmentId   String?  @map("department_id") // departamento do ticket quando a pessoa responder
+  aiEnabled      Boolean  @default(true) @map("ai_enabled") // IA assume quando a pessoa responder no Direct
+
+  // Limites
+  oncePerUser Boolean @default(true) @map("once_per_user")
+  dailyLimit  Int?    @map("daily_limit")
+
+  // Métricas simples
+  matchedCount     Int @default(0) @map("matched_count")
+  privateSentCount Int @default(0) @map("private_sent_count")
+  userRepliedCount Int @default(0) @map("user_replied_count")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  companyId    String             @map("company_id")
+  company      Company            @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  connectionId String             @map("connection_id")
+  connection   WhatsAppConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+
+  events InstagramCommentEvent[]
+
+  @@index([companyId])
+  @@index([connectionId, isActive])
+  @@map("instagram_comment_automations")
+}
+
+/// Log de cada comentário recebido pelo webhook e o que foi feito com ele
+model InstagramCommentEvent {
+  id String @id @default(cuid())
+
+  commentId    String  @unique @map("comment_id")
+  mediaId      String  @map("media_id")
+  mediaType    String? @map("media_type") // media_product_type do webhook (FEED, REELS, AD...)
+  fromIgId     String  @map("from_ig_id")
+  fromUsername String? @map("from_username")
+  text         String
+  parentId     String? @map("parent_id")
+
+  status     InstagramCommentEventStatus @default(RECEIVED)
+  skipReason String?                     @map("skip_reason")
+  error      String?
+
+  publicReplyId         String?   @map("public_reply_id")
+  privateReplyMessageId String?   @map("private_reply_message_id")
+  privateSentAt         DateTime? @map("private_sent_at")
+  userRepliedAt         DateTime? @map("user_replied_at")
+  ticketId              String?   @map("ticket_id")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  companyId    String                      @map("company_id")
+  company      Company                     @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  connectionId String                      @map("connection_id")
+  connection   WhatsAppConnection          @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  automationId String?                     @map("automation_id")
+  automation   InstagramCommentAutomation? @relation(fields: [automationId], references: [id], onDelete: SetNull)
+
+  @@index([companyId, createdAt])
+  @@index([connectionId, fromIgId])
+  @@index([automationId, fromIgId])
+  @@map("instagram_comment_events")
 }
