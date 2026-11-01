@@ -146,7 +146,14 @@ function InstagramOAuthResultHandler({ onResult }: { onResult: () => void }) {
     const result = searchParams.get("instagram");
     if (!result || handled.current) return;
     handled.current = true;
-    if (result === "ok") {
+    if (result === "ok" && searchParams.get("warning") === "webhooks") {
+      toast({
+        title: "Instagram conectado, mas sem webhooks",
+        description: "A conta foi autorizada, mas a inscrição nos webhooks falhou. Use \"Reinscrever webhooks\" na conexão.",
+        variant: "destructive",
+        duration: 12000,
+      });
+    } else if (result === "ok") {
       toast({ title: "Instagram conectado!", description: "A conta foi autorizada e os webhooks foram inscritos." });
     } else if (result === "denied") {
       toast({

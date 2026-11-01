@@ -1,7 +1,7 @@
 import type { InstagramCommentAutomation, WhatsAppConnection } from '@prisma/client';
 import { prisma } from '../../config/database.js';
 import { logger } from '../../config/logger.js';
-import { InstagramService } from './instagram.service.js';
+import { InstagramService, INSTAGRAM_TEXT_MAX_BYTES, splitTextByBytes } from './instagram.service.js';
 import {
   applyPlaceholders,
   matchAutomation,
@@ -81,10 +81,17 @@ export function buildPrivateReplyText(
 ): string {
   const nome = username ? `@${username}` : '';
   let text = applyPlaceholders(pm.text, { nome, link: pm.linkUrl ?? '' });
+  let suffix = '';
   if (pm.linkUrl && !text.includes(pm.linkUrl)) {
-    text = `${text}\n\n${pm.linkUrl}`;
+    suffix = `\n\n${pm.linkUrl}`;
   }
-  return text.trim();
+  // Private reply é UMA mensagem só (não dá para quebrar em partes): limite de 1000 bytes UTF-8.
+  // Corta o texto (preservando o link no final) se acentos/emoji/link estourarem o limite.
+  const maxBody = INSTAGRAM_TEXT_MAX_BYTES - Buffer.byteLength(suffix, 'utf8');
+  if (Buffer.byteLength(text, 'utf8') > maxBody && maxBody > 0) {
+    text = splitTextByBytes(text, maxBody)[0] ?? '';
+  }
+  return `${text.trim()}${suffix}`.trim();
 }
 
 /**
@@ -106,7 +113,12 @@ export class CommentAutomationService {
       logger.debug('[CommentAutomation] Comentário sem id/from, ignorado', { connectionId: connection.id });
       return;
     }
-    if (connection.instagramAccountId && value.from.id === connection.instagramAccountId) {
+    if (
+      (connection.instagramAccountId && value.from.id === connection.instagramAccountId) ||
+      (connection.instagramUsername &&
+        value.from.username &&
+        value.from.username.toLowerCase() === connection.instagramUsername.toLowerCase())
+    ) {
       logger.debug('[CommentAutomation] Comentário da própria conta, ignorado', { commentId: value.id });
       return;
     }
@@ -356,11 +368,14 @@ export class CommentAutomationService {
     const companyId = connection.companyId;
     const phone = `ig:${from.id}`;
 
+    // Contato pode já existir pelo Direct (MessageProcessor grava phone = IGSID)
     let contact = await prisma.contact.findFirst({
       where: { companyId, instagramId: from.id },
     });
     if (!contact) {
-      contact = await prisma.contact.findFirst({ where: { companyId, phone } });
+      contact = await prisma.contact.findFirst({
+        where: { companyId, OR: [{ phone }, { phone: from.id }, { lidId: from.id }] },
+      });
     }
 
     if (!contact) {
@@ -418,7 +433,12 @@ export class CommentAutomationService {
       // Contato: o informado ou o do IGSID
       const contact = params.contactId
         ? await prisma.contact.findFirst({ where: { id: params.contactId, companyId: connection.companyId } })
-        : await prisma.contact.findFirst({ where: { companyId: connection.companyId, instagramId: igsid } });
+        : await prisma.contact.findFirst({
+            where: {
+              companyId: connection.companyId,
+              OR: [{ instagramId: igsid }, { phone: igsid }, { lidId: igsid }],
+            },
+          });
 
       // Mensagem chegou: janela padrão de 24h a partir de agora
       if (contact && contact.windowSource === 'private_reply_pending') {

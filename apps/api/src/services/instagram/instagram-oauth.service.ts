@@ -107,9 +107,10 @@ export class InstagramOAuthService {
   static async consumeState(state: string): Promise<InstagramOAuthState | null> {
     if (!state || !/^[a-f0-9]{16,128}$/i.test(state)) return null;
     const key = `${STATE_PREFIX}${state}`;
-    const raw = await redis.get(key);
+    // GET + DEL atômicos: dois callbacks com o mesmo state não podem ambos passar
+    const results = await redis.multi().get(key).del(key).exec();
+    const raw = results?.[0]?.[1] as string | null | undefined;
     if (!raw) return null;
-    await redis.del(key);
     try {
       return JSON.parse(raw) as InstagramOAuthState;
     } catch {
