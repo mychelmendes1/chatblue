@@ -8,7 +8,8 @@ import { NotFoundError } from '../middlewares/error.middleware.js';
 import { BaileysService } from '../services/whatsapp/baileys.service.js';
 import { MetaCloudService } from '../services/whatsapp/meta-cloud.service.js';
 import { InstagramService } from '../services/instagram/instagram.service.js';
-import { encryptSecret } from '../utils/crypto.util.js';
+import { encryptSecret, decryptSecret } from '../utils/crypto.util.js';
+import { InstagramOAuthService } from '../services/instagram/instagram-oauth.service.js';
 
 const router = Router();
 
@@ -757,6 +758,18 @@ router.delete('/:id', authenticate, requireAdmin, ensureTenant, async (req, res,
         if (fs.existsSync(sessionPath)) {
           fs.rmSync(sessionPath, { recursive: true, force: true });
         }
+      }
+    }
+
+    // Instagram OAuth: cancela a inscrição do webhook na conta (best-effort)
+    if (connection.type === 'INSTAGRAM' && connection.authMethod === 'oauth' && connection.instagramAccountId && connection.accessToken) {
+      try {
+        const token = decryptSecret(connection.accessToken);
+        if (token) {
+          await InstagramOAuthService.unsubscribeWebhooks(connection.instagramAccountId, token);
+        }
+      } catch (error) {
+        logger.warn(`[DELETE /connections/:id] Falha ao cancelar webhook do Instagram ${connection.id}`, { error });
       }
     }
 
