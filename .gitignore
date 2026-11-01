@@ -57,3 +57,6 @@ __pycache__
 
 # Docker
 docker/data
+
+# TypeScript incremental build info
+*.tsbuildinfo
